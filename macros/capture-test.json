@@ -1,0 +1,19 @@
+{
+  "name": "capture-test",
+  "targetPackage": "com.garena.game.kgvn",
+  "orientation": "landscape",
+  "steps": [
+    {
+      "type": "wait",
+      "ms": 3000
+    },
+    {
+      "type": "screenshot",
+      "name": "menu-test"
+    },
+    {
+      "type": "wait",
+      "ms": 1500
+    }
+  ]
+}
