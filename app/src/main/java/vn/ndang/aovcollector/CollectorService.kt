@@ -41,13 +41,13 @@ class CollectorService : AccessibilityService() {
         }
     }
     override fun onInterrupt() { pause("Dịch vụ bị ngắt") }
-    override fun onDestroy() { stop(); hidePanel(); current = null; io.shutdown(); super.onDestroy() }
+    override fun onDestroy() { running=false; generation++; handler.removeCallbacksAndMessages(null); hidePanel(); current = null; io.shutdown(); super.onDestroy() }
     fun showPanel() {
         if(panel != null) return
         val layout = LinearLayout(this).apply { orientation=LinearLayout.VERTICAL; setPadding(8,8,8,8); setBackgroundColor(Color.rgb(24,29,46)) }
         label = TextView(this).apply { text="AOV Collector • kéo để di chuyển"; setTextColor(Color.WHITE); textSize=12f }
         layout.addView(label)
-        val params = WindowManager.LayoutParams(280, WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        val params = WindowManager.LayoutParams((240*resources.displayMetrics.density).toInt(), WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE, android.graphics.PixelFormat.TRANSLUCENT).apply { gravity=Gravity.TOP or Gravity.START; x=8; y=80 }
         var downX=0f; var downY=0f; var startX=0; var startY=0
         label!!.setOnTouchListener { _, e ->
@@ -58,11 +58,16 @@ class CollectorService : AccessibilityService() {
                 else -> false
             }
         }
-        fun button(text:String,action:()->Unit) { layout.addView(Button(this).apply { this.text=text; textSize=12f; setOnClickListener { action() } }) }
-        button("▶ Chạy / Tiếp tục") { start() }
-        button("Ⅱ Tạm dừng") { pause("Tạm dừng") }
-        button("📷 Chụp ảnh") { manualCapture() }
-        button("⏭ Bỏ bước") { if(!running && !busy) { index++; save(); status("Đã bỏ 1 bước") } else status("Tạm dừng và chờ bước hiện tại xong") }
+        var row: LinearLayout? = null
+        var buttons=0
+        fun button(text:String,action:()->Unit) {
+            if(buttons%3==0) { row=LinearLayout(this); layout.addView(row) }
+            row!!.addView(Button(this).apply { this.text=text; textSize=10f; setPadding(0,0,0,0); setOnClickListener { action() } },LinearLayout.LayoutParams(0,(52*resources.displayMetrics.density).toInt(),1f)); buttons++
+        }
+        button("▶ Chạy") { start() }
+        button("Ⅱ Dừng tạm") { pause("Tạm dừng") }
+        button("📷 Chụp") { manualCapture() }
+        button("⏭ Bỏ bước") { if(!running && !busy && !manualBusy && macro!=null && index<(macro?.steps?.length()?:0)) { index++; save(); status("Đã bỏ 1 bước") } else status("Tạm dừng và chờ bước hiện tại xong") }
         button("■ Dừng") { stop() }
         button("× Ẩn bảng") { pause("Tạm dừng"); hidePanel() }
         panel=layout; wm.addView(layout,params)
@@ -89,7 +94,7 @@ class CollectorService : AccessibilityService() {
     }
     fun reset() { if(busy || manualBusy) { status("Chờ bước hiện tại xong"); return }; stop(); index=0; runId=""; prefs.edit().clear().commit(); status("Sẵn sàng lượt mới") }
     private fun pause(s:String) { running=false; save(); status(s) }
-    private fun stop() { running=false; generation++; handler.removeCallbacksAndMessages(null); busy=false; panel?.visibility=View.VISIBLE; save(); status("Đã dừng") }
+    private fun stop() { running=false; save(); status("Đã dừng các bước tiếp theo") }
     private fun save() {
         val m=macro ?: return
         prefs.edit().putString("hash",m.hash).putInt("step",index).putString("run",runId).commit()
@@ -108,6 +113,7 @@ class CollectorService : AccessibilityService() {
         fun done(ok:Boolean) {
             if(token!=generation) return
             busy=false
+            panel?.visibility=View.VISIBLE
             if(!ok) { pause("Bước ${index+1} lỗi — chưa tăng checkpoint"); return }
             index++; save()
             if(running) handler.postDelayed({ next(token) },400)
@@ -118,6 +124,7 @@ class CollectorService : AccessibilityService() {
                 "back" -> done(performGlobalAction(GLOBAL_ACTION_BACK))
                 "screenshot" -> capture("%04d-%s".format(index+1,s.getString("name")),runId) { done(it) }
                 else -> {
+                    panel?.visibility=View.INVISIBLE
                     val bounds=wm.currentWindowMetrics.bounds
                     val p=Path().apply { moveTo((s.getDouble("x")*(bounds.width()-1)).toFloat(),(s.getDouble("y")*(bounds.height()-1)).toFloat()) }
                     val swipe=s.getString("type")=="swipe"
@@ -137,6 +144,7 @@ class CollectorService : AccessibilityService() {
     private fun capture(name:String,folder:String,done:(Boolean)->Unit) {
         panel?.visibility=View.INVISIBLE
         handler.postDelayed({
+            if(rootInActiveWindow?.packageName?.toString() != "com.garena.game.kgvn") { panel?.visibility=View.VISIBLE; done(false); return@postDelayed }
             takeScreenshot(Display.DEFAULT_DISPLAY,mainExecutor,object:TakeScreenshotCallback {
                 override fun onSuccess(result:ScreenshotResult) {
                     val buffer=result.hardwareBuffer
