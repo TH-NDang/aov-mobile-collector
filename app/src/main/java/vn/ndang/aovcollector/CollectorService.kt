@@ -56,7 +56,7 @@ class CollectorService : AccessibilityService() {
     private var bubble:TextView?=null
     private var lastStatus="Sẵn sàng"
     private var activeDialog:AlertDialog?=null
-    private var macroPopup:PopupWindow?=null
+    private var macroPicker:View?=null
     private val uiPrefs by lazy { getSharedPreferences("ui",MODE_PRIVATE) }
     private fun dp(n:Int)=Ui.dp(this,n)
     private var selectionCache:Macro?=null
@@ -72,9 +72,10 @@ class CollectorService : AccessibilityService() {
     }
     override fun onConfigurationChanged(newConfig:Configuration) {
         super.onConfigurationChanged(newConfig)
-        if(panel!=null) { macroPopup?.dismiss();rebuildPanel() }
+        if(panel!=null) { dismissMacroPicker();rebuildPanel() }
     }
     private fun rebuildPanel() {
+        dismissMacroPicker()
         panel?.let { wm.removeView(it) }
         label=null; primary=null; choose=null; taskLabel=null; taskDetail=null; progress=null; bubble=null
         val layout=Ui.stack(this).apply { setPadding(dp(12),dp(10),dp(12),dp(10)); background=Ui.shape(Color.argb(195,20,24,42),dp(20),Color.argb(70,230,230,255)) }
@@ -170,8 +171,8 @@ class CollectorService : AccessibilityService() {
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
         if(isWorking) { status("Tạm dừng trước khi đổi macro");return }
         if(panel==null||compact) showPanel()
-        val anchor=choose?:return
-        macroPopup?.dismiss()
+        if(macroPicker!=null) { dismissMacroPicker();return }
+        val host=panel?:return
         val saved=MacroStore.saved(this).mapNotNull { try { Macro(it.readText()) } catch(_:Exception) { null } }
         val choices=listOf("Một tướng đang mở","Danh sách tướng")+saved.map { it.name }
         var visible=choices.indices.toList()
@@ -186,22 +187,42 @@ class CollectorService : AccessibilityService() {
             list.adapter=ArrayAdapter(this,android.R.layout.simple_list_item_1,visible.map { choices[it] })
             empty.visibility=if(visible.isEmpty()) View.VISIBLE else View.GONE
         }
-        val popup=PopupWindow(body,dp(266),minOf(dp(250),wm.currentWindowMetrics.bounds.height()-dp(32)),true).apply {
-            setBackgroundDrawable(Ui.shape(Color.argb(248,248,248,254),dp(14)));isOutsideTouchable=true
-            windowLayoutType=WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY;elevation=dp(8).toFloat()
-            inputMethodMode=PopupWindow.INPUT_METHOD_NEEDED;softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
-        }
-        macroPopup=popup;popup.setOnDismissListener { macroPopup=null }
         search.addTextChangedListener(object:android.text.TextWatcher {
             override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int) {}
             override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) { filter(s?.toString()?:"") }
             override fun afterTextChanged(s:android.text.Editable?) {}
         })
         list.setOnItemClickListener { _,_,position,_ ->
-            val i=visible[position];popup.dismiss()
+            val i=visible.getOrNull(position)?:return@setOnItemClickListener;dismissMacroPicker()
             handler.post { when(i) { 0 -> taskForm(false);1 -> taskForm(true);else -> selectMacro(saved[i-2].raw) } }
         }
-        filter("");popup.showAsDropDown(anchor,0,dp(4))
+        body.addView(Ui.button(this,"Đóng danh sách") { dismissMacroPicker() },LinearLayout.LayoutParams(-1,dp(38)))
+        filter("")
+        // Expand inside the existing accessibility window; do not create a popup token.
+        for(i in 2 until host.childCount) host.getChildAt(i).visibility=View.GONE
+        macroPicker=body
+        val height=minOf(dp(250),wm.currentWindowMetrics.bounds.height()-dp(150)).coerceAtLeast(dp(120))
+        host.addView(body,2,LinearLayout.LayoutParams(-1,height))
+        panelParams?.let { params ->
+            params.flags=params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
+            params.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            params.y=params.y.coerceAtMost(maxOf(0,wm.currentWindowMetrics.bounds.height()-height-dp(110)))
+            wm.updateViewLayout(host,params)
+        }
+        search.requestFocus()
+    }
+    private fun dismissMacroPicker() {
+        val picker=macroPicker?:return
+        macroPicker=null
+        val host=panel?:return
+        (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(host.windowToken,0)
+        host.removeView(picker)
+        for(i in 0 until host.childCount) host.getChildAt(i).visibility=View.VISIBLE
+        panelParams?.let { params ->
+            params.flags=params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            params.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED
+            if(host.isAttachedToWindow) wm.updateViewLayout(host,params)
+        }
     }
     private fun taskForm(batch:Boolean) {
         val body=Ui.stack(this).apply { setPadding(dp(20),dp(6),dp(20),dp(6)) }
@@ -258,7 +279,7 @@ class CollectorService : AccessibilityService() {
             .setPositiveButton("Bỏ thao tác") { _,_ -> if(!isWorking&&!stopped) { index++;save();status("Đã bỏ thao tác. Bấm Tiếp tục.") } }
             .setNegativeButton("Hủy",null).create())
     }
-    private fun hidePanel() { macroPopup?.dismiss();activeDialog?.dismiss();panel?.let { wm.removeView(it) };panel=null;label=null;primary=null;choose=null;progress=null;bubble=null }
+    private fun hidePanel() { dismissMacroPicker();activeDialog?.dismiss();panel?.let { wm.removeView(it) };panel=null;label=null;primary=null;choose=null;progress=null;bubble=null }
     private fun status(s:String) { lastStatus=s;refreshPanel();Toast.makeText(this,s,Toast.LENGTH_SHORT).show() }
     private fun ready(m:Macro):Boolean {
         if(rootInActiveWindow?.packageName?.toString()!=m.target) { pause("Hãy mở Liên Quân trước"); return false }
@@ -269,7 +290,7 @@ class CollectorService : AccessibilityService() {
     private fun readMacro() = Macro(File(filesDir,"macro.json").readText())
     fun start() {
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
-        if(running || busy || manualBusy || activeDialog!=null || macroPopup!=null) return
+        if(running || busy || manualBusy || activeDialog!=null || macroPicker!=null) return
         try {
             val m=readMacro(); if(!ready(m)) return
             macro=m
