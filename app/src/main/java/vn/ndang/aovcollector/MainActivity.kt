@@ -180,7 +180,6 @@ class MainActivity : Activity() {
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             try {
                 val value=field.text.toString().trim();require(value.length in 1..80) { "Nhập tên từ 1 đến 80 ký tự" };if(!editable()) return@setOnClickListener
-                resetIfActive(listOf(file))
                 if(File(file,"hero.json").exists()) {
                     val newDir=File(file.parentFile,HeroNames.slug(value));require(newDir==file||!newDir.exists()) { "Tên thư mục đã tồn tại" }
                     require(newDir==file||file.renameTo(newDir)) { "Không đổi tên được thư mục" }
