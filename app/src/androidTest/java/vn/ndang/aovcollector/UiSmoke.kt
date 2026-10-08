@@ -24,6 +24,12 @@ class UiSmoke:Instrumentation() {
         try {
             val automation=getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
             val info=automation.serviceInfo;info.flags=info.flags or AccessibilityServiceInfo.FLAG_RETRIEVE_INTERACTIVE_WINDOWS;automation.serviceInfo=info
+            // Instrumentation restarts the app process; rebind its accessibility service afterwards.
+            fun shell(command:String) { android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).use { it.readBytes() } }
+            shell("settings put secure enabled_accessibility_services null")
+            SystemClock.sleep(500)
+            shell("settings put secure enabled_accessibility_services vn.ndang.aovcollector/.CollectorService")
+            shell("settings put secure accessibility_enabled 1")
             val image=Bitmap.createBitmap(2400,1080,Bitmap.Config.ARGB_8888)
             val canvas=Canvas(image);canvas.drawColor(Color.rgb(29,32,60))
             canvas.drawText("Eland'orr",1770f,385f,Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.rgb(248,226,170);textSize=58f })
@@ -39,7 +45,7 @@ class UiSmoke:Instrumentation() {
             File(hero,"0004-hero-overview.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG,100,it) };image.recycle()
             MacroStore.current(targetContext).writeText(BuiltInMacros.create(""))
             val activity=startActivitySync(Intent(targetContext,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            val dest=File(targetContext.getExternalFilesDir(null),"smoke").apply { mkdirs() }
+            val dest=File(targetContext.filesDir,"smoke").apply { mkdirs() }
             fun snap(n:String) { waitForIdleSync();SystemClock.sleep(700);val b=automation.takeScreenshot()?:error("No screenshot");File(dest,"$n.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG,100,it) };b.recycle() }
             snap("01-history")
             var service:CollectorService?=null
