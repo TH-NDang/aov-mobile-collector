@@ -78,6 +78,11 @@ class UiSmoke:Instrumentation() {
             }
             android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("dumpsys accessibility")).use { File(dest,"accessibility.txt").writeBytes(it.readBytes()) }
             check(service!=null) { "Accessibility service not connected" }
+            // A built-in macro saved by an older version is regenerated when a new run is created.
+            MacroStore.current(targetContext).writeText(JSONObject(BuiltInMacros.create("Danh sách tướng",2,true)).apply { remove("builtinVersion") }.toString())
+            runOnMainSync { service!!.reset() }
+            val upgraded=Macro(MacroStore.current(targetContext).readText())
+            check(upgraded.json.optInt("builtinVersion")==BuiltInMacros.VERSION&&upgraded.json.optInt("heroCount")==2) { "Old built-in macro was not upgraded" }
             runOnMainSync { service!!.showPanel() }
             // Exercise the actual chooser button, repeatedly, then after rotation.
             fun chooserClick() {
@@ -122,7 +127,7 @@ class UiSmoke:Instrumentation() {
             snap("06-after-macro-tap")
             check(delivered.get()) { "Macro tap was not delivered past the panel (swallowed=$swallowed)" }
             check(panelKept&&closeButton()!=null) { "Macro tap closed or hid the floating panel" }
-            result.putString("stream","SMOKE_OK: history, viewer, OCR, task selection, overlay, rotation and tap-through passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
+            result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, overlay, rotation and tap-through passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
             finish(Activity.RESULT_OK,result)
         } catch(t:Throwable) { result.putString("stream","SMOKE_FAILED: ${t.stackTraceToString()}\n");finish(Activity.RESULT_CANCELED,result) }
     }

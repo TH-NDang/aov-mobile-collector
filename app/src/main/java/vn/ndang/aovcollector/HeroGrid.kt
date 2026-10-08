@@ -16,12 +16,12 @@ object HeroGrid {
     const val TOP=.20           // card centres between TOP and BOTTOM can be tapped
     const val BOTTOM=.86
     const val PARK=.70          // a scroll leaves the wanted row here, with the row before it still visible
-    const val MAX_STEP=.55      // larger moves leave too little overlap between screenshots to measure
+    const val MAX_STEP=.45      // larger moves leave too little overlap between screenshots to measure
     private const val Y0=.12
     private const val Y1=.99
     private const val BAND=.035
     private const val FEATURES=15
-    private const val MIN_OVERLAP=250
+    private const val MIN_OVERLAP=160
 
     /** Centre of card [index] (reading order from the top of the list) on screen. */
     fun centre(index:Int,offset:Double)=columns[index%5] to ROW0+(index/5)*PITCH-offset

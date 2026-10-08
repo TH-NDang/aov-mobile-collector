@@ -7,13 +7,14 @@ import org.junit.Test
 import kotlin.math.abs
 import kotlin.random.Random
 
-/** Runs the list navigation against a drawn All-heroes screen whose swipes overshoot at random. */
+/** Runs [ListNavigator] against a drawn All-heroes screen whose swipes slide on by a random amount. */
 class HeroGridTest {
-    private class FakeList(val heroes:Int,seed:Int) {
+    private class FakeList(val heroes:Int,seed:Int,val slide:ClosedFloatingPointRange<Double>) {
         val w=2400; val h=1080; var offset=0.0
         val rows=(heroes+4)/5
         val maxOffset=maxOf(0.0,(HeroGrid.ROW0+(rows-1)*HeroGrid.PITCH-.78)*h)
-        private val particles=Random(seed).let { r -> List(400) { r.nextInt(w)*h+r.nextInt(h) }.toSet() }
+        private val random=Random(seed)
+        private val particles=List(400) { random.nextInt(w)*h+random.nextInt(h) }.toSet()
         fun cardAt(x:Int,y:Int):Int? {
             if(y<.12*h) return null
             val cy=y+offset
@@ -34,44 +35,73 @@ class HeroGridTest {
                     val v=if(i%7==3) base/4+n/6 else (base+n-32).coerceIn(0,255); (0xff shl 24) or (v shl 16) or (((v+i*11)%256) shl 8) or ((v*2+i)%256) }
             }
         }
-        fun profile():FloatArray { assertTrue(HeroGrid.isGrid(w,h,::readRow)); return HeroGrid.profile(w,h,::readRow) }
-        fun hasCard(x:Double,y:Double)=HeroGrid.hasCard(w,h,x,y,::readRow)
-        fun tapped(x:Double,y:Double)=cardAt((x*(w-1)).toInt(),(y*(h-1)).toInt())
-        /** The game slides further than asked and loses a few pixels to its drag threshold. */
-        fun swipe(d:Double,r:Random) { offset=(offset+d*h*(1+r.nextDouble(0.0,.3))-15*Math.signum(d)).coerceIn(0.0,maxOffset) }
+        /** The game slides on after the finger lifts and loses a few pixels to its drag threshold. */
+        fun drag(d:Double,fling:Boolean) {
+            val factor=if(fling) random.nextDouble(3.0,5.0) else random.nextDouble(slide.start,slide.endInclusive)
+            offset=(offset+d*h*factor-15*Math.signum(d)).coerceIn(0.0,maxOffset)
+        }
     }
 
-    /** Mirrors CollectorService.Picker: measure, plan, swipe, and stop when the list stops moving. */
-    private fun collectAll(heroes:Int,seed:Int):List<Int> {
-        val list=FakeList(heroes,seed); val r=Random(seed)
-        var offset=0.0; var ref=list.profile(); val tapped=ArrayList<Int>()
-        for(card in 0 until heroes+2) {
-            val now=list.profile(); val drift=HeroGrid.shift(ref,now); assertTrue(drift.reliable); offset+=drift.px.toDouble()/list.h; ref=now
-            var stalls=0; var outcome:String?=null
-            while(outcome==null) when(val plan=HeroGrid.plan(card,offset)) {
-                is HeroGrid.Plan.Tap -> outcome=if(list.hasCard(plan.x,plan.y)) { assertEquals(card,list.tapped(plan.x,plan.y)); tapped+=card; "tap" } else "end"
-                is HeroGrid.Plan.Move -> {
-                    val before=ref; list.swipe(plan.d,r); val p=list.profile(); val s=HeroGrid.shift(before,p)
-                    assertTrue("swipe of ${plan.d} could not be measured",s.reliable)
-                    val moved=s.px.toDouble()/list.h; offset+=moved; ref=p
-                    if(abs(moved)>=.01) stalls=0
-                    else if(++stalls>=2) { val (x,y)=HeroGrid.centre(card,offset)
-                        outcome=if(plan.d>0&&y<HeroGrid.LAST_ROW_LIMIT&&list.hasCard(x,y)) { assertEquals(card,list.tapped(x,y)); tapped+=card; "tap" } else "end" }
+    private class Run(heroes:Int,seed:Int,slide:ClosedFloatingPointRange<Double>,startAt:Double=0.0) {
+        val list=FakeList(heroes,seed,slide).apply { offset=maxOffset*startAt }
+        val state=ListNavigator.State()
+        val tapped=ArrayList<Int?>()
+        var swipes=0
+        val screen=object:ListNavigator.Screen {
+            override val alive=true
+            override fun look(then:(ListNavigator.Shot?)->Unit) {
+                val grid=HeroGrid.isGrid(list.w,list.h,list::readRow)
+                val profile=if(grid) HeroGrid.profile(list.w,list.h,list::readRow) else FloatArray(0)
+                then(object:ListNavigator.Shot {
+                    override val profile=profile
+                    override val height=list.h
+                    override fun hasCard(x:Double,y:Double)=HeroGrid.hasCard(list.w,list.h,x,y,list::readRow)
+                    override fun done(keep:Boolean) {}
+                })
+            }
+            override fun drag(d:Double,fling:Boolean,then:(Boolean)->Unit) { swipes++; list.drag(d,fling); then(true) }
+            override fun tap(x:Double,y:Double,then:(Boolean)->Unit) { tapped+=list.cardAt((x*(list.w-1)).toInt(),(y*(list.h-1)).toInt()); then(true) }
+            override fun later(ms:Long,then:()->Unit) { then() }
+        }
+        /** Picks cards in order like a batch run; returns the cards actually tapped and how the run ended. */
+        fun collect(limit:Int):Pair<List<Int?>,String> {
+            for(card in 0 until limit) {
+                var outcome:ListNavigator.Outcome?=null
+                ListNavigator(card,state,screen) { outcome=it }.start()
+                when(val o=outcome) {
+                    is ListNavigator.Outcome.Tapped -> {}
+                    is ListNavigator.Outcome.End -> return tapped to "end at $card"
+                    is ListNavigator.Outcome.Failed -> return tapped to "failed at $card: ${o.reason}"
+                    null -> return tapped to "no outcome at $card"
                 }
             }
-            if(outcome=="end") { assertEquals("list ended at the wrong card",heroes,card); break }
+            return tapped to "limit"
         }
-        return tapped
     }
 
-    @Test fun oddLastRowIsCollectedOnceAndTheRunStopsAtTheEnd() { assertEquals((0 until 61).toList(),collectAll(61,6)) }
-    @Test fun fullRosterWithFourCardsInTheLastRow() { assertEquals((0 until 129).toList(),collectAll(129,1)) }
-    @Test fun shortListNeedsNoScroll() { assertEquals((0 until 7).toList(),collectAll(7,4)) }
+    private fun assertCollectsAll(heroes:Int,seed:Int,slide:ClosedFloatingPointRange<Double>,startAt:Double=0.0) {
+        val (tapped,end)=Run(heroes,seed,slide,startAt).collect(heroes+3)
+        assertEquals("tapped cards",(0 until heroes).toList(),tapped)
+        assertEquals("end at $heroes",end)
+    }
+
+    @Test fun oddLastRowIsCollectedOnceAndTheRunStopsAtTheEnd() = assertCollectsAll(61,6,1.0..1.3)
+    @Test fun fullRosterWithFourCardsInTheLastRow() = assertCollectsAll(129,1,1.0..1.3)
+    @Test fun shortListNeedsNoScroll() = assertCollectsAll(7,4,1.0..1.3)
+    @Test fun startsMidListByReturningToTheTop() = assertCollectsAll(43,8,1.0..1.3,startAt=.6)
+    /** If resting the finger does not stop the slide, swipes go 1.5-2.3 times as far; smaller steps must still keep count. */
+    @Test fun keepsCountWhenSwipesSlideFarBeyondTheDrag() = assertCollectsAll(129,3,1.5..2.3)
 
     @Test fun shiftIsMeasuredBothWaysAndRejectedWithoutOverlap() {
-        val list=FakeList(60,9); list.offset=500.0; val a=list.profile()
-        list.offset=880.0; assertEquals(380,HeroGrid.shift(a,list.profile()).px)
-        list.offset=320.0; assertEquals(-180,HeroGrid.shift(a,list.profile()).px)
-        list.offset=2000.0; assertFalse(HeroGrid.shift(a,list.profile()).reliable)
+        val list=FakeList(60,9,1.0..1.0); list.offset=500.0; val a=HeroGrid.profile(list.w,list.h,list::readRow)
+        list.offset=1250.0; assertEquals(750,HeroGrid.shift(a,HeroGrid.profile(list.w,list.h,list::readRow)).px)
+        list.offset=320.0; assertEquals(-180,HeroGrid.shift(a,HeroGrid.profile(list.w,list.h,list::readRow)).px)
+        list.offset=2000.0; assertFalse(HeroGrid.shift(a,HeroGrid.profile(list.w,list.h,list::readRow)).reliable)
+    }
+
+    @Test fun anotherScreenIsNotTakenForTheList() {
+        val busy=IntArray(2400) { x -> (0xff shl 24) or (((x*7919) and 255) shl 8) }
+        assertFalse(HeroGrid.isGrid(2400,1080) { _,row -> busy.copyInto(row) })
+        val list=FakeList(20,2,1.0..1.0); assertTrue(HeroGrid.isGrid(list.w,list.h,list::readRow))
     }
 }

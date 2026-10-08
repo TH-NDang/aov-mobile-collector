@@ -35,6 +35,8 @@ class Macro(val raw: String) {
 
 /** Coordinates calibrated from the user's 2400x1080 VN hero menu. */
 object BuiltInMacros {
+    /** Bump when the generated steps change; selected built-in macros are then regenerated with the same settings. */
+    const val VERSION=2
     fun create(heroName:String, count:Int = 1, batch:Boolean = false):String {
         require(count in 1..200)
         val steps=org.json.JSONArray()
@@ -63,6 +65,6 @@ object BuiltInMacros {
         return JSONObject().put("name",if(batch) "batch-heroes" else "single-hero")
             .put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
             .put("collectionMode",if(batch) "all" else "single").put("heroName",safeName)
-            .put("heroCount",if(batch) count else 1).put("steps",steps).toString(2)
+            .put("heroCount",if(batch) count else 1).put("builtinVersion",VERSION).put("steps",steps).toString(2)
     }
 }

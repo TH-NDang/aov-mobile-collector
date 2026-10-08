@@ -45,6 +45,7 @@ class CollectorService : AccessibilityService() {
     private val wm by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
     override fun onServiceConnected() {
         current = this; CrashLog.install(this)
+        upgradeBuiltIn()
         try { val m=readMacro(); macro=m; if(prefs.getString("hash","")==m.hash) { index=prefs.getInt("step",0);runId=prefs.getString("run","")?:"";stopped=prefs.getBoolean("stopped",false) }; if(m.json.optString("collectionMode").isBlank()) MacroStore.archive(this,m.raw) } catch(_:Exception) {}
         // A run that was still marked running means the previous process died mid-step.
         if(prefs.getBoolean("running",false)) {
@@ -334,6 +335,7 @@ class CollectorService : AccessibilityService() {
     fun start() {
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
         if(running || busy || manualBusy || activeDialog!=null || macroPicker!=null) return
+        upgradeBuiltIn()
         try {
             val m=readMacro(); if(!ready(m)) return
             macro=m
@@ -349,7 +351,21 @@ class CollectorService : AccessibilityService() {
             running=true; generation++; save(); next(generation)
         } catch(e:Exception) { pause("Lỗi macro: ${e.message}") }
     }
-    fun reset() { if(busy || manualBusy) { status("Chờ bước hiện tại xong"); return }; running=false; generation++; stopped=false; index=0; runId=""; macro=null; prefs.edit().clear().commit(); status("Sẵn sàng lượt mới") }
+    fun reset() { if(busy || manualBusy) { status("Chờ bước hiện tại xong"); return }; running=false; generation++; stopped=false; index=0; runId=""; macro=null; listRef=null; prefs.edit().clear().commit(); upgradeBuiltIn(); status("Sẵn sàng lượt mới") }
+    /**
+     * A built-in macro selected before an app update keeps its old steps in macro.json. Regenerate it with the
+     * same settings unless a run of it is still unfinished, so a new run always uses the current steps.
+     */
+    private fun upgradeBuiltIn() {
+        try {
+            val m=readMacro(); val mode=m.json.optString("collectionMode")
+            if((mode!="single"&&mode!="all")||m.json.optInt("builtinVersion",1)==BuiltInMacros.VERSION) return
+            val step=if(prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
+            if(step>0&&step<m.steps.length()&&!prefs.getBoolean("stopped",false)) return
+            MacroStore.current(this).writeText(BuiltInMacros.create(m.json.optString("heroName",""),m.json.optInt("heroCount",1),mode=="all"))
+            selectionCache=null
+        } catch(e:Exception) { CrashLog.record(this,"Không nâng cấp được macro",e) }
+    }
     private fun pause(s:String) { running=false; save(); status(s) }
     private fun stop() { running=false; stopped=true; save(); status("Đã kết thúc lượt · ảnh đã được giữ lại") }
     private fun save() {
@@ -399,7 +415,11 @@ class CollectorService : AccessibilityService() {
                 "wait" -> handler.postDelayed({ done(true) },s.getLong("ms"))
                 "back" -> done(performGlobalAction(GLOBAL_ACTION_BACK))
                 "screenshot" -> capture("%04d-%s".format(index+1,s.getString("name")),runId) { done(it) }
-                "pick" -> { val card=s.getInt("index"); Picker(card,"%04d".format(index+1),{ !finished && token==generation }) { code,reason -> when(code) { 1 -> done(true); -1 -> listEnded(card); else -> done(false,reason) } }.start() }
+                "pick" -> { val card=s.getInt("index"); pick(card,"%04d".format(index+1),{ !finished && token==generation }) { outcome -> when(outcome) {
+                    is ListNavigator.Outcome.Tapped -> done(true)
+                    is ListNavigator.Outcome.End -> listEnded(card)
+                    is ListNavigator.Outcome.Failed -> done(false,outcome.reason)
+                } } }
                 else -> {
                     val bounds=wm.currentWindowMetrics.bounds
                     val p=Path().apply { moveTo((s.getDouble("x")*(bounds.width()-1)).toFloat(),(s.getDouble("y")*(bounds.height()-1)).toFloat()) }
@@ -452,97 +472,40 @@ class CollectorService : AccessibilityService() {
         return listOf(GestureDescription.Builder().addStroke(move).build(),GestureDescription.Builder().addStroke(hold).build())
     }
     private var listRef:FloatArray?=null
-    /**
-     * Brings card [card] of the All-heroes list on screen and taps it. The game keeps sliding after a
-     * swipe and moves less at the end of the list, so every scroll is measured from screenshots
-     * instead of assumed. [finish] gets 1 when the card was tapped, -1 when the list has no such card,
-     * and 0 with a reason when the screen is not what the run expects.
-     */
-    private inner class Picker(val card:Int,val stamp:String,val alive:()->Boolean,val finish:(Int,String?)->Unit) {
+    /** Runs a [ListNavigator] for card [card] against the real screen; its state survives in list.json. */
+    private fun pick(card:Int,stamp:String,alive:()->Boolean,finish:(ListNavigator.Outcome)->Unit) {
         val file=File(filesDir,"captures/$runId/list.json")
-        val state=try { JSONObject(file.readText()) } catch(_:Exception) { JSONObject() }
-        var offset=state.optDouble("offset",0.0); var page=state.optInt("page",1); var synced=state.optBoolean("synced",false)
-        var moves=0; var stalls=0; var resyncs=0
-        val maxMoves=10+3*(card/5)
-        fun persist() { try { file.parentFile?.mkdirs(); file.writeText(JSONObject().put("offset",offset).put("page",page).put("synced",synced).toString()) } catch(e:Exception) { CrashLog.record(this@CollectorService,"Không ghi được list.json",e) } }
-        fun stop(code:Int,reason:String?) { persist(); finish(code,reason) }
-        fun release(b:Bitmap,keep:Boolean) { if(keep) store(b,runId,"$stamp-page-%02d-list".format(page)) {} else b.recycle() }
-        fun look(then:(FloatArray,Bitmap)->Unit) {
-            if(!alive()) return
-            grab { b ->
-                if(b==null) return@grab stop(0,"Không chụp được danh sách tướng")
-                try { io.execute {
-                    val p=try { if(HeroGrid.isGrid(b)) HeroGrid.profile(b) else FloatArray(0) } catch(e:Throwable) { null }
-                    handler.post { when {
-                        p==null -> { b.recycle(); stop(0,"Không đọc được ảnh danh sách") }
-                        p.isEmpty() -> { b.recycle(); synced=false; listRef=null; stop(0,"Màn hình hiện tại không phải danh sách Tất cả tướng. Mở danh sách rồi bấm Tiếp tục.") }
-                        else -> then(p,b)
-                    } }
-                } }
-                catch(e:Exception) { b.recycle(); stop(0,"Không đọc được ảnh danh sách") }
+        val saved=try { JSONObject(file.readText()) } catch(_:Exception) { JSONObject() }
+        val state=ListNavigator.State(saved.optDouble("offset",0.0),saved.optInt("page",1),saved.optBoolean("synced",false),saved.optDouble("step",1.0),listRef)
+        val screen=object:ListNavigator.Screen {
+            override val alive get()=alive()
+            override fun look(then:(ListNavigator.Shot?)->Unit) {
+                grab { b ->
+                    if(b==null) return@grab then(null)
+                    try { io.execute {
+                        val p=try { if(HeroGrid.isGrid(b)) HeroGrid.profile(b) else FloatArray(0) } catch(e:Throwable) { null }
+                        handler.post { if(p==null) { b.recycle(); then(null) } else then(object:ListNavigator.Shot {
+                            override val profile:FloatArray=p
+                            override val height=b.height
+                            override fun hasCard(x:Double,y:Double)=HeroGrid.hasCard(b,x,y)
+                            override fun done(keep:Boolean) { if(keep) store(b,runId,"$stamp-page-%02d-list".format(state.page)) {} else b.recycle() }
+                        }) }
+                    } } catch(e:Exception) { b.recycle(); then(null) }
+                }
             }
-        }
-        fun start() {
-            if(!synced) return toTop(0)
-            look { p,b ->
-                // The list should be exactly where the last pick left it; anything else means a wrong screen.
-                val ref=listRef
-                if(ref!=null) { val s=HeroGrid.shift(ref,p); if(!s.reliable) { b.recycle(); return@look lost() }; offset+=s.px.toDouble()/b.height }
-                listRef=p; aim(p,b,false)
+            override fun drag(d:Double,fling:Boolean,then:(Boolean)->Unit) {
+                val from=if(d>0) .88 else .22; val to=from-d-(if(d>0) .02 else -.02)
+                touchGame(drag(.70,from,to.coerceIn(.02,.98),if(fling) 160 else 700,if(fling) 0 else 450),false,then)
             }
+            override fun tap(x:Double,y:Double,then:(Boolean)->Unit) { touchGame(tapAt(x,y),true,then) }
+            override fun later(ms:Long,then:()->Unit) { handler.postDelayed(then,ms) }
         }
-        fun lost() {
-            synced=false; listRef=null
-            stop(0,"Màn hình không còn là danh sách tướng như lúc trước. Mở danh sách Tất cả rồi bấm Tiếp tục; app sẽ tự tìm lại vị trí.")
-        }
-        fun aim(p:FloatArray,b:Bitmap,keep:Boolean) {
-            when(val plan=HeroGrid.plan(card,offset)) {
-                is HeroGrid.Plan.Move -> { release(b,keep); move(plan.d,p) }
-                is HeroGrid.Plan.Tap -> { val has=HeroGrid.hasCard(b,plan.x,plan.y); release(b,keep); if(has) tapCard(plan.x,plan.y) else stop(-1,null) }
-            }
-        }
-        fun tapCard(x:Double,y:Double) { if(!alive()) return; persist(); touchGame(tapAt(x,y),true) { ok -> finish(if(ok) 1 else 0,if(ok) null else "Không chạm được thẻ tướng") } }
-        /** Moves the content up by [d] screen heights (negative: down) and measures what really happened. */
-        fun move(d:Double,before:FloatArray) {
-            if(!alive()) return
-            if(++moves>maxMoves) return stop(0,"Không cuộn tới được ô tướng ${card+1}")
-            val from=if(d>0) .88 else .22
-            touchGame(drag(.70,from,from-d-(if(d>0) .02 else -.02),700,450),false) { ok ->
-                if(!ok) return@touchGame stop(0,"Không vuốt được danh sách")
-                handler.postDelayed({ look { p,b ->
-                    val s=HeroGrid.shift(before,p)
-                    if(!s.reliable) { b.recycle(); return@look resync() }
-                    val moved=s.px.toDouble()/b.height; offset+=moved; listRef=p
-                    if(kotlin.math.abs(moved)>=.01) { stalls=0; page++; return@look aim(p,b,true) }
-                    if(++stalls<2) return@look aim(p,b,false)
-                    // The list stopped moving: past its end there is nothing more to collect.
-                    val (x,y)=HeroGrid.centre(card,offset)
-                    if(d>0 && y<HeroGrid.LAST_ROW_LIMIT && HeroGrid.hasCard(b,x,y)) { b.recycle(); tapCard(x,y) }
-                    else { b.recycle(); if(d>0) stop(-1,null) else stop(0,"Danh sách không cuộn được") }
-                } },800)
-            }
-        }
-        /** Measurement lost track (for example a much longer slide): go back to the top and count again. */
-        fun resync() { if(++resyncs>1) return stop(0,"Không xác định được vị trí danh sách. Mở danh sách Tất cả rồi bấm Tiếp tục."); synced=false; listRef=null; toTop(0) }
-        /** Flings to the top, then checks that one more fling no longer moves the list. */
-        fun toTop(round:Int) {
-            if(round>2) return stop(0,"Không đưa được danh sách về đầu. Mở danh sách Tất cả rồi bấm Tiếp tục.")
-            fun fling(times:Int,then:()->Unit) {
-                if(!alive()) return
-                if(times==0) return then()
-                touchGame(drag(.70,.25,.95,160,0),false) { ok -> if(!ok) stop(0,"Không vuốt được danh sách") else handler.postDelayed({ fling(times-1,then) },350) }
-            }
-            // Check it is the hero list before flinging anything: on another screen a swipe can change skins.
-            look { _,b0 -> b0.recycle()
-                fling(3) { handler.postDelayed({ look { first,b1 -> b1.recycle()
-                    fling(1) { handler.postDelayed({ look { second,b2 ->
-                        val s=HeroGrid.shift(first,second)
-                        if(s.reliable && kotlin.math.abs(s.px)<6) { offset=0.0; synced=true; page=1; listRef=second; aim(second,b2,true) }
-                        else { b2.recycle(); toTop(round+1) }
-                    } },1200) }
-                } },1200) }
-            }
-        }
+        ListNavigator(card,state,screen) { outcome ->
+            listRef=state.ref
+            try { file.parentFile?.mkdirs(); file.writeText(JSONObject().put("offset",state.offset).put("page",state.page).put("synced",state.synced).put("step",state.step).toString()) }
+            catch(e:Exception) { CrashLog.record(this,"Không ghi được list.json",e) }
+            finish(outcome)
+        }.start()
     }
     private fun manualCapture() {
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
