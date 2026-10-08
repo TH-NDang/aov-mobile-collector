@@ -37,7 +37,7 @@ class CollectorService : AccessibilityService() {
     fun prepareEdit(): Boolean { pause("Tạm dừng để quản lý dữ liệu"); return !busy && !manualBusy }
     private val prefs by lazy { getSharedPreferences("collector", MODE_PRIVATE) }
     private val wm by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
-    override fun onServiceConnected() { current = this; try { val m=readMacro(); if(m.json.optString("collectionMode").isBlank()) MacroStore.archive(this,m.raw) } catch(_:Exception) {} }
+    override fun onServiceConnected() { current = this; try { val m=readMacro(); macro=m; if(prefs.getString("hash","")==m.hash) { index=prefs.getInt("step",0);runId=prefs.getString("run","")?:"";stopped=prefs.getBoolean("stopped",false) }; if(m.json.optString("collectionMode").isBlank()) MacroStore.archive(this,m.raw) } catch(_:Exception) {} }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (running && event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val p = event.packageName?.toString()
@@ -294,7 +294,9 @@ class CollectorService : AccessibilityService() {
         if(runId.isNotEmpty()) {
             val dir=File(filesDir,"captures/$runId"); dir.mkdirs()
             if(!File(dir,"macro.json").exists()) File(dir,"macro.json").writeText(m.raw)
-            File(dir,"run.json").writeText(JSONObject().put("collectionMode",m.json.optString("collectionMode","custom")).put("heroName",m.json.optString("heroName","")).put("state",if(stopped) "stopped" else if(index>=m.steps.length()) "completed" else if(running) "running" else "paused").put("macro",m.name).put("hash",m.hash).put("nextStep",index).put("totalSteps",m.steps.length()).put("updatedAt",System.currentTimeMillis()).toString(2))
+            val metadata=File(dir,"run.json")
+            val record=try { JSONObject(metadata.readText()) } catch(_:Exception) { JSONObject() }
+            metadata.writeText(record.put("collectionMode",m.json.optString("collectionMode","custom")).put("heroName",m.json.optString("heroName","")).put("state",if(stopped) "stopped" else if(index>=m.steps.length()) "completed" else if(running) "running" else "paused").put("macro",m.name).put("hash",m.hash).put("nextStep",index).put("totalSteps",m.steps.length()).put("updatedAt",System.currentTimeMillis()).toString(2))
         }
     }
     private fun next(token:Int) {
