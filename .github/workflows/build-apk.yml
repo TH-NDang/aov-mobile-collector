@@ -7,7 +7,7 @@ concurrency:
   group: collector-build-${{ github.ref }}
   cancel-in-progress: true
 permissions:
-  contents: read
+  contents: write
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -61,6 +61,7 @@ jobs:
             adb exec-out run-as vn.ndang.aovcollector tar -C files/smoke -cf - . > ui-smoke.tar
             tar -xf ui-smoke.tar -C ui-smoke
             adb logcat -d -s AndroidRuntime > ui-smoke/crash-log.txt
+            cat ui-smoke/accessibility.txt
             grep -q SMOKE_OK smoke-result.txt
       - uses: actions/upload-artifact@v4
         if: always()
@@ -69,3 +70,12 @@ jobs:
           path: |
             ui-smoke
             smoke-result.txt
+
+      - name: Publish verified v0.3.1 APK
+        if: github.event.head_commit.message == 'Validate and release macro dropdown crash fix v0.3.1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_COMMIT: ${{ github.sha }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk aov-mobile-collector-v0.3.1.apk
+          gh release create v0.3.1 aov-mobile-collector-v0.3.1.apk --target "$RELEASE_COMMIT" --title 'AOV Collector v0.3.1' --notes 'Fix macro selection by expanding the searchable list inside the existing floating controller. Keeps the v0.3 signing key and saved collections. Built and checked with UI regression, OCR and Android lint.'
