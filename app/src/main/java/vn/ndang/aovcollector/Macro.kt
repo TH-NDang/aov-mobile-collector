@@ -9,6 +9,7 @@ class Macro(val raw: String) {
     val target: String = json.getString("targetPackage")
     val orientation: String = json.optString("orientation", "landscape")
     val steps = json.getJSONArray("steps")
+    val photoSteps:List<Int> by lazy { (0 until steps.length()).filter { steps.getJSONObject(it).getString("type")=="screenshot" } }
     val hash = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray()).joinToString("") { "%02x".format(it) }
     init {
         require(name.matches(Regex("[a-zA-Z0-9_-]{1,64}"))) { "Tên macro chỉ dùng chữ, số, _ và -" }
@@ -65,7 +66,7 @@ object BuiltInMacros {
                 }
             }
         }
-        val safeName=heroName.trim().take(80).ifEmpty { "Chưa đặt tên" }
+        val safeName=heroName.trim().take(80)
         return JSONObject().put("name",if(batch) "batch-heroes" else "single-hero")
             .put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
             .put("collectionMode",if(batch) "all" else "single").put("heroName",safeName)
