@@ -1,28 +1,18 @@
-# AOV Mobile Collector — v0.1
+# AOV Mobile Collector — v0.3
 
-App thử nghiệm trên Android 11+ để chụp dữ liệu menu Liên Quân VN bằng macro người dùng định nghĩa. Không sử dụng giả lập, không đăng nhập hộ, không đọc mật khẩu, không có quyền Internet. Macro/autoclick trên máy thật vẫn có thể ảnh hưởng tài khoản: đây không phải cam kết Garena cho phép tự động hóa.
+App thử nghiệm Android 11+ để chụp dữ liệu menu Liên Quân VN bằng macro. Ảnh lưu trên máy, OCR chạy ngoại tuyến; app không có quyền Internet.
 
-## Cài và thử
-1. GitHub → Actions → Build APK → artifact `aov-mobile-collector-apk` → giải nén APK và cài.
-2. Mở app, đọc thông báo quyền và bật AOV Collector trong Cài đặt Trợ năng.
-3. Android có thể yêu cầu cho phép cài app không rõ nguồn gốc hoặc cho phép cài đặt hạn chế trong trang thông tin ứng dụng. Chỉ bật khi tin tưởng bản bạn tự build.
-4. Giữ macro `capture-test`, bấm **Lưu macro & hiện bảng nổi**.
-5. Đăng nhập game thủ công, mở menu tướng ở màn hình ngang. Bấm **Chạy** trên bảng nổi.
-6. App chờ 3 giây rồi chụp một ảnh. Bảng nổi tự ẩn khỏi ảnh.
-7. Quay về app → **Xuất toàn bộ ảnh + metadata ZIP** để lưu vào Downloads hoặc vị trí bạn chọn.
+## Cách dùng
+1. Bấm **Trợ năng** trên header và bật AOV Collector trong cài đặt hệ thống.
+2. Bấm **Bảng nổi**, mở game thủ công và vào màn hình tướng.
+3. Mở danh sách macro trên bảng nổi; tìm tên có dấu hoặc không dấu.
+4. Chọn **Một tướng đang mở** hoặc **Danh sách tướng**; nhập tên tùy chọn hoặc số ô cần thu thập.
+5. Bấm **Chạy**. Nút đổi thành **Tạm dừng**, rồi **Tiếp tục**. **Dừng** kết thúc lượt và giữ ảnh.
+6. **Chụp** lưu ảnh thủ công. **Về app** tạm dừng và mở lịch sử. **Đóng** tạm dừng và ẩn bảng. Dấu **−** thu gọn, vẫn chạy.
+7. Trong lịch sử, mở thư mục để xem ảnh; bấm **Chọn** hoặc nhấn giữ để chọn nhiều, **Lưu ZIP** hoặc **Xóa**. Menu từng mục có đổi tên.
+8. **Nhập** trên header nhận ZIP đã xuất hoặc macro JSON. Macro JSON xuất hiện trong ô tìm của bảng nổi.
 
-Ảnh lưu riêng trên máy. Gỡ app sẽ xóa ảnh chưa xuất. Không dùng trong trận đấu.
-
-## Có trong v0.1
-- Tap/swipe/back/wait/screenshot; tọa độ theo tỉ lệ màn hình.
-- JSON editor, nhập JSON qua trình chọn file.
-- Bảng nổi kéo được: chạy, tạm dừng, chụp riêng, bỏ bước, dừng, ẩn.
-- Kiểm tra foreground package và chiều màn hình trước từng bước.
-- Checkpoint chỉ tăng sau khi bước hoàn thành; tiếp tục theo hash macro.
-- Ảnh PNG và metadata từng lượt, xuất ZIP.
-- GitHub Actions build APK + Android lint.
-
-**Chưa có:** Compose UI, ghi thao tác Record, template matching, danh sách tướng/lặp, đồng bộ Wi-Fi. Giao diện bản đầu dùng Android Views thuần để giảm phụ thuộc. Không có macro thu thập mọi tướng vì chưa có tọa độ thực tế trên máy người dùng. Không có APK được xác minh trên điện thoại thật cho đến khi người dùng thử.
+Nền bảng nổi bán trong suốt, có thể kéo ở thanh tiêu đề. Bảng tự ẩn khi chụp để không dính vào ảnh. Xuất ZIP trước khi gỡ app vì gỡ app sẽ xóa ảnh nội bộ.
 
 ## Build
 Android SDK 35, JDK 17, Gradle 8.9:
@@ -48,6 +38,6 @@ Screenshot cần API 30+, có thể thất bại nếu game chặn chụp. Nút 
 
 The main screen is collection history, with Accessibility, Import and Floating panel actions in the header. Tap a folder to browse, long-press or choose Select for multiple items, then Save ZIP or Delete. Menus also support renaming. Import handles nested hero folders as well as v0.1/v0.2 ZIPs.
 
-Choose Single hero, Hero list or an imported JSON macro directly on the floating controller. Name and count inputs are available over the game. Collapse keeps the task running; closing the panel pauses it. End retains captured images and requires a new session. Advanced single-step skipping is under Options.
+Choose Single hero, Hero list or an imported JSON macro directly on the floating controller. Name and count inputs are available over the game. Collapse keeps the task running; closing the panel pauses it. End retains captured images and requires a new session. The searchable dropdown includes imported JSON macros. The controller has Run/Pause/Resume, Stop, Capture, Back to app and Close controls on a translucent background.
 
 Bundled ML Kit reads the hero-name region from overview screenshots. A valid-looking result is used as a folder name, with suffixes to prevent overwrites. No readable name means a numbered folder; the raw OCR value and its source are saved in hero.json, and users can correct names in history. Recognition is not validated against a complete roster and can misread stylized fonts. Coordinates still target the supplied 2400x1080 layout. This changes naming, not batch completeness guarantees.
