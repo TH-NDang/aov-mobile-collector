@@ -58,7 +58,10 @@ jobs:
             adb shell settings put secure accessibility_enabled 1
             adb shell am instrument -w vn.ndang.aovcollector.test/vn.ndang.aovcollector.UiSmoke > smoke-result.txt
             cat smoke-result.txt
-            adb pull /sdcard/Android/data/vn.ndang.aovcollector/files/smoke ui-smoke || true
+            mkdir -p ui-smoke
+            adb exec-out run-as vn.ndang.aovcollector tar -C files/smoke -cf - . > ui-smoke.tar
+            tar -xf ui-smoke.tar -C ui-smoke
+            adb logcat -d -s AndroidRuntime > ui-smoke/crash-log.txt
             grep -q SMOKE_OK smoke-result.txt
       - uses: actions/upload-artifact@v4
         if: always()
