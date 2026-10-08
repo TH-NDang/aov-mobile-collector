@@ -24,6 +24,7 @@ class Macro(val raw: String) {
                 "wait" -> require(s.getLong("ms") in 0..60000) { "Thời gian chờ tối đa 60 giây" }
                 "screenshot" -> require(s.getString("name").matches(Regex("[a-zA-Z0-9_-]{1,64}"))) { "Tên ảnh không hợp lệ" }
                 "back" -> Unit
+                "pick" -> require(s.getInt("index") in 0..9999) { "pick: index từ 0 đến 9999" }
                 else -> error("Bước ${i+1}: type không hỗ trợ")
             }
         }
@@ -52,19 +53,11 @@ object BuiltInMacros {
             }
         }
         waitFor(3000)
-        if(!batch) collect("hero") else {
-            val columns=listOf(.337,.459,.580,.702,.823)
-            for(i in 0 until count) {
-                val slot=i%10
-                if(slot==0) shot("page-%02d-list".format(i/10+1))
-                tap(columns[slot%5],if(slot<5) .31 else .72); waitFor(1800)
-                collect("hero-%03d".format(i+1))
-                tap(.09,.05); waitFor(1400)
-                if(slot==9 && i<count-1) {
-                    steps.put(JSONObject().put("type","swipe").put("x",.70).put("y",.94).put("toX",.70).put("toY",.112).put("ms",1400))
-                    waitFor(1600)
-                }
-            }
+        if(!batch) collect("hero") else for(i in 0 until count) {
+            // "pick" scrolls the list by measured amounts and taps card i; the run ends early at the end of the list.
+            steps.put(JSONObject().put("type","pick").put("index",i)); waitFor(2700)
+            collect("hero-%03d".format(i+1))
+            tap(.09,.05); waitFor(1400)
         }
         val safeName=heroName.trim().take(80)
         return JSONObject().put("name",if(batch) "batch-heroes" else "single-hero")

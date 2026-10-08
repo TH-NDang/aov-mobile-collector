@@ -28,7 +28,7 @@ jobs:
       - name: Restore fixed development signing key
         run: |
           base64 --decode debug-keystore.base64 > collector-debug.keystore
-      - run: gradle --no-daemon assembleDebug assembleDebugAndroidTest lintDebug
+      - run: gradle --no-daemon assembleDebug assembleDebugAndroidTest lintDebug testDebugUnitTest
       - uses: actions/upload-artifact@v4
         with:
           name: aov-mobile-collector-apk

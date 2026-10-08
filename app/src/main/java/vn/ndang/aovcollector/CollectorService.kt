@@ -268,13 +268,13 @@ class CollectorService : AccessibilityService() {
     }
     private fun taskForm(batch:Boolean) {
         val body=Ui.stack(this).apply { setPadding(dp(20),dp(6),dp(20),dp(6)) }
-        body.addView(Ui.text(this,if(batch) "Mở Tất cả tướng và kéo về đầu danh sách. Nên thử 2 ô trước; dùng 11 ô để thử cả bước vuốt." else "Mở trang chi tiết tướng. App chụp tổng quan, thuộc tính và 4 chiêu.",14f))
+        body.addView(Ui.text(this,if(batch) "Mở danh sách Tất cả tướng. App tự đưa danh sách về đầu, đo từng lần cuộn và dừng khi hết danh sách." else "Mở trang chi tiết tướng. App chụp tổng quan, thuộc tính và 4 chiêu.",14f))
         body.addView(Ui.text(this,if(batch) "Số ô tướng cần lấy" else "Tên tướng (không bắt buộc)",13f,Ui.muted,true))
         val field=Ui.field(this,if(batch) "1–200" else "Để trống để tự đọc tên",if(batch) uiPrefs.getInt("count",2).toString() else "",batch);body.addView(field)
         if(batch) {
-            body.addView(Ui.text(this,"Tự vuốt còn thử nghiệm; trang cuối có thể lặp. Khoảng 1 phút và 25 MB mỗi ô.",12f,Ui.muted))
+            body.addView(Ui.text(this,"Khoảng 1 phút và 25 MB mỗi tướng. Chọn Tất cả để lấy đến cuối danh sách.",12f,Ui.muted))
             val quick=LinearLayout(this)
-            listOf(2,11,129).forEach { n -> quick.addView(Ui.button(this,"$n ô") { field.setText(n.toString()) },LinearLayout.LayoutParams(0,dp(40),1f).apply { marginEnd=dp(4) }) };body.addView(quick)
+            listOf(2 to "2 ô",11 to "11 ô",200 to "Tất cả").forEach { (n,text) -> quick.addView(Ui.button(this,text) { field.setText(n.toString()) },LinearLayout.LayoutParams(0,dp(40),1f).apply { marginEnd=dp(4) }) };body.addView(quick)
         } else body.addView(Ui.text(this,"Tên được đọc từ ảnh. Nếu không rõ, app dùng thư mục đánh số; có thể đổi tên trong Ảnh đã lưu.",12f,Ui.muted))
         body.addView(Ui.text(this,"Chọn tác vụ sẽ tạo lượt mới. Ảnh đã chụp vẫn giữ lại.",12f,Ui.muted))
         val formScroll=ScrollView(this).apply { addView(body) }
@@ -344,7 +344,7 @@ class CollectorService : AccessibilityService() {
             if(runId.isEmpty()) {
                 val mode=m.json.optString("collectionMode","custom")
                 val slug=m.json.optString("heroName","").replace(Regex("[^a-zA-Z0-9_-]"),"-").take(40)
-                runId="$mode-${slug}-"+SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US).format(Date())
+                runId="$mode-${slug}-"+SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US).format(Date()); listRef=null
             }
             running=true; generation++; save(); next(generation)
         } catch(e:Exception) { pause("Lỗi macro: ${e.message}") }
@@ -360,6 +360,7 @@ class CollectorService : AccessibilityService() {
             if(!File(dir,"macro.json").exists()) File(dir,"macro.json").writeText(m.raw)
             val metadata=File(dir,"run.json")
             val record=try { JSONObject(metadata.readText()) } catch(_:Exception) { JSONObject() }
+            if(!record.has("createdAt")) record.put("createdAt",System.currentTimeMillis())
             metadata.writeText(record.put("collectionMode",m.json.optString("collectionMode","custom")).put("heroName",m.json.optString("heroName","")).put("state",if(stopped) "stopped" else if(index>=m.steps.length()) "completed" else if(running) "running" else "paused").put("macro",m.name).put("hash",m.hash).put("nextStep",index).put("totalSteps",m.steps.length()).put("updatedAt",System.currentTimeMillis())
                 // Taps that landed on the hidden panel and had to be resent; non-zero confirms the v0.3.1 failure mode on this device.
                 .put("panelTapRetries",record.optInt("panelTapRetries",0)+unsavedRetries).toString(2))
@@ -375,24 +376,30 @@ class CollectorService : AccessibilityService() {
         refreshPanel()
         val s=m.steps.getJSONObject(index); busy=true
         var finished=false
-        fun done(ok:Boolean) {
+        fun done(ok:Boolean,reason:String?=null) {
             if(finished || token!=generation) return
             finished=true; busy=false
             shield(false)
-            if(!ok) { pause("Không thực hiện được thao tác ${index+1}. Kiểm tra màn hình rồi tiếp tục."); return }
+            if(!ok) { pause(reason?:"Không thực hiện được thao tác ${index+1}. Kiểm tra màn hình rồi tiếp tục."); return }
             index++; save()
             if(running) handler.postDelayed({ next(token) },400)
             else status(if(stopped) "Đã kết thúc lượt · ảnh được giữ lại" else "Đã tạm dừng · bấm Tiếp tục khi sẵn sàng")
         }
+        fun listEnded(collected:Int) {
+            if(finished || token!=generation) return
+            finished=true; busy=false; shield(false)
+            index=m.steps.length(); running=false; save(); status("Đã hết danh sách · lấy xong $collected tướng")
+        }
         try {
             val type=s.getString("type")
             // A step that never reports back must not leave the controller stuck on "Đang xử lý".
-            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; else -> 10000L }
+            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; "pick" -> 300000L; else -> 10000L }
             handler.postDelayed({ if(!finished && token==generation) { CrashLog.record(this,"Bước ${index+1} ($type) quá thời gian",null); done(false) } },limit)
             when(type) {
                 "wait" -> handler.postDelayed({ done(true) },s.getLong("ms"))
                 "back" -> done(performGlobalAction(GLOBAL_ACTION_BACK))
                 "screenshot" -> capture("%04d-%s".format(index+1,s.getString("name")),runId) { done(it) }
+                "pick" -> { val card=s.getInt("index"); Picker(card,"%04d".format(index+1),{ !finished && token==generation }) { code,reason -> when(code) { 1 -> done(true); -1 -> listEnded(card); else -> done(false,reason) } }.start() }
                 else -> {
                     val bounds=wm.currentWindowMetrics.bounds
                     val p=Path().apply { moveTo((s.getDouble("x")*(bounds.width()-1)).toFloat(),(s.getDouble("y")*(bounds.height()-1)).toFloat()) }
@@ -407,26 +414,135 @@ class CollectorService : AccessibilityService() {
     /**
      * Sends a gesture to the game with the panel out of the way. If the touch still lands on the
      * panel (its window update has not reached input yet) or Android cancels a tap, it is resent.
+     * Gestures after the first continue its stroke, as in a drag that holds still before lifting.
      */
-    internal fun touchGame(gesture:GestureDescription,tap:Boolean,result:(Boolean)->Unit) {
+    internal fun touchGame(gesture:GestureDescription,tap:Boolean,result:(Boolean)->Unit)=touchGame(listOf(gesture),tap,result)
+    internal fun touchGame(gestures:List<GestureDescription>,tap:Boolean,result:(Boolean)->Unit) {
         val session=++shieldSession; shield(true)
         val done={ ok:Boolean -> if(session==shieldSession) shield(false); result(ok) }
         fun send(attempt:Int) {
             if(current!==this) return
             swallowed=false
-            val callback=object:GestureResultCallback() {
-                override fun onCompleted(g:GestureDescription?) {
-                    if(!swallowed) { done(true); return }
-                    swallowedTaps++; if(busy) unsavedRetries++
-                    if(attempt<GESTURE_RETRIES) handler.postDelayed({ send(attempt+1) },SHIELD_MS) else done(false)
+            fun part(i:Int) {
+                val callback=object:GestureResultCallback() {
+                    override fun onCompleted(g:GestureDescription?) {
+                        if(i>0||!swallowed) { if(i+1<gestures.size) part(i+1) else done(true); return }
+                        swallowedTaps++; if(busy) unsavedRetries++
+                        if(attempt<GESTURE_RETRIES) handler.postDelayed({ send(attempt+1) },SHIELD_MS) else done(false)
+                    }
+                    // A cancelled swipe may have scrolled part way, so only taps are repeated.
+                    override fun onCancelled(g:GestureDescription?) { if(tap && attempt<GESTURE_RETRIES) handler.postDelayed({ send(attempt+1) },SHIELD_MS) else done(false) }
                 }
-                // A cancelled swipe may have scrolled part way, so only taps are repeated.
-                override fun onCancelled(g:GestureDescription?) { if(tap && attempt<GESTURE_RETRIES) handler.postDelayed({ send(attempt+1) },SHIELD_MS) else done(false) }
+                val sent=try { dispatchGesture(gestures[i],callback,handler) } catch(e:Exception) { CrashLog.record(this,"Không gửi được thao tác chạm",e); false }
+                if(!sent) done(false)
             }
-            val sent=try { dispatchGesture(gesture,callback,handler) } catch(e:Exception) { CrashLog.record(this,"Không gửi được thao tác chạm",e); false }
-            if(!sent) done(false)
+            part(0)
         }
         handler.postDelayed({ send(0) },SHIELD_MS)
+    }
+    private fun screen()=wm.currentWindowMetrics.bounds
+    private fun tapAt(x:Double,y:Double):GestureDescription { val b=screen()
+        return GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(Path().apply { moveTo((x*(b.width()-1)).toFloat(),(y*(b.height()-1)).toFloat()) },0,TAP_MS)).build() }
+    /** A drag between two screen fractions; with [holdMs] the finger rests at the end so the list does not keep sliding. */
+    private fun drag(x:Double,from:Double,to:Double,moveMs:Long,holdMs:Long):List<GestureDescription> {
+        val b=screen(); val px=(x*(b.width()-1)).toFloat(); val y0=(from*(b.height()-1)).toFloat(); val y1=(to*(b.height()-1)).toFloat()
+        val move=GestureDescription.StrokeDescription(Path().apply { moveTo(px,y0);lineTo(px,y1) },0,moveMs,holdMs>0)
+        if(holdMs<=0) return listOf(GestureDescription.Builder().addStroke(move).build())
+        val hold=move.continueStroke(Path().apply { moveTo(px,y1) },0,holdMs,false)
+        return listOf(GestureDescription.Builder().addStroke(move).build(),GestureDescription.Builder().addStroke(hold).build())
+    }
+    private var listRef:FloatArray?=null
+    /**
+     * Brings card [card] of the All-heroes list on screen and taps it. The game keeps sliding after a
+     * swipe and moves less at the end of the list, so every scroll is measured from screenshots
+     * instead of assumed. [finish] gets 1 when the card was tapped, -1 when the list has no such card,
+     * and 0 with a reason when the screen is not what the run expects.
+     */
+    private inner class Picker(val card:Int,val stamp:String,val alive:()->Boolean,val finish:(Int,String?)->Unit) {
+        val file=File(filesDir,"captures/$runId/list.json")
+        val state=try { JSONObject(file.readText()) } catch(_:Exception) { JSONObject() }
+        var offset=state.optDouble("offset",0.0); var page=state.optInt("page",1); var synced=state.optBoolean("synced",false)
+        var moves=0; var stalls=0; var resyncs=0
+        val maxMoves=10+3*(card/5)
+        fun persist() { try { file.parentFile?.mkdirs(); file.writeText(JSONObject().put("offset",offset).put("page",page).put("synced",synced).toString()) } catch(e:Exception) { CrashLog.record(this@CollectorService,"Không ghi được list.json",e) } }
+        fun stop(code:Int,reason:String?) { persist(); finish(code,reason) }
+        fun release(b:Bitmap,keep:Boolean) { if(keep) store(b,runId,"$stamp-page-%02d-list".format(page)) {} else b.recycle() }
+        fun look(then:(FloatArray,Bitmap)->Unit) {
+            if(!alive()) return
+            grab { b ->
+                if(b==null) return@grab stop(0,"Không chụp được danh sách tướng")
+                try { io.execute {
+                    val p=try { if(HeroGrid.isGrid(b)) HeroGrid.profile(b) else FloatArray(0) } catch(e:Throwable) { null }
+                    handler.post { when {
+                        p==null -> { b.recycle(); stop(0,"Không đọc được ảnh danh sách") }
+                        p.isEmpty() -> { b.recycle(); synced=false; listRef=null; stop(0,"Màn hình hiện tại không phải danh sách Tất cả tướng. Mở danh sách rồi bấm Tiếp tục.") }
+                        else -> then(p,b)
+                    } }
+                } }
+                catch(e:Exception) { b.recycle(); stop(0,"Không đọc được ảnh danh sách") }
+            }
+        }
+        fun start() {
+            if(!synced) return toTop(0)
+            look { p,b ->
+                // The list should be exactly where the last pick left it; anything else means a wrong screen.
+                val ref=listRef
+                if(ref!=null) { val s=HeroGrid.shift(ref,p); if(!s.reliable) { b.recycle(); return@look lost() }; offset+=s.px.toDouble()/b.height }
+                listRef=p; aim(p,b,false)
+            }
+        }
+        fun lost() {
+            synced=false; listRef=null
+            stop(0,"Màn hình không còn là danh sách tướng như lúc trước. Mở danh sách Tất cả rồi bấm Tiếp tục; app sẽ tự tìm lại vị trí.")
+        }
+        fun aim(p:FloatArray,b:Bitmap,keep:Boolean) {
+            when(val plan=HeroGrid.plan(card,offset)) {
+                is HeroGrid.Plan.Move -> { release(b,keep); move(plan.d,p) }
+                is HeroGrid.Plan.Tap -> { val has=HeroGrid.hasCard(b,plan.x,plan.y); release(b,keep); if(has) tapCard(plan.x,plan.y) else stop(-1,null) }
+            }
+        }
+        fun tapCard(x:Double,y:Double) { if(!alive()) return; persist(); touchGame(tapAt(x,y),true) { ok -> finish(if(ok) 1 else 0,if(ok) null else "Không chạm được thẻ tướng") } }
+        /** Moves the content up by [d] screen heights (negative: down) and measures what really happened. */
+        fun move(d:Double,before:FloatArray) {
+            if(!alive()) return
+            if(++moves>maxMoves) return stop(0,"Không cuộn tới được ô tướng ${card+1}")
+            val from=if(d>0) .88 else .22
+            touchGame(drag(.70,from,from-d-(if(d>0) .02 else -.02),700,450),false) { ok ->
+                if(!ok) return@touchGame stop(0,"Không vuốt được danh sách")
+                handler.postDelayed({ look { p,b ->
+                    val s=HeroGrid.shift(before,p)
+                    if(!s.reliable) { b.recycle(); return@look resync() }
+                    val moved=s.px.toDouble()/b.height; offset+=moved; listRef=p
+                    if(kotlin.math.abs(moved)>=.01) { stalls=0; page++; return@look aim(p,b,true) }
+                    if(++stalls<2) return@look aim(p,b,false)
+                    // The list stopped moving: past its end there is nothing more to collect.
+                    val (x,y)=HeroGrid.centre(card,offset)
+                    if(d>0 && y<HeroGrid.LAST_ROW_LIMIT && HeroGrid.hasCard(b,x,y)) { b.recycle(); tapCard(x,y) }
+                    else { b.recycle(); if(d>0) stop(-1,null) else stop(0,"Danh sách không cuộn được") }
+                } },800)
+            }
+        }
+        /** Measurement lost track (for example a much longer slide): go back to the top and count again. */
+        fun resync() { if(++resyncs>1) return stop(0,"Không xác định được vị trí danh sách. Mở danh sách Tất cả rồi bấm Tiếp tục."); synced=false; listRef=null; toTop(0) }
+        /** Flings to the top, then checks that one more fling no longer moves the list. */
+        fun toTop(round:Int) {
+            if(round>2) return stop(0,"Không đưa được danh sách về đầu. Mở danh sách Tất cả rồi bấm Tiếp tục.")
+            fun fling(times:Int,then:()->Unit) {
+                if(!alive()) return
+                if(times==0) return then()
+                touchGame(drag(.70,.25,.95,160,0),false) { ok -> if(!ok) stop(0,"Không vuốt được danh sách") else handler.postDelayed({ fling(times-1,then) },350) }
+            }
+            // Check it is the hero list before flinging anything: on another screen a swipe can change skins.
+            look { _,b0 -> b0.recycle()
+                fling(3) { handler.postDelayed({ look { first,b1 -> b1.recycle()
+                    fling(1) { handler.postDelayed({ look { second,b2 ->
+                        val s=HeroGrid.shift(first,second)
+                        if(s.reliable && kotlin.math.abs(s.px)<6) { offset=0.0; synced=true; page=1; listRef=second; aim(second,b2,true) }
+                        else { b2.recycle(); toTop(round+1) }
+                    } },1200) }
+                } },1200) }
+            }
+        }
     }
     private fun manualCapture() {
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
@@ -457,34 +573,41 @@ class CollectorService : AccessibilityService() {
         mapping.put(key,actual);mapFile.writeText(mapping.toString(2))
         return dir
     }
-    private fun capture(name:String,folder:String,done:(Boolean)->Unit) {
+    /** Takes a screenshot with the panel hidden; [done] gets a software bitmap to recycle, or null. */
+    private fun grab(done:(Bitmap?)->Unit) {
         val session=++shieldSession; shield(true)
-        val finish={ ok:Boolean -> if(session==shieldSession) shield(false); done(ok) }
+        val finish={ b:Bitmap? -> if(session==shieldSession) shield(false); done(b) }
         fun shoot(retry:Boolean) {
-            if(filesDir.usableSpace < 30L*1024*1024) { status("Không đủ dung lượng trống để chụp"); finish(false); return }
-            if(rootInActiveWindow?.packageName?.toString() != "com.garena.game.kgvn") { finish(false); return }
+            if(rootInActiveWindow?.packageName?.toString() != "com.garena.game.kgvn") { finish(null); return }
             val callback=object:TakeScreenshotCallback {
                 override fun onSuccess(result:ScreenshotResult) {
                     val buffer=result.hardwareBuffer
                     val bitmap=try { val hardware=Bitmap.wrapHardwareBuffer(buffer,result.colorSpace); hardware?.copy(Bitmap.Config.ARGB_8888,false).also { hardware?.recycle() } }
-                        catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không đọc được ảnh chụp $name",e); null } finally { buffer.close() }
-                    if(bitmap==null) { finish(false); return }
-                    try {
-                        io.execute {
-                            val ok=try { val dir=photoDirectory(folder,name,bitmap); File(dir,"$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) } } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không lưu được ảnh $name",e); false }
-                            bitmap.recycle()
-                            handler.post { finish(ok) }
-                        }
-                    } catch(e:Exception) { bitmap.recycle(); finish(false) }
+                        catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không đọc được ảnh chụp",e); null } finally { buffer.close() }
+                    finish(bitmap)
                 }
                 override fun onFailure(errorCode:Int) {
                     // Android allows one accessibility screenshot per second.
                     if(errorCode==ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT && retry) { handler.postDelayed({ shoot(false) },1100); return }
-                    status("Chụp màn hình thất bại (mã $errorCode)"); finish(false)
+                    status("Chụp màn hình thất bại (mã $errorCode)"); finish(null)
                 }
             }
-            try { takeScreenshot(Display.DEFAULT_DISPLAY,mainExecutor,callback) } catch(e:Exception) { CrashLog.record(this,"Không gọi được chụp màn hình",e); finish(false) }
+            try { takeScreenshot(Display.DEFAULT_DISPLAY,mainExecutor,callback) } catch(e:Exception) { CrashLog.record(this,"Không gọi được chụp màn hình",e); finish(null) }
         }
         handler.postDelayed({ shoot(true) },350)
+    }
+    private fun capture(name:String,folder:String,done:(Boolean)->Unit) {
+        if(filesDir.usableSpace < 30L*1024*1024) { status("Không đủ dung lượng trống để chụp"); done(false); return }
+        grab { bitmap -> if(bitmap==null) done(false) else store(bitmap,folder,name,done) }
+    }
+    /** Writes [bitmap] as PNG off the main thread and recycles it. */
+    private fun store(bitmap:Bitmap,folder:String,name:String,done:(Boolean)->Unit) {
+        try {
+            io.execute {
+                val ok=try { val dir=photoDirectory(folder,name,bitmap); File(dir,"$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) } } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không lưu được ảnh $name",e); false }
+                bitmap.recycle()
+                handler.post { done(ok) }
+            }
+        } catch(e:Exception) { bitmap.recycle(); done(false) }
     }
 }

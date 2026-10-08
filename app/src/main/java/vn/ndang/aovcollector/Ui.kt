@@ -58,8 +58,8 @@ object MacroStore {
     fun title(m:Macro):String = when(m.json.optString("collectionMode")) { "single" -> "Một tướng"; "all" -> "Danh sách tướng"; else -> "Macro đã nhập" }
     fun description(m:Macro):String = when(m.json.optString("collectionMode")) {
         "single" -> m.json.optString("heroName","").ifBlank { "Tướng đang mở · 10 ảnh" }
-        "all" -> "${m.json.optInt("heroCount",1)} ô tướng · tự vuốt danh sách"
+        "all" -> "${m.json.optInt("heroCount",1)} ô tướng · cuộn có đo, dừng ở cuối danh sách"
         else -> m.name
     }
-    fun instruction(m:Macro):String = if(m.json.optString("collectionMode")=="all") "Mở Tất cả tướng và kéo về đầu danh sách." else if(m.json.optString("collectionMode")=="single") "Mở trang chi tiết tướng, đóng bảng mô tả chiêu." else "Mở đúng màn hình bắt đầu của macro."
+    fun instruction(m:Macro):String = if(m.json.optString("collectionMode")=="all") "Mở danh sách Tất cả tướng; app tự đưa về đầu danh sách." else if(m.json.optString("collectionMode")=="single") "Mở trang chi tiết tướng, đóng bảng mô tả chiêu." else "Mở đúng màn hình bắt đầu của macro."
 }

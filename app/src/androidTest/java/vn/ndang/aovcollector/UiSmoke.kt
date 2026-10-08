@@ -41,17 +41,28 @@ class UiSmoke:Instrumentation() {
             check(name!=null&&HeroNames.slug(name)=="elandorr") { "OCR returned $name" }
             check(HeroNames.slug("Điêu Thuyền")=="dieu-thuyen")
             val m=Macro(BuiltInMacros.create(""));check(m.photoSteps.size==10)
-            check(Macro(BuiltInMacros.create("",11,true)).steps.toString().contains("swipe"))
+            check(Macro(BuiltInMacros.create("",11,true)).steps.toString().contains("\"pick\""))
             val run=File(targetContext.filesDir,"captures/smoke-demo").apply { mkdirs() }
             File(run,"run.json").writeText(JSONObject().put("collectionMode","all").put("label","Buổi thu thập mẫu").put("state","completed").put("updatedAt",System.currentTimeMillis()).toString())
             val hero=File(run,"elandorr").apply { mkdirs() }
             File(hero,"hero.json").writeText(JSONObject().put("name","Eland’orr").put("nameSource","ocr").toString())
-            File(hero,"0004-hero-overview.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG,100,it) };image.recycle()
+            for(name in listOf("0004-hero-overview","0008-hero-attributes","0012-hero-skill-1-summary")) File(hero,"$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG,100,it) };image.recycle()
             MacroStore.current(targetContext).writeText(BuiltInMacros.create(""))
             val activity=startActivitySync(Intent(targetContext,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             val dest=File(targetContext.filesDir,"smoke").apply { mkdirs() }
             fun snap(n:String) { waitForIdleSync();SystemClock.sleep(700);val b=automation.takeScreenshot()?:error("No screenshot");File(dest,"$n.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG,100,it) };b.recycle() }
             snap("01-history")
+            // Viewer: open a photo from history, step to the next one, then return to the top level.
+            fun tapText(text:String) { waitForIdleSync();SystemClock.sleep(500)
+                var node=automation.rootInActiveWindow?.findAccessibilityNodeInfosByText(text)?.firstOrNull()?:error("Missing $text")
+                while(!node.isClickable) node=node.parent?:error("$text is not clickable")
+                check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) { "Cannot click $text" } }
+            tapText("Buổi thu thập mẫu");tapText("Eland’orr");tapText("Tổng quan");snap("01b-viewer")
+            tapText("Ảnh sau");waitForIdleSync();SystemClock.sleep(400)
+            check(automation.rootInActiveWindow?.findAccessibilityNodeInfosByText("2/3")?.isNotEmpty()==true) { "Viewer did not move to the next photo" }
+            snap("01c-viewer-next")
+            repeat(3) { automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);waitForIdleSync();SystemClock.sleep(500) }
+            check(automation.rootInActiveWindow?.findAccessibilityNodeInfosByText("Buổi thu thập mẫu")?.isNotEmpty()==true) { "Back did not return to history" }
             shell("settings put secure enabled_accessibility_services null")
             SystemClock.sleep(1200)
             shell("settings put secure enabled_accessibility_services vn.ndang.aovcollector/vn.ndang.aovcollector.CollectorService")
@@ -111,7 +122,7 @@ class UiSmoke:Instrumentation() {
             snap("06-after-macro-tap")
             check(delivered.get()) { "Macro tap was not delivered past the panel (swallowed=$swallowed)" }
             check(panelKept&&closeButton()!=null) { "Macro tap closed or hid the floating panel" }
-            result.putString("stream","SMOKE_OK: history, OCR, task selection, overlay, rotation and tap-through passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
+            result.putString("stream","SMOKE_OK: history, viewer, OCR, task selection, overlay, rotation and tap-through passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
             finish(Activity.RESULT_OK,result)
         } catch(t:Throwable) { result.putString("stream","SMOKE_FAILED: ${t.stackTraceToString()}\n");finish(Activity.RESULT_CANCELED,result) }
     }
