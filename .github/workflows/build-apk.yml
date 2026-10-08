@@ -58,8 +58,8 @@ jobs:
           script: |
             adb install -r app/build/outputs/apk/debug/app-universal-debug.apk
             adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
-            adb shell settings put secure enabled_accessibility_services vn.ndang.aovcollector/.CollectorService
-            adb shell settings put secure accessibility_enabled 1
+            # UiSmoke enables the service itself once its process is up; enabling it here races the
+            # process restart of am instrument and can leave the binding stuck.
             adb shell am instrument -w vn.ndang.aovcollector.test/vn.ndang.aovcollector.UiSmoke > smoke-result.txt
             cat smoke-result.txt
             mkdir -p ui-smoke
