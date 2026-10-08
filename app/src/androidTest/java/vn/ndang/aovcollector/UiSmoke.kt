@@ -53,7 +53,14 @@ class UiSmoke:Instrumentation() {
             shell("settings put secure enabled_accessibility_services vn.ndang.aovcollector/vn.ndang.aovcollector.CollectorService")
             shell("settings put secure accessibility_enabled 1")
             var service:CollectorService?=null
-            for(i in 0..40) { runOnMainSync { service=CollectorService.current };if(service!=null) break;SystemClock.sleep(250) }
+            for(attempt in 0..2) {
+                for(i in 0..40) { runOnMainSync { service=CollectorService.current };if(service!=null) break;SystemClock.sleep(250) }
+                if(service!=null) break
+                shell("settings put secure enabled_accessibility_services null")
+                SystemClock.sleep(1500)
+                shell("settings put secure enabled_accessibility_services vn.ndang.aovcollector/vn.ndang.aovcollector.CollectorService")
+                shell("settings put secure accessibility_enabled 1")
+            }
             android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("dumpsys accessibility")).use { File(dest,"accessibility.txt").writeBytes(it.readBytes()) }
             check(service!=null) { "Accessibility service not connected" }
             runOnMainSync { service!!.showPanel() }
