@@ -26,7 +26,7 @@ jobs:
         run: |
           mkdir -p ~/.android
           base64 --decode debug-keystore.base64 > ~/.android/debug.keystore
-      - run: gradle --no-daemon assembleDebug lintDebug
+      - run: gradle --no-daemon assembleDebug assembleDebugAndroidTest lintDebug
       - uses: actions/upload-artifact@v4
         with:
           name: aov-mobile-collector-apk
@@ -37,3 +37,30 @@ jobs:
         with:
           name: lint-report
           path: app/build/reports/lint-results-debug.html
+
+      - name: Enable emulator acceleration
+        run: sudo chmod 666 /dev/kvm
+      - name: UI and OCR smoke check
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb shell settings put secure enabled_accessibility_services vn.ndang.aovcollector/.CollectorService
+            adb shell settings put secure accessibility_enabled 1
+            adb shell am instrument -w vn.ndang.aovcollector.test/vn.ndang.aovcollector.UiSmoke > smoke-result.txt
+            adb pull /sdcard/Android/data/vn.ndang.aovcollector/files/smoke ui-smoke
+            cat smoke-result.txt
+            grep -q SMOKE_OK smoke-result.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-smoke
+          path: |
+            ui-smoke
+            smoke-result.txt
