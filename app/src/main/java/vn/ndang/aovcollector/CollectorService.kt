@@ -56,6 +56,7 @@ class CollectorService : AccessibilityService() {
     private var bubble:TextView?=null
     private var lastStatus="Sẵn sàng"
     private var activeDialog:AlertDialog?=null
+    private var macroPopup:PopupWindow?=null
     private val uiPrefs by lazy { getSharedPreferences("ui",MODE_PRIVATE) }
     private fun dp(n:Int)=Ui.dp(this,n)
     private var selectionCache:Macro?=null
@@ -71,12 +72,12 @@ class CollectorService : AccessibilityService() {
     }
     override fun onConfigurationChanged(newConfig:Configuration) {
         super.onConfigurationChanged(newConfig)
-        if(panel!=null) rebuildPanel()
+        if(panel!=null) { macroPopup?.dismiss();rebuildPanel() }
     }
     private fun rebuildPanel() {
         panel?.let { wm.removeView(it) }
         label=null; primary=null; choose=null; taskLabel=null; taskDetail=null; progress=null; bubble=null
-        val layout=Ui.stack(this).apply { setPadding(dp(12),dp(10),dp(12),dp(10)); background=Ui.shape(Color.rgb(25,29,48),dp(20)) }
+        val layout=Ui.stack(this).apply { setPadding(dp(12),dp(10),dp(12),dp(10)); background=Ui.shape(Color.argb(195,20,24,42),dp(20),Color.argb(70,230,230,255)) }
         val params=panelParams ?: WindowManager.LayoutParams().apply {
             type=WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
             flags=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
@@ -107,27 +108,36 @@ class CollectorService : AccessibilityService() {
             layout.addView(bubble); drag(bubble!!) { compact=false;rebuildPanel() }
         } else {
             val header=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
-            val title=Ui.text(this,"THU THẬP",11f,Color.rgb(181,187,208),true)
+            val title=Ui.text(this,"AOV  ·  KÉO ĐỂ DI CHUYỂN",10f,Color.rgb(220,224,237),true)
             header.addView(title,LinearLayout.LayoutParams(0,dp(34),1f));drag(title)
             val collapse=Ui.button(this,"−") { compact=true;rebuildPanel() }.apply { contentDescription="Thu gọn bảng nổi";setTextColor(Color.WHITE);background=Ui.shape(Color.rgb(47,52,74),dp(10)) }
             header.addView(collapse,LinearLayout.LayoutParams(dp(38),dp(32)));layout.addView(header)
-            taskLabel=Ui.text(this,"",19f,Color.WHITE,true).apply { setPadding(0,0,0,dp(4));includeFontPadding=false;maxLines=1 };layout.addView(taskLabel)
-            taskDetail=Ui.text(this,"",12f,Color.rgb(181,187,208)).apply { setPadding(0,0,0,dp(5));includeFontPadding=false;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END };layout.addView(taskDetail)
-            choose=Ui.button(this,"Đổi tác vụ  ›") { showTaskPicker() }.apply { textSize=12f;setTextColor(Color.rgb(210,204,255));background=Ui.shape(Color.rgb(48,42,79),dp(11)) }
-            layout.addView(choose,LinearLayout.LayoutParams(-1,dp(36)))
+            choose=Ui.button(this,"Chọn macro  ▾") { showTaskPicker() }.apply {
+                textSize=15f;gravity=Gravity.CENTER_VERTICAL or Gravity.START;setTextColor(Color.WHITE)
+                background=Ui.shape(Color.argb(165,63,53,104),dp(11),Color.argb(90,208,196,255))
+                contentDescription="Chọn macro, có tìm kiếm"
+            }
+            layout.addView(choose,LinearLayout.LayoutParams(-1,dp(42)))
+            taskDetail=Ui.text(this,"",12f,Color.rgb(226,230,240)).apply { setPadding(0,dp(5),0,0);includeFontPadding=false;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END };layout.addView(taskDetail)
             progress=ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply { max=100;progressTintList=android.content.res.ColorStateList.valueOf(Color.rgb(159,139,255)) }
             layout.addView(progress,LinearLayout.LayoutParams(-1,dp(8)).apply { topMargin=dp(10) })
             label=Ui.text(this,"",12f,Color.rgb(205,211,225)).apply { setPadding(0,dp(3),0,dp(5));includeFontPadding=false;maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END };layout.addView(label)
             val actions=LinearLayout(this)
-            primary=Ui.button(this,"Bắt đầu",true) {
+            primary=Ui.button(this,"Chạy",true) {
                 when { running -> pause("Đã tạm dừng"); busy || manualBusy -> status("Đang hoàn tất thao tác hiện tại…"); ended() -> { reset();status("Lượt mới sẵn sàng. "+(selected()?.let { MacroStore.instruction(it) }?:"")) };else -> start() }
             }
             actions.addView(primary,LinearLayout.LayoutParams(0,dp(45),1f))
-            val stopButton=Ui.button(this,"Kết thúc",dangerous=true) { stop() }
+            val stopButton=Ui.button(this,"Dừng",dangerous=true) { stop() }.apply { setTextColor(Color.rgb(255,213,220));background=Ui.shape(Color.argb(190,112,43,64),dp(12)) }
             actions.addView(stopButton,LinearLayout.LayoutParams(dp(86),dp(45)).apply { leftMargin=dp(8) });layout.addView(actions)
             val footer=LinearLayout(this)
-            footer.addView(Ui.button(this,"Chụp ảnh") { manualCapture() },LinearLayout.LayoutParams(0,dp(36),1f).apply { topMargin=dp(8) })
-            footer.addView(Ui.button(this,"Tùy chọn") { showOptions() },LinearLayout.LayoutParams(0,dp(36),1f).apply { topMargin=dp(8);leftMargin=dp(8) });layout.addView(footer)
+            fun foot(text:String,action:()->Unit) {
+                val b=Ui.button(this,text,action=action).apply { textSize=12f;setTextColor(Color.WHITE);background=Ui.shape(Color.argb(155,53,60,84),dp(10)) }
+                footer.addView(b,LinearLayout.LayoutParams(0,dp(38),1f).apply { topMargin=dp(8);if(footer.childCount>0) leftMargin=dp(6) })
+            }
+            foot("Chụp") { manualCapture() }
+            foot("Về app") { pause("Đã tạm dừng");hidePanel();startActivity(android.content.Intent(this,MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)) }
+            foot("Đóng") { pause("Đã tạm dừng");hidePanel() };layout.addView(footer)
+
         }
         panel=layout;wm.addView(layout,params)
         layout.post { if(panel===layout) { val maxY=maxOf(0,wm.currentWindowMetrics.bounds.height()-layout.height);if(params.y>maxY) { params.y=maxY;wm.updateViewLayout(layout,params) } } }
@@ -142,10 +152,11 @@ class CollectorService : AccessibilityService() {
         val step=if(m!=null && prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
         taskLabel?.text=m?.let { MacroStore.title(it) }?:"Chọn tác vụ"
         taskDetail?.text=m?.let { MacroStore.description(it) }?:"Một tướng hoặc danh sách tướng"
+        choose?.text=(m?.let { MacroStore.title(it) }?:"Chọn macro")+"  ▾"
         choose?.isEnabled=!isWorking;choose?.alpha=if(isWorking) .45f else 1f
         progress?.progress=if(m!=null) step*100/maxOf(1,m.steps.length()) else 0
         label?.text=lastStatus
-        primary?.text=when { running -> "Tạm dừng";busy||manualBusy -> "Đang xử lý…";ended() -> "Tạo lượt mới";step>0 -> "Tiếp tục";else -> "Bắt đầu" }
+        primary?.text=when { running -> "Tạm dừng";busy||manualBusy -> "Đang xử lý…";ended() -> "Tạo lượt mới";step>0 -> "Tiếp tục";else -> "Chạy" }
         primary?.isEnabled=running || (!busy && !manualBusy && m!=null)
         bubble?.text=if(running) "AOV\n${progress?.progress ?: if(m!=null) step*100/maxOf(1,m.steps.length()) else 0}%" else "AOV"
     }
@@ -157,11 +168,40 @@ class CollectorService : AccessibilityService() {
     }
     fun showTaskPicker() {
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
-        if(isWorking) { status("Tạm dừng trước khi đổi tác vụ");return }
-        display(AlertDialog.Builder(this).setTitle("Bạn muốn thu thập gì?")
-            .setItems(arrayOf("Một tướng đang mở","Danh sách tướng","Macro đã nhập")) { _,which ->
-                handler.post { when(which) { 0 -> taskForm(false);1 -> taskForm(true);else -> savedPicker() } }
-            }.setNegativeButton("Đóng",null).create())
+        if(isWorking) { status("Tạm dừng trước khi đổi macro");return }
+        if(panel==null||compact) showPanel()
+        val anchor=choose?:return
+        macroPopup?.dismiss()
+        val saved=MacroStore.saved(this).mapNotNull { try { Macro(it.readText()) } catch(_:Exception) { null } }
+        val choices=listOf("Một tướng đang mở","Danh sách tướng")+saved.map { it.name }
+        var visible=choices.indices.toList()
+        val body=Ui.stack(this).apply { setPadding(dp(10),dp(10),dp(10),dp(6));background=Ui.shape(Color.argb(248,248,248,254),dp(14),Ui.border) }
+        val search=Ui.field(this,"Tìm macro…");body.addView(search,LinearLayout.LayoutParams(-1,dp(46)))
+        val list=ListView(this).apply { dividerHeight=0;isVerticalScrollBarEnabled=true }
+        body.addView(list,LinearLayout.LayoutParams(-1,0,1f))
+        val empty=Ui.text(this,"Không tìm thấy macro",13f,Ui.muted).apply { visibility=View.GONE };body.addView(empty)
+        fun filter(query:String) {
+            val q=HeroNames.slug(query).takeUnless { query.isBlank() }?:""
+            visible=choices.indices.filter { q.isEmpty()||HeroNames.slug(choices[it]).contains(q) }
+            list.adapter=ArrayAdapter(this,android.R.layout.simple_list_item_1,visible.map { choices[it] })
+            empty.visibility=if(visible.isEmpty()) View.VISIBLE else View.GONE
+        }
+        val popup=PopupWindow(body,dp(266),minOf(dp(250),wm.currentWindowMetrics.bounds.height()-dp(32)),true).apply {
+            setBackgroundDrawable(Ui.shape(Color.argb(248,248,248,254),dp(14)));isOutsideTouchable=true
+            windowLayoutType=WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY;elevation=dp(8).toFloat()
+            inputMethodMode=PopupWindow.INPUT_METHOD_NEEDED;softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+        }
+        macroPopup=popup;popup.setOnDismissListener { macroPopup=null }
+        search.addTextChangedListener(object:android.text.TextWatcher {
+            override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int) {}
+            override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) { filter(s?.toString()?:"") }
+            override fun afterTextChanged(s:android.text.Editable?) {}
+        })
+        list.setOnItemClickListener { _,_,position,_ ->
+            val i=visible[position];popup.dismiss()
+            handler.post { when(i) { 0 -> taskForm(false);1 -> taskForm(true);else -> selectMacro(saved[i-2].raw) } }
+        }
+        filter("");popup.showAsDropDown(anchor,0,dp(4))
     }
     private fun taskForm(batch:Boolean) {
         val body=Ui.stack(this).apply { setPadding(dp(20),dp(6),dp(20),dp(6)) }
@@ -218,7 +258,7 @@ class CollectorService : AccessibilityService() {
             .setPositiveButton("Bỏ thao tác") { _,_ -> if(!isWorking&&!stopped) { index++;save();status("Đã bỏ thao tác. Bấm Tiếp tục.") } }
             .setNegativeButton("Hủy",null).create())
     }
-    private fun hidePanel() { activeDialog?.dismiss();panel?.let { wm.removeView(it) };panel=null;label=null;primary=null;choose=null;progress=null;bubble=null }
+    private fun hidePanel() { macroPopup?.dismiss();activeDialog?.dismiss();panel?.let { wm.removeView(it) };panel=null;label=null;primary=null;choose=null;progress=null;bubble=null }
     private fun status(s:String) { lastStatus=s;refreshPanel();Toast.makeText(this,s,Toast.LENGTH_SHORT).show() }
     private fun ready(m:Macro):Boolean {
         if(rootInActiveWindow?.packageName?.toString()!=m.target) { pause("Hãy mở Liên Quân trước"); return false }
@@ -229,7 +269,7 @@ class CollectorService : AccessibilityService() {
     private fun readMacro() = Macro(File(filesDir,"macro.json").readText())
     fun start() {
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
-        if(running || busy || manualBusy || activeDialog!=null) return
+        if(running || busy || manualBusy || activeDialog!=null || macroPopup!=null) return
         try {
             val m=readMacro(); if(!ready(m)) return
             macro=m
