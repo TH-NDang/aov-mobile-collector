@@ -17,6 +17,7 @@ Nền bảng nổi bán trong suốt, có thể kéo ở thanh tiêu đề. Bả
 ## Build
 Android SDK 35, JDK 17, Gradle 8.9:
 ```
+base64 --decode debug-keystore.base64 > collector-debug.keystore
 gradle assembleDebug lintDebug
 ```
 Mở thư mục bằng Android Studio hoặc chạy workflow; Gradle wrapper chưa được đóng gói.
@@ -31,7 +32,7 @@ Screenshot cần API 30+, có thể thất bại nếu game chặn chụp. Nút 
 - Batch collection: start at the top of All heroes, five columns and two full rows on a 2400x1080 landscape screen. Try two entries first, then configure the count (the supplied screenshot shows 129 entries, including alternate forms). Pages use a slow two-row swipe. Scrolling and final-page alignment need real-device verification; duplicates and misses are possible. This is a bounded coordinate macro, not OCR or an end-of-list detector. Heroes with more than four skill icons require separate capture.
 - Browse collections with paged thumbnails, open images, delete an image or a collection after confirmation, export individual collections, and restore captures from an exported ZIP.
 - Pause completes the in-flight action and retains the checkpoint. Run resumes at the next step with the game in its preserved state. Skip skips exactly one action after confirmation. Stop ends the session; photos remain, and a new session is required. Gestures already dispatched to Android may finish.
-- Updating v0.1 may require uninstall because its CI signing key was ephemeral. Export and verify the old ZIP first, then install v0.2 and restore the ZIP. The repository contains a public development-only signing key to keep future debug APK signatures stable; do not use it for production releases.
+- Updating v0.1 may require uninstall because its CI signing key was ephemeral. Export and verify the old ZIP first, then install v0.2 and restore the ZIP. v0.2 CI did not use the intended key, so moving from v0.2 to v0.3 may require export, uninstall, install and ZIP restore. Starting in v0.3, Gradle explicitly selects the public development-only signing key; do not use it for production releases.
 
 
 ## v0.3: floating task picker and library UI
