@@ -1,5 +1,6 @@
 package vn.ndang.aovcollector
 
+import android.app.AlertDialog
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.res.Configuration
@@ -31,6 +32,9 @@ class CollectorService : AccessibilityService() {
     private var generation = 0
     private var runId = ""
     private var manualBusy = false
+    private var stopped = false
+    val isWorking: Boolean get() = running || busy || manualBusy
+    fun prepareEdit(): Boolean { pause("Tạm dừng để quản lý dữ liệu"); return !busy && !manualBusy }
     private val prefs by lazy { getSharedPreferences("collector", MODE_PRIVATE) }
     private val wm by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
     override fun onServiceConnected() { current = this }
@@ -64,10 +68,20 @@ class CollectorService : AccessibilityService() {
             if(buttons%3==0) { row=LinearLayout(this); layout.addView(row) }
             row!!.addView(Button(this).apply { this.text=text; textSize=10f; setPadding(0,0,0,0); setOnClickListener { action() } },LinearLayout.LayoutParams(0,(52*resources.displayMetrics.density).toInt(),1f)); buttons++
         }
-        button("▶ Chạy") { start() }
-        button("Ⅱ Dừng tạm") { pause("Tạm dừng") }
+        button("▶ Chạy/tiếp") { start() }
+        button("Ⅱ Tạm dừng") { pause("Tạm dừng") }
         button("📷 Chụp") { manualCapture() }
-        button("⏭ Bỏ bước") { if(!running && !busy && !manualBusy && macro!=null && index<(macro?.steps?.length()?:0)) { index++; save(); status("Đã bỏ 1 bước") } else status("Tạm dừng và chờ bước hiện tại xong") }
+        button("⏭ Bỏ 1 bước") {
+            if(running || busy || manualBusy || stopped || macro==null || index>=macro!!.steps.length()) status("Tạm dừng và chờ bước hiện tại xong")
+            else {
+                val action=macro!!.steps.getJSONObject(index).optString("type")
+                val dialog=AlertDialog.Builder(this).setTitle("Bỏ bước ${index+1}: $action?")
+                    .setMessage("Chỉ bỏ một thao tác, không bỏ cả tướng. Có thể làm lệch chuỗi; chỉ dùng khi bạn đã làm bước đó thủ công.")
+                    .setPositiveButton("Bỏ bước") { _,_ -> if(!isWorking && !stopped) { index++; save(); status("Đã bỏ 1 bước. Bấm Chạy/tiếp") } }
+                    .setNegativeButton("Hủy",null).create()
+                dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY); dialog.show()
+            }
+        }
         button("■ Dừng") { stop() }
         button("× Ẩn bảng") { pause("Tạm dừng"); hidePanel() }
         panel=layout; wm.addView(layout,params)
@@ -86,21 +100,28 @@ class CollectorService : AccessibilityService() {
         try {
             val m=readMacro(); if(!ready(m)) return
             macro=m
+            stopped=prefs.getString("hash","")==m.hash && prefs.getBoolean("stopped",false)
+            if(stopped) { status("Lượt đã kết thúc. Chọn Bắt đầu lượt mới trong app"); return }
             if(prefs.getString("hash","")==m.hash) { index=prefs.getInt("step",0); runId=prefs.getString("run","")?:"" } else { index=0; runId="" }
             if(index>=m.steps.length()) { status("Đã hoàn tất. Chọn lượt mới trong app"); return }
-            if(runId.isEmpty()) runId=SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US).format(Date())
+            if(runId.isEmpty()) {
+                val mode=m.json.optString("collectionMode","custom")
+                val slug=m.json.optString("heroName","").replace(Regex("[^a-zA-Z0-9_-]"),"-").take(40)
+                runId="$mode-${slug}-"+SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US).format(Date())
+            }
             running=true; generation++; save(); next(generation)
         } catch(e:Exception) { pause("Lỗi macro: ${e.message}") }
     }
-    fun reset() { if(busy || manualBusy) { status("Chờ bước hiện tại xong"); return }; stop(); index=0; runId=""; prefs.edit().clear().commit(); status("Sẵn sàng lượt mới") }
+    fun reset() { if(busy || manualBusy) { status("Chờ bước hiện tại xong"); return }; running=false; generation++; stopped=false; index=0; runId=""; macro=null; prefs.edit().clear().commit(); status("Sẵn sàng lượt mới") }
     private fun pause(s:String) { running=false; save(); status(s) }
-    private fun stop() { running=false; save(); status("Đã dừng các bước tiếp theo") }
+    private fun stop() { running=false; stopped=true; save(); status("Đã kết thúc lượt; ảnh vẫn giữ. Tạo lượt mới để chạy") }
     private fun save() {
         val m=macro ?: return
-        prefs.edit().putString("hash",m.hash).putInt("step",index).putString("run",runId).commit()
+        prefs.edit().putString("hash",m.hash).putInt("step",index).putString("run",runId).putBoolean("stopped",stopped).commit()
         if(runId.isNotEmpty()) {
             val dir=File(filesDir,"captures/$runId"); dir.mkdirs()
-            File(dir,"run.json").writeText(JSONObject().put("macro",m.name).put("hash",m.hash).put("nextStep",index).put("totalSteps",m.steps.length()).put("updatedAt",System.currentTimeMillis()).toString(2))
+            if(!File(dir,"macro.json").exists()) File(dir,"macro.json").writeText(m.raw)
+            File(dir,"run.json").writeText(JSONObject().put("collectionMode",m.json.optString("collectionMode","custom")).put("heroName",m.json.optString("heroName","")).put("state",if(stopped) "stopped" else if(index>=m.steps.length()) "completed" else if(running) "running" else "paused").put("macro",m.name).put("hash",m.hash).put("nextStep",index).put("totalSteps",m.steps.length()).put("updatedAt",System.currentTimeMillis()).toString(2))
         }
     }
     private fun next(token:Int) {
@@ -108,7 +129,7 @@ class CollectorService : AccessibilityService() {
         if(!running || token!=generation) return
         if(index>=m.steps.length()) { running=false; save(); status("Hoàn tất ${m.steps.length()} bước"); return }
         if(!ready(m)) return
-        label?.text="${m.name} • ${index+1}/${m.steps.length()}"
+        label?.text="${m.name} • ${index+1}/${m.steps.length()} • ${m.steps.getJSONObject(index).optString("type")}"
         val s=m.steps.getJSONObject(index); busy=true
         fun done(ok:Boolean) {
             if(token!=generation) return
@@ -117,6 +138,7 @@ class CollectorService : AccessibilityService() {
             if(!ok) { pause("Bước ${index+1} lỗi — chưa tăng checkpoint"); return }
             index++; save()
             if(running) handler.postDelayed({ next(token) },400)
+            else status(if(stopped) "Đã kết thúc lượt; tạo lượt mới để chạy" else "Đã tạm dừng ở bước ${index+1}; bấm Chạy/tiếp")
         }
         try {
             when(s.getString("type")) {
@@ -144,6 +166,7 @@ class CollectorService : AccessibilityService() {
     private fun capture(name:String,folder:String,done:(Boolean)->Unit) {
         panel?.visibility=View.INVISIBLE
         handler.postDelayed({
+            if(filesDir.usableSpace < 30L*1024*1024) { panel?.visibility=View.VISIBLE; status("Không đủ dung lượng trống để chụp"); done(false); return@postDelayed }
             if(rootInActiveWindow?.packageName?.toString() != "com.garena.game.kgvn") { panel?.visibility=View.VISIBLE; done(false); return@postDelayed }
             takeScreenshot(Display.DEFAULT_DISPLAY,mainExecutor,object:TakeScreenshotCallback {
                 override fun onSuccess(result:ScreenshotResult) {
