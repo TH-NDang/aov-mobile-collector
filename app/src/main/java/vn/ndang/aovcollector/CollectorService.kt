@@ -357,6 +357,7 @@ class CollectorService : AccessibilityService() {
      * same settings unless a run of it is still unfinished, so a new run always uses the current steps.
      */
     private fun upgradeBuiltIn() {
+        if(!MacroStore.current(this).exists()) return   // nothing selected yet on a fresh install
         try {
             val m=readMacro(); val mode=m.json.optString("collectionMode")
             if((mode!="single"&&mode!="all")||m.json.optInt("builtinVersion",1)==BuiltInMacros.VERSION) return
