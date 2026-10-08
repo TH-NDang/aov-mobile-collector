@@ -28,7 +28,7 @@ class UiSmoke:Instrumentation() {
             fun shell(command:String) { android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).use { it.readBytes() } }
             shell("settings put secure enabled_accessibility_services null")
             SystemClock.sleep(500)
-            shell("settings put secure enabled_accessibility_services vn.ndang.aovcollector/.CollectorService")
+            shell("settings put secure enabled_accessibility_services vn.ndang.aovcollector/vn.ndang.aovcollector.CollectorService")
             shell("settings put secure accessibility_enabled 1")
             val image=Bitmap.createBitmap(2400,1080,Bitmap.Config.ARGB_8888)
             val canvas=Canvas(image);canvas.drawColor(Color.rgb(29,32,60))
@@ -48,8 +48,13 @@ class UiSmoke:Instrumentation() {
             val dest=File(targetContext.filesDir,"smoke").apply { mkdirs() }
             fun snap(n:String) { waitForIdleSync();SystemClock.sleep(700);val b=automation.takeScreenshot()?:error("No screenshot");File(dest,"$n.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG,100,it) };b.recycle() }
             snap("01-history")
+            shell("settings put secure enabled_accessibility_services null")
+            SystemClock.sleep(1200)
+            shell("settings put secure enabled_accessibility_services vn.ndang.aovcollector/vn.ndang.aovcollector.CollectorService")
+            shell("settings put secure accessibility_enabled 1")
             var service:CollectorService?=null
             for(i in 0..40) { runOnMainSync { service=CollectorService.current };if(service!=null) break;SystemClock.sleep(250) }
+            android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("dumpsys accessibility")).use { File(dest,"accessibility.txt").writeBytes(it.readBytes()) }
             check(service!=null) { "Accessibility service not connected" }
             runOnMainSync { service!!.showPanel();service!!.showTaskPicker() };snap("02-task-picker")
             fun nodes()=automation.windows.mapNotNull { it.root }
