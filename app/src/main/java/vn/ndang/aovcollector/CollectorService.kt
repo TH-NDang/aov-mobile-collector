@@ -20,7 +20,13 @@ import java.util.Locale
 import java.util.concurrent.Executors
 
 class CollectorService : AccessibilityService() {
-    companion object { var current: CollectorService? = null; @Volatile var libraryBusy=false }
+    companion object {
+        var current: CollectorService? = null; @Volatile var libraryBusy=false
+        const val TAP_MS=100L
+        /** Time for the hidden panel's window change to reach input dispatch before touching the game. */
+        const val SHIELD_MS=150L
+        const val GESTURE_RETRIES=2
+    }
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private var panel: LinearLayout? = null
@@ -37,7 +43,16 @@ class CollectorService : AccessibilityService() {
     fun prepareEdit(): Boolean { pause("Tạm dừng để quản lý dữ liệu"); return !busy && !manualBusy }
     private val prefs by lazy { getSharedPreferences("collector", MODE_PRIVATE) }
     private val wm by lazy { getSystemService(WINDOW_SERVICE) as WindowManager }
-    override fun onServiceConnected() { current = this; try { val m=readMacro(); macro=m; if(prefs.getString("hash","")==m.hash) { index=prefs.getInt("step",0);runId=prefs.getString("run","")?:"";stopped=prefs.getBoolean("stopped",false) }; if(m.json.optString("collectionMode").isBlank()) MacroStore.archive(this,m.raw) } catch(_:Exception) {} }
+    override fun onServiceConnected() {
+        current = this; CrashLog.install(this)
+        try { val m=readMacro(); macro=m; if(prefs.getString("hash","")==m.hash) { index=prefs.getInt("step",0);runId=prefs.getString("run","")?:"";stopped=prefs.getBoolean("stopped",false) }; if(m.json.optString("collectionMode").isBlank()) MacroStore.archive(this,m.raw) } catch(_:Exception) {}
+        // A run that was still marked running means the previous process died mid-step.
+        if(prefs.getBoolean("running",false)) {
+            CrashLog.record(this,"Dịch vụ bị dừng đột ngột khi đang chạy bước ${index+1} (lượt $runId)",null)
+            prefs.edit().putBoolean("running",false).commit(); save(); lastStatus="Lượt trước bị gián đoạn ở bước ${index+1}. Mở đúng màn hình rồi bấm Tiếp tục."
+        }
+        if(uiPrefs.getBoolean("panel",false)) handler.post { if(current===this && panel==null) showPanel() }
+    }
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (running && event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val p = event.packageName?.toString()
@@ -45,7 +60,7 @@ class CollectorService : AccessibilityService() {
         }
     }
     override fun onInterrupt() { pause("Dịch vụ bị ngắt") }
-    override fun onDestroy() { running=false; generation++; handler.removeCallbacksAndMessages(null); hidePanel(); current = null; io.shutdown(); super.onDestroy() }
+    override fun onDestroy() { if(running) { running=false; save() }; generation++; handler.removeCallbacksAndMessages(null); hidePanel(); current = null; io.shutdown(); super.onDestroy() }
     private var compact=false
     private var panelParams:WindowManager.LayoutParams?=null
     private var taskLabel:TextView?=null
@@ -57,6 +72,7 @@ class CollectorService : AccessibilityService() {
     private var lastStatus="Sẵn sàng"
     private var activeDialog:AlertDialog?=null
     private var macroPicker:View?=null
+    private var pickerY:Int?=null
     private val uiPrefs by lazy { getSharedPreferences("ui",MODE_PRIVATE) }
     private fun dp(n:Int)=Ui.dp(this,n)
     private var selectionCache:Macro?=null
@@ -74,11 +90,31 @@ class CollectorService : AccessibilityService() {
         super.onConfigurationChanged(newConfig)
         if(panel!=null) { dismissMacroPicker();rebuildPanel() }
     }
+    private var shielded=false
+    private var shieldSession=0
+    private var swallowed=false
+    /** Taps that hit the hidden panel and were resent; read by the UI smoke check. */
+    internal var swallowedTaps=0
+    internal val panelView:View? get()=panel
+    /** While the macro touches the game, the panel is hidden and untouchable; an invisible view still gets touches until the window update lands. */
+    private fun shield(on:Boolean) {
+        if(on==shielded) return
+        shielded=on
+        val params=panelParams
+        if(params!=null) params.flags=if(on) params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+        val view=panel?:return
+        view.visibility=if(on) View.INVISIBLE else View.VISIBLE
+        if(params!=null && view.isAttachedToWindow) try { wm.updateViewLayout(view,params) } catch(e:Exception) { CrashLog.record(this,"Không cập nhật được bảng nổi",e) }
+    }
+    private fun detach(view:View) { try { wm.removeView(view) } catch(e:Exception) { CrashLog.record(this,"Không gỡ được bảng nổi",e) } }
     private fun rebuildPanel() {
         dismissMacroPicker()
-        panel?.let { wm.removeView(it) }
+        panel?.let { detach(it) }; panel=null
         label=null; primary=null; choose=null; taskLabel=null; taskDetail=null; progress=null; bubble=null
-        val layout=Ui.stack(this).apply { setPadding(dp(12),dp(10),dp(12),dp(10)); background=Ui.shape(Color.argb(195,20,24,42),dp(20),Color.argb(70,230,230,255)) }
+        val layout=object:LinearLayout(this) {
+            // A tap that still reaches the hidden panel must not press its buttons; the macro retries it.
+            override fun dispatchTouchEvent(e:MotionEvent):Boolean { if(!shielded) return super.dispatchTouchEvent(e); if(e.actionMasked==MotionEvent.ACTION_DOWN) swallowed=true; return true }
+        }.apply { orientation=LinearLayout.VERTICAL; setPadding(dp(12),dp(10),dp(12),dp(10)); background=Ui.shape(Color.argb(195,20,24,42),dp(20),Color.argb(70,230,230,255)) }
         val params=panelParams ?: WindowManager.LayoutParams().apply {
             type=WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
             flags=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
@@ -97,7 +133,7 @@ class CollectorService : AccessibilityService() {
                         if(kotlin.math.abs(e.rawX-x)+kotlin.math.abs(e.rawY-y)>dp(6)) moved=true
                         params.x=(sx+(e.rawX-x).toInt()).coerceIn(0,maxOf(0,bounds.width()-params.width))
                         params.y=(sy+(e.rawY-y).toInt()).coerceIn(0,maxOf(0,bounds.height()-layout.height))
-                        wm.updateViewLayout(layout,params);true
+                        if(layout.isAttachedToWindow) wm.updateViewLayout(layout,params);true
                     }
                     MotionEvent.ACTION_UP -> { if(!moved) { v.performClick();onTap?.invoke() };true }
                     else -> false
@@ -140,8 +176,10 @@ class CollectorService : AccessibilityService() {
             foot("Đóng") { pause("Đã tạm dừng");hidePanel() };layout.addView(footer)
 
         }
-        panel=layout;wm.addView(layout,params)
-        layout.post { if(panel===layout) { val maxY=maxOf(0,wm.currentWindowMetrics.bounds.height()-layout.height);if(params.y>maxY) { params.y=maxY;wm.updateViewLayout(layout,params) } } }
+        if(shielded) layout.visibility=View.INVISIBLE
+        try { wm.addView(layout,params) } catch(e:Exception) { CrashLog.record(this,"Không mở được bảng nổi",e); return }
+        panel=layout; uiPrefs.edit().putBoolean("panel",true).apply()
+        layout.post { if(panel===layout && layout.isAttachedToWindow) { val maxY=maxOf(0,wm.currentWindowMetrics.bounds.height()-layout.height);if(params.y>maxY) { params.y=maxY;wm.updateViewLayout(layout,params) } } }
         refreshPanel()
     }
     private fun ended():Boolean {
@@ -206,6 +244,7 @@ class CollectorService : AccessibilityService() {
         panelParams?.let { params ->
             params.flags=params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE.inv()
             params.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            pickerY=params.y
             params.y=params.y.coerceAtMost(maxOf(0,wm.currentWindowMetrics.bounds.height()-height-dp(110)))
             wm.updateViewLayout(host,params)
         }
@@ -221,6 +260,8 @@ class CollectorService : AccessibilityService() {
         panelParams?.let { params ->
             params.flags=params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
             params.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED
+            // Return to where the user placed the panel; the list only lifted it to fit.
+            pickerY?.let { params.y=it }; pickerY=null
             if(host.isAttachedToWindow) wm.updateViewLayout(host,params)
         }
     }
@@ -258,7 +299,8 @@ class CollectorService : AccessibilityService() {
         if(isWorking) { status("Chờ thao tác hiện tại hoàn tất");return false }
         try {
             val m=Macro(raw)
-            if(runId.isNotBlank()) { stopped=true;save() }
+            val previous=macro
+            if(runId.isNotBlank() && previous!=null && index<previous.steps.length()) { stopped=true;save() }
             reset();MacroStore.current(this).writeText(raw);selectionCache=null
             status(MacroStore.instruction(m));return true
         } catch(e:Exception) { status(e.message?:"Không mở được tác vụ");return false }
@@ -279,7 +321,7 @@ class CollectorService : AccessibilityService() {
             .setPositiveButton("Bỏ thao tác") { _,_ -> if(!isWorking&&!stopped) { index++;save();status("Đã bỏ thao tác. Bấm Tiếp tục.") } }
             .setNegativeButton("Hủy",null).create())
     }
-    private fun hidePanel() { dismissMacroPicker();activeDialog?.dismiss();panel?.let { wm.removeView(it) };panel=null;label=null;primary=null;choose=null;progress=null;bubble=null }
+    private fun hidePanel() { dismissMacroPicker();activeDialog?.dismiss();panel?.let { detach(it) };panel=null;label=null;primary=null;choose=null;progress=null;bubble=null;uiPrefs.edit().putBoolean("panel",false).apply() }
     private fun status(s:String) { lastStatus=s;refreshPanel();Toast.makeText(this,s,Toast.LENGTH_SHORT).show() }
     private fun ready(m:Macro):Boolean {
         if(rootInActiveWindow?.packageName?.toString()!=m.target) { pause("Hãy mở Liên Quân trước"); return false }
@@ -311,14 +353,14 @@ class CollectorService : AccessibilityService() {
     private fun stop() { running=false; stopped=true; save(); status("Đã kết thúc lượt · ảnh đã được giữ lại") }
     private fun save() {
         val m=macro ?: return
-        prefs.edit().putString("hash",m.hash).putInt("step",index).putString("run",runId).putBoolean("stopped",stopped).commit()
-        if(runId.isNotEmpty()) {
+        prefs.edit().putString("hash",m.hash).putInt("step",index).putString("run",runId).putBoolean("stopped",stopped).putBoolean("running",running).commit()
+        if(runId.isNotEmpty()) try {
             val dir=File(filesDir,"captures/$runId"); dir.mkdirs()
             if(!File(dir,"macro.json").exists()) File(dir,"macro.json").writeText(m.raw)
             val metadata=File(dir,"run.json")
             val record=try { JSONObject(metadata.readText()) } catch(_:Exception) { JSONObject() }
             metadata.writeText(record.put("collectionMode",m.json.optString("collectionMode","custom")).put("heroName",m.json.optString("heroName","")).put("state",if(stopped) "stopped" else if(index>=m.steps.length()) "completed" else if(running) "running" else "paused").put("macro",m.name).put("hash",m.hash).put("nextStep",index).put("totalSteps",m.steps.length()).put("updatedAt",System.currentTimeMillis()).toString(2))
-        }
+        } catch(e:Exception) { CrashLog.record(this,"Không ghi được run.json",e) }
     }
     private fun next(token:Int) {
         val m=macro ?: return
@@ -328,31 +370,59 @@ class CollectorService : AccessibilityService() {
         lastStatus="Đang thu thập · ${m.photoSteps.count { it<index }}/${m.photoSteps.size} ảnh"
         refreshPanel()
         val s=m.steps.getJSONObject(index); busy=true
+        var finished=false
         fun done(ok:Boolean) {
-            if(token!=generation) return
-            busy=false
-            panel?.visibility=View.VISIBLE
-            if(!ok) { pause("Không thực hiện được thao tác. Kiểm tra màn hình rồi tiếp tục."); return }
+            if(finished || token!=generation) return
+            finished=true; busy=false
+            shield(false)
+            if(!ok) { pause("Không thực hiện được thao tác ${index+1}. Kiểm tra màn hình rồi tiếp tục."); return }
             index++; save()
             if(running) handler.postDelayed({ next(token) },400)
             else status(if(stopped) "Đã kết thúc lượt · ảnh được giữ lại" else "Đã tạm dừng · bấm Tiếp tục khi sẵn sàng")
         }
         try {
-            when(s.getString("type")) {
+            val type=s.getString("type")
+            // A step that never reports back must not leave the controller stuck on "Đang xử lý".
+            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; else -> 10000L }
+            handler.postDelayed({ if(!finished && token==generation) { CrashLog.record(this,"Bước ${index+1} ($type) quá thời gian",null); done(false) } },limit)
+            when(type) {
                 "wait" -> handler.postDelayed({ done(true) },s.getLong("ms"))
                 "back" -> done(performGlobalAction(GLOBAL_ACTION_BACK))
                 "screenshot" -> capture("%04d-%s".format(index+1,s.getString("name")),runId) { done(it) }
                 else -> {
-                    panel?.visibility=View.INVISIBLE
                     val bounds=wm.currentWindowMetrics.bounds
                     val p=Path().apply { moveTo((s.getDouble("x")*(bounds.width()-1)).toFloat(),(s.getDouble("y")*(bounds.height()-1)).toFloat()) }
-                    val swipe=s.getString("type")=="swipe"
+                    val swipe=type=="swipe"
                     if(swipe) p.lineTo((s.getDouble("toX")*(bounds.width()-1)).toFloat(),(s.getDouble("toY")*(bounds.height()-1)).toFloat())
-                    val gesture=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p,0,if(swipe) s.optLong("ms",500) else 70)).build()
-                    if(!dispatchGesture(gesture,object:GestureResultCallback(){ override fun onCompleted(g:GestureDescription?) { done(true) }; override fun onCancelled(g:GestureDescription?) { done(false) } },handler)) done(false)
+                    val gesture=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(p,0,if(swipe) s.optLong("ms",500) else TAP_MS)).build()
+                    touchGame(gesture,!swipe) { done(it) }
                 }
             }
-        } catch(e:Exception) { busy=false; pause("Lỗi: ${e.message}") }
+        } catch(e:Exception) { CrashLog.record(this,"Lỗi bước ${index+1}",e); finished=true; busy=false; shield(false); pause("Lỗi: ${e.message}") }
+    }
+    /**
+     * Sends a gesture to the game with the panel out of the way. If the touch still lands on the
+     * panel (its window update has not reached input yet) or Android cancels a tap, it is resent.
+     */
+    internal fun touchGame(gesture:GestureDescription,tap:Boolean,result:(Boolean)->Unit) {
+        val session=++shieldSession; shield(true)
+        val done={ ok:Boolean -> if(session==shieldSession) shield(false); result(ok) }
+        fun send(attempt:Int) {
+            if(current!==this) return
+            swallowed=false
+            val callback=object:GestureResultCallback() {
+                override fun onCompleted(g:GestureDescription?) {
+                    if(!swallowed) { done(true); return }
+                    swallowedTaps++
+                    if(attempt<GESTURE_RETRIES) handler.postDelayed({ send(attempt+1) },SHIELD_MS) else done(false)
+                }
+                // A cancelled swipe may have scrolled part way, so only taps are repeated.
+                override fun onCancelled(g:GestureDescription?) { if(tap && attempt<GESTURE_RETRIES) handler.postDelayed({ send(attempt+1) },SHIELD_MS) else done(false) }
+            }
+            val sent=try { dispatchGesture(gesture,callback,handler) } catch(e:Exception) { CrashLog.record(this,"Không gửi được thao tác chạm",e); false }
+            if(!sent) done(false)
+        }
+        handler.postDelayed({ send(0) },SHIELD_MS)
     }
     private fun manualCapture() {
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
@@ -384,24 +454,33 @@ class CollectorService : AccessibilityService() {
         return dir
     }
     private fun capture(name:String,folder:String,done:(Boolean)->Unit) {
-        panel?.visibility=View.INVISIBLE
-        handler.postDelayed({
-            if(filesDir.usableSpace < 30L*1024*1024) { panel?.visibility=View.VISIBLE; status("Không đủ dung lượng trống để chụp"); done(false); return@postDelayed }
-            if(rootInActiveWindow?.packageName?.toString() != "com.garena.game.kgvn") { panel?.visibility=View.VISIBLE; done(false); return@postDelayed }
-            takeScreenshot(Display.DEFAULT_DISPLAY,mainExecutor,object:TakeScreenshotCallback {
+        val session=++shieldSession; shield(true)
+        val finish={ ok:Boolean -> if(session==shieldSession) shield(false); done(ok) }
+        fun shoot(retry:Boolean) {
+            if(filesDir.usableSpace < 30L*1024*1024) { status("Không đủ dung lượng trống để chụp"); finish(false); return }
+            if(rootInActiveWindow?.packageName?.toString() != "com.garena.game.kgvn") { finish(false); return }
+            val callback=object:TakeScreenshotCallback {
                 override fun onSuccess(result:ScreenshotResult) {
                     val buffer=result.hardwareBuffer
-                    val hardware=Bitmap.wrapHardwareBuffer(buffer,result.colorSpace)
-                    val bitmap=hardware?.copy(Bitmap.Config.ARGB_8888,false)
-                    hardware?.recycle(); buffer.close()
-                    io.execute {
-                        val ok=try { if(bitmap==null) false else { val dir=photoDirectory(folder,name,bitmap); File(dir,"$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) } } } catch(e:Exception) { false }
-                        bitmap?.recycle()
-                        handler.post { panel?.visibility=View.VISIBLE; done(ok) }
-                    }
+                    val bitmap=try { val hardware=Bitmap.wrapHardwareBuffer(buffer,result.colorSpace); hardware?.copy(Bitmap.Config.ARGB_8888,false).also { hardware?.recycle() } }
+                        catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không đọc được ảnh chụp $name",e); null } finally { buffer.close() }
+                    if(bitmap==null) { finish(false); return }
+                    try {
+                        io.execute {
+                            val ok=try { val dir=photoDirectory(folder,name,bitmap); File(dir,"$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) } } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không lưu được ảnh $name",e); false }
+                            bitmap.recycle()
+                            handler.post { finish(ok) }
+                        }
+                    } catch(e:Exception) { bitmap.recycle(); finish(false) }
                 }
-                override fun onFailure(errorCode:Int) { panel?.visibility=View.VISIBLE; status("Screenshot error $errorCode"); done(false) }
-            })
-        },350)
+                override fun onFailure(errorCode:Int) {
+                    // Android allows one accessibility screenshot per second.
+                    if(errorCode==ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT && retry) { handler.postDelayed({ shoot(false) },1100); return }
+                    status("Chụp màn hình thất bại (mã $errorCode)"); finish(false)
+                }
+            }
+            try { takeScreenshot(Display.DEFAULT_DISPLAY,mainExecutor,callback) } catch(e:Exception) { CrashLog.record(this,"Không gọi được chụp màn hình",e); finish(false) }
+        }
+        handler.postDelayed({ shoot(true) },350)
     }
 }

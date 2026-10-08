@@ -51,6 +51,7 @@ class MainActivity : Activity() {
     private fun message(s:String) { AlertDialog.Builder(this).setMessage(s).setPositiveButton("Đã hiểu",null).show() }
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)
         if(!MacroStore.current(this).exists()) MacroStore.current(this).writeText(BuiltInMacros.create(""))
         folder=savedInstanceState?.getString("folder")?.let { File(it) }?.takeIf { it.isDirectory&&it.canonicalPath.startsWith(captures.canonicalPath+"/") }
         pendingExport=savedInstanceState?.getStringArrayList("export")?.map { File(it) }.orEmpty()
@@ -59,7 +60,19 @@ class MainActivity : Activity() {
         showHistory()
     }
     override fun onSaveInstanceState(out:Bundle) { super.onSaveInstanceState(out);out.putString("folder",folder?.path);out.putStringArrayList("export",ArrayList(pendingExport.map { it.path })) }
-    override fun onResume() { super.onResume();if(historyRoot!=null) showHistory() }
+    override fun onResume() { super.onResume();if(historyRoot!=null) showHistory();crashNotice() }
+    private fun crashNotice() {
+        val log=CrashLog.file(this);if(!log.exists()) return
+        val prefs=getPreferences(MODE_PRIVATE);if(log.lastModified()<=prefs.getLong("crash-seen",0L)) return
+        prefs.edit().putLong("crash-seen",log.lastModified()).apply();showLog("Lần trước có lỗi hoặc bị gián đoạn")
+    }
+    private fun showLog(title:String) {
+        val text=try { CrashLog.file(this).readText() } catch(_:Exception) { "" }
+        // A crashed accessibility service stays off until the user re-enables it.
+        val hint=if(CollectorService.current==null) "Trợ năng đang tắt hoặc bị Android dừng: bấm Bật Trợ năng, tắt rồi bật lại AOV Collector.\n\n" else ""
+        AlertDialog.Builder(this).setTitle(title).setMessage(hint+"Bấm Sao chép để gửi nhật ký khi báo lỗi.\n\n"+text.takeLast(1500)).setPositiveButton("Đã hiểu",null)
+            .setNeutralButton("Sao chép") { _,_ -> (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("AOV Collector",text));Toast.makeText(this,"Đã sao chép nhật ký",Toast.LENGTH_SHORT).show() }.show()
+    }
     private fun shell():LinearLayout {
         val root=Ui.stack(this).apply { setBackgroundColor(Ui.canvas) }
         root.setOnApplyWindowInsetsListener { v,ins -> val b=ins.getInsets(WindowInsets.Type.systemBars());v.setPadding(b.left,b.top,b.right,b.bottom);ins }
@@ -191,7 +204,8 @@ class MainActivity : Activity() {
         }
     }
     private fun importMenu() { AlertDialog.Builder(this).setTitle("Nhập file").setItems(arrayOf("Ảnh và thư mục từ ZIP","Macro từ JSON")) { _,i -> if(editable()) startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type=if(i==0) "application/zip" else "application/json";addCategory(Intent.CATEGORY_OPENABLE) },if(i==0) 12 else 10) }.show() }
-    private fun help() { message("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Một tướng hoặc Danh sách → Chạy.\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tự vuốt còn thử nghiệm, có thể trùng hoặc thiếu. Bố cục hiện hỗ trợ màn ngang 2400×1080 và 4 biểu tượng chiêu.\n\nAOV Collector 0.3") }
+    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Một tướng hoặc Danh sách → Chạy.\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tự vuốt còn thử nghiệm, có thể trùng hoặc thiếu. Bố cục hiện hỗ trợ màn ngang 2400×1080 và 4 biểu tượng chiêu. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nAOV Collector 0.3.2").setPositiveButton("Đã hiểu",null)
+        if(CrashLog.file(this).exists()) dialog.setNeutralButton("Nhật ký lỗi") { _,_ -> showLog("Nhật ký lỗi") };dialog.show() }
     private fun requestExport(files:List<File>) {
         if(files.isEmpty()||!editable()) return
         pendingExport=files

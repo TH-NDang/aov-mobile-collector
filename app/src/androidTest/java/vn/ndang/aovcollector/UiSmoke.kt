@@ -13,6 +13,10 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
+import android.graphics.Rect
+import android.view.View
 import org.json.JSONObject
 import java.io.File
 
@@ -88,7 +92,26 @@ class UiSmoke:Instrumentation() {
             check(Macro(MacroStore.current(targetContext).readText()).json.optString("heroName")=="Violet")
             snap("04-panel")
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1500);snap("05-landscape")
-            result.putString("stream","SMOKE_OK: history, OCR, task selection, overlay and rotation passed\n")
+            // v0.3.1 regression: a macro tap under the floating panel pressed its hidden buttons
+            // (Đóng removed the panel mid-run) instead of reaching the game.
+            fun closeButton()=nodes().flatMap { it.findAccessibilityNodeInfosByText("Đóng") }.firstOrNull { it.text?.toString()=="Đóng" }
+            val box=Rect().also { (closeButton()?:error("Missing panel close button")).getBoundsInScreen(it) }
+            fun tapAt()=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(Path().apply { moveTo(box.exactCenterX(),box.exactCenterY()) },0,CollectorService.TAP_MS)).build()
+            // Old behaviour, recorded only: hide the panel and inject in the same frame.
+            runOnMainSync { service!!.panelView?.visibility=View.INVISIBLE;service!!.dispatchGesture(tapAt(),null,null) }
+            SystemClock.sleep(1500);var legacyClosed=false
+            runOnMainSync { legacyClosed=service!!.panelView==null;if(legacyClosed) service!!.showPanel() else service!!.panelView?.visibility=View.VISIBLE }
+            waitForIdleSync();SystemClock.sleep(800)
+            val finished=java.util.concurrent.CountDownLatch(1);val delivered=java.util.concurrent.atomic.AtomicBoolean(false)
+            runOnMainSync { service!!.touchGame(tapAt(),true) { delivered.set(it);finished.countDown() } }
+            check(finished.await(8,java.util.concurrent.TimeUnit.SECONDS)) { "Macro tap never finished" }
+            waitForIdleSync();SystemClock.sleep(600)
+            var panelKept=false;var swallowed=0
+            runOnMainSync { panelKept=service!!.panelView?.visibility==View.VISIBLE;swallowed=service!!.swallowedTaps }
+            snap("06-after-macro-tap")
+            check(delivered.get()) { "Macro tap was not delivered past the panel (swallowed=$swallowed)" }
+            check(panelKept&&closeButton()!=null) { "Macro tap closed or hid the floating panel" }
+            result.putString("stream","SMOKE_OK: history, OCR, task selection, overlay, rotation and tap-through passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
             finish(Activity.RESULT_OK,result)
         } catch(t:Throwable) { result.putString("stream","SMOKE_FAILED: ${t.stackTraceToString()}\n");finish(Activity.RESULT_CANCELED,result) }
     }
