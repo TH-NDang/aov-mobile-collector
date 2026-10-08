@@ -83,6 +83,7 @@ class UiSmoke:Instrumentation() {
             runOnMainSync { service!!.reset() }
             val upgraded=Macro(MacroStore.current(targetContext).readText())
             check(upgraded.json.optInt("builtinVersion")==BuiltInMacros.VERSION&&upgraded.json.optInt("heroCount")==2) { "Old built-in macro was not upgraded" }
+            MacroStore.current(targetContext).writeText(BuiltInMacros.create(""));runOnMainSync { service!!.reset() }
             runOnMainSync { service!!.showPanel() }
             // Exercise the actual chooser button, repeatedly, then after rotation.
             fun chooserClick() {
