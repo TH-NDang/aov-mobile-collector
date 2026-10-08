@@ -75,7 +75,7 @@ class MainActivity : Activity() {
         val connected=CollectorService.current!=null
         headerAction(row,"access",if(connected) "Đã bật Trợ năng" else "Bật Trợ năng",if(connected) Color.rgb(31,132,112) else Ui.accent) { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         headerAction(row,"import","Nhập file",Ui.accent) { importMenu() }
-        headerAction(row,"float","Bảng nổi",Ui.accent) { val service=CollectorService.current;if(service==null) message("Bấm Bật Trợ năng, bật AOV Collector rồi quay lại.") else { service.showPanel();Toast.makeText(this,"Mở game, bấm Đổi tác vụ trên bảng nổi để chọn cách chụp.",Toast.LENGTH_LONG).show() } }
+        headerAction(row,"float","Bảng nổi",Ui.accent) { val service=CollectorService.current;if(service==null) message("Bấm Bật Trợ năng, bật AOV Collector rồi quay lại.") else { service.showPanel();Toast.makeText(this,"Mở game, bấm Chọn macro trên bảng nổi để chọn cách chụp.",Toast.LENGTH_LONG).show() } }
         top.addView(row);root.addView(top)
     }
     private fun headerAction(row:LinearLayout,kind:String,label:String,color:Int,action:()->Unit) {
@@ -101,7 +101,7 @@ class MainActivity : Activity() {
         val scroll=ScrollView(this);val body=Ui.stack(this).apply { setPadding(dp(20),dp(4),dp(20),dp(16)) };scroll.addView(body);root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
         val list=items()
         if(list.isEmpty()) {
-            val empty=Ui.card(this);empty.addView(Ui.text(this,"Ảnh sẽ xuất hiện ở đây",20f,Ui.ink,true));empty.addView(Ui.text(this,"Mở bảng nổi → chọn tác vụ → Bắt đầu. Mỗi lượt được lưu thành một thư mục riêng.",14f,Ui.muted));body.addView(empty)
+            val empty=Ui.card(this);empty.addView(Ui.text(this,"Ảnh sẽ xuất hiện ở đây",20f,Ui.ink,true));empty.addView(Ui.text(this,"Mở bảng nổi → chọn tác vụ → Chạy. Mỗi lượt được lưu thành một thư mục riêng.",14f,Ui.muted));body.addView(empty)
         }
         // Show 50 rows per page; only those thumbnails are decoded.
         val pageSize=50;val pages=maxOf(1,(list.size+pageSize-1)/pageSize)
@@ -192,7 +192,7 @@ class MainActivity : Activity() {
         }
     }
     private fun importMenu() { AlertDialog.Builder(this).setTitle("Nhập file").setItems(arrayOf("Ảnh và thư mục từ ZIP","Macro từ JSON")) { _,i -> if(editable()) startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type=if(i==0) "application/zip" else "application/json";addCategory(Intent.CATEGORY_OPENABLE) },if(i==0) 12 else 10) }.show() }
-    private fun help() { message("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Đổi tác vụ → Một tướng hoặc Danh sách → Bắt đầu.\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Kết thúc: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tự vuốt còn thử nghiệm, có thể trùng hoặc thiếu. Bố cục hiện hỗ trợ màn ngang 2400×1080 và 4 biểu tượng chiêu.\n\nAOV Collector 0.3") }
+    private fun help() { message("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Một tướng hoặc Danh sách → Chạy.\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tự vuốt còn thử nghiệm, có thể trùng hoặc thiếu. Bố cục hiện hỗ trợ màn ngang 2400×1080 và 4 biểu tượng chiêu.\n\nAOV Collector 0.3") }
     private fun requestExport(files:List<File>) {
         if(files.isEmpty()||!editable()) return
         pendingExport=files
@@ -205,7 +205,7 @@ class MainActivity : Activity() {
             try {
                 val raw=contentResolver.openInputStream(uri)?.use { input -> val out=java.io.ByteArrayOutputStream();val buffer=ByteArray(8192);var n=input.read(buffer);while(n!=-1) { require(out.size()+n<=1024*1024) { "Macro tối đa 1 MB" };out.write(buffer,0,n);n=input.read(buffer) };out.toString("UTF-8") }?:error("Không đọc được file")
                 MacroStore.archive(this,raw)
-                message("Đã thêm macro. Mở Bảng nổi → Đổi tác vụ → Macro đã nhập để chọn.")
+                message("Đã thêm macro. Mở Bảng nổi → Chọn macro → Macro đã nhập để chọn.")
             } catch(e:Exception) { message(e.message?:"Không nhập được macro") };return
         }
         CollectorService.libraryBusy=true
