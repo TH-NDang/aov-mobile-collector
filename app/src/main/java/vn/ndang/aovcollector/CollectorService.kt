@@ -95,6 +95,7 @@ class CollectorService : AccessibilityService() {
     private var swallowed=false
     /** Taps that hit the hidden panel and were resent; read by the UI smoke check. */
     internal var swallowedTaps=0
+    private var unsavedRetries=0
     internal val panelView:View? get()=panel
     /** While the macro touches the game, the panel is hidden and untouchable; an invisible view still gets touches until the window update lands. */
     private fun shield(on:Boolean) {
@@ -359,7 +360,10 @@ class CollectorService : AccessibilityService() {
             if(!File(dir,"macro.json").exists()) File(dir,"macro.json").writeText(m.raw)
             val metadata=File(dir,"run.json")
             val record=try { JSONObject(metadata.readText()) } catch(_:Exception) { JSONObject() }
-            metadata.writeText(record.put("collectionMode",m.json.optString("collectionMode","custom")).put("heroName",m.json.optString("heroName","")).put("state",if(stopped) "stopped" else if(index>=m.steps.length()) "completed" else if(running) "running" else "paused").put("macro",m.name).put("hash",m.hash).put("nextStep",index).put("totalSteps",m.steps.length()).put("updatedAt",System.currentTimeMillis()).toString(2))
+            metadata.writeText(record.put("collectionMode",m.json.optString("collectionMode","custom")).put("heroName",m.json.optString("heroName","")).put("state",if(stopped) "stopped" else if(index>=m.steps.length()) "completed" else if(running) "running" else "paused").put("macro",m.name).put("hash",m.hash).put("nextStep",index).put("totalSteps",m.steps.length()).put("updatedAt",System.currentTimeMillis())
+                // Taps that landed on the hidden panel and had to be resent; non-zero confirms the v0.3.1 failure mode on this device.
+                .put("panelTapRetries",record.optInt("panelTapRetries",0)+unsavedRetries).toString(2))
+            unsavedRetries=0
         } catch(e:Exception) { CrashLog.record(this,"Không ghi được run.json",e) }
     }
     private fun next(token:Int) {
@@ -413,7 +417,7 @@ class CollectorService : AccessibilityService() {
             val callback=object:GestureResultCallback() {
                 override fun onCompleted(g:GestureDescription?) {
                     if(!swallowed) { done(true); return }
-                    swallowedTaps++
+                    swallowedTaps++; if(busy) unsavedRetries++
                     if(attempt<GESTURE_RETRIES) handler.postDelayed({ send(attempt+1) },SHIELD_MS) else done(false)
                 }
                 // A cancelled swipe may have scrolled part way, so only taps are repeated.
