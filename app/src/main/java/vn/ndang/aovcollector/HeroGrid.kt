@@ -2,6 +2,7 @@ package vn.ndang.aovcollector
 
 import android.graphics.Bitmap
 import kotlin.math.abs
+import kotlin.math.hypot
 
 /**
  * The All-heroes grid on the 2400x1080 landscape layout. Positions are fractions of the screen and the
@@ -90,4 +91,47 @@ object HeroGrid {
     /** Only on the hero list are the gaps between card columns plain background from top to bottom. */
     fun isGrid(width:Int,height:Int,readRow:(Int,IntArray)->Unit)=gaps.all { detail(width,height,it,.004,.55,.40,readRow)<.6 }
     fun isGrid(b:Bitmap)=isGrid(b.width,b.height,reader(b))
+
+    /** The game's back arrow; the macro taps it to leave a hero page. */
+    const val BACK_X=.09
+    const val BACK_Y=.05
+    // The arrow's point and the ends of its two strokes, measured on the list, hero pages and skill panels.
+    private const val ARROW_TIP_X=.0758
+    private const val ARROW_TIP_Y=.0546
+    private const val ARROW_END_X=.1054
+    private val arrowEnds=doubleArrayOf(.0296,.0806)
+    /**
+     * Whether the white back arrow "<" is at the top left. The list, hero pages and skill panels have it;
+     * the lobby does not, so a missing arrow means tapping there would do something else.
+     */
+    fun hasBackArrow(width:Int,height:Int,readRow:(Int,IntArray)->Unit):Boolean {
+        val tx=ARROW_TIP_X*width; val ty=ARROW_TIP_Y*height; val ex=ARROW_END_X*width; val ends=arrowEnds.map { it*height }
+        val pad=.012*height
+        val x0=(tx-pad).toInt().coerceIn(0,width-1); val x1=(ex+pad).toInt().coerceIn(x0+1,width)
+        val y0=(ends[0]-2*pad).toInt().coerceIn(0,height-1); val y1=(ends[1]+2*pad).toInt().coerceIn(y0+1,height)
+        val w=x1-x0; val white=BooleanArray(w*(y1-y0)); val row=IntArray(width)
+        for(y in y0 until y1) { readRow(y,row); for(x in x0 until x1) white[(y-y0)*w+x-x0]=isWhite(row[x]) }
+        fun whiteAt(x:Int,y:Int)=x in x0 until x1&&y in y0 until y1&&white[(y-y0)*w+x-x0]
+        // Nearly every white pixel lies on the two strokes ...
+        var count=0; var near=0
+        for(i in white.indices) if(white[i]) {
+            count++
+            val px=(x0+i%w).toDouble(); val py=(y0+i/w).toDouble()
+            if(ends.minOf { segment(px,py,tx,ty,ex,it) }<.0075*height) near++
+        }
+        // ... and the strokes are white along their whole length.
+        val r=maxOf(1,(.002*height).toInt()); var hits=0; var samples=0
+        for(ey in ends) for(k in 0..20) {
+            val sx=(tx+(ex-tx)*k/20).toInt(); val sy=(ty+(ey-ty)*k/20).toInt(); samples++
+            if((-1..1).any { i -> (-1..1).any { j -> whiteAt(sx+i*r,sy+j*r) } }) hits++
+        }
+        return count>0&&near>.8*count&&hits>=.75*samples
+    }
+    fun hasBackArrow(b:Bitmap)=hasBackArrow(b.width,b.height,reader(b))
+    private fun isWhite(p:Int):Boolean { val r=(p shr 16) and 255; val g=(p shr 8) and 255; val b=p and 255; val lo=minOf(r,g,b)
+        return lo>190&&maxOf(r,g,b)-lo<50 }
+    private fun segment(px:Double,py:Double,ax:Double,ay:Double,bx:Double,by:Double):Double {
+        val dx=bx-ax; val dy=by-ay; val t=(((px-ax)*dx+(py-ay)*dy)/(dx*dx+dy*dy)).coerceIn(0.0,1.0)
+        return hypot(px-ax-t*dx,py-ay-t*dy)
+    }
 }

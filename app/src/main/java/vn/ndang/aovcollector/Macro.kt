@@ -69,7 +69,7 @@ object BuiltInMacros {
             // "pick" scrolls the list by measured amounts and taps card i; the run ends early at the end of the list.
             steps.put(JSONObject().put("type","pick").put("index",i)); waitFor(if(fast) 2000 else 2700)
             collect("hero-%03d".format(i+1))
-            tap(.09,.05); waitFor(if(fast) 1000 else 1400)
+            tap(HeroGrid.BACK_X,HeroGrid.BACK_Y); waitFor(if(fast) 1000 else 1400)
         }
         val safeName=heroName.trim().take(80)
         return JSONObject().put("name",if(batch) "batch-heroes" else "single-hero")

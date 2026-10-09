@@ -98,3 +98,19 @@ Bundled ML Kit reads the hero-name region from overview screenshots. A valid-loo
   - **Chạy nhanh:** chờ 600 ms sau mỗi lần chạm, 450 ms khi chuyển tab Tóm tắt/Chi tiết; ước tính khoảng 36 giây mỗi tướng.
   - **Chỉ chụp Chi tiết:** bỏ 4 ảnh Tóm tắt; bật cùng Chạy nhanh thì ước tính khoảng 30 giây và 6 ảnh mỗi tướng.
   - Nên thử với 2 tướng rồi xem ảnh trước khi chạy cả danh sách.
+
+
+## v0.4.3: tự quay về danh sách khi còn kẹt ở trang tướng
+
+- **Lỗi:** một lượt dừng ở trang chi tiết của Edras với thông báo "Màn hình hiện tại không phải danh sách Tất cả tướng". Tướng trước đã chụp xong, nhưng game không nhận lần chạm nút quay lại của macro, nên bước chọn tướng kế tiếp vẫn thấy trang tướng.
+- Giờ khi bước chọn tướng không thấy danh sách:
+  - App chờ 1,2 giây rồi nhìn lại, phòng trường hợp danh sách đang hiện dần.
+  - Nếu vẫn chưa thấy và góc trên trái có mũi tên quay lại "‹" của game, app bấm mũi tên đó, chờ 1,5 giây rồi tìm lại danh sách. Mỗi bước được bấm tối đa 3 lần.
+  - Danh sách thường giữ nguyên vị trí cuộn, nên app so với ảnh danh sách trước đó và chạy tiếp mà không phải cuộn lại từ đầu.
+- Mũi tên được nhận dạng theo hình dạng: 2 nét trắng hội tụ về một mũi nhọn. Màn hình chính của game không có mũi tên này, nên app không bấm bừa ở đó mà tạm dừng như trước.
+- Mỗi lần bấm quay lại được ghi vào **Nhật ký lượt**. Ảnh màn hình lúc đó được giữ trong lượt với tên `…-not-list-1`, để biết game đang mở gì.
+- Unit test thêm 4 trường hợp:
+  - Game bỏ qua lần chạm quay lại ở 3 tướng trong danh sách 61 tướng; vẫn lấy đủ, đúng thứ tự.
+  - Danh sách hiện chậm; app không bấm quay lại.
+  - Đang ở màn hình chính; app không bấm gì.
+  - Mũi tên được nhận ra trên ảnh cắt thật (danh sách, bảng kỹ năng, trang Edras), và không bị nhận nhầm trên tóc trắng, thanh tiền tệ hay thẻ tướng.

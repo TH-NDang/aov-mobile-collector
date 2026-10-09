@@ -9,7 +9,7 @@
 | wait | ms | Chờ 0..60000 ms |
 | back | không | Android Back, không phải nút quay lại Unity |
 | screenshot | name | Tên ảnh chỉ chữ/số/_/- |
-| pick | index | Chạm thẻ tướng thứ `index` (từ 0, đọc theo hàng) trong danh sách Tất cả tướng. Tự đưa danh sách về đầu ở lần đầu, cuộn từng đoạn và đo độ cuộn bằng ảnh chụp; hết danh sách thì kết thúc lượt |
+| pick | index | Chạm thẻ tướng thứ `index` (từ 0, đọc theo hàng) trong danh sách Tất cả tướng. Tự đưa danh sách về đầu ở lần đầu, cuộn từng đoạn và đo độ cuộn bằng ảnh chụp; hết danh sách thì kết thúc lượt. Nếu màn hình không phải danh sách mà góc trên trái có nút quay lại của game, app bấm nút đó (tối đa 3 lần) rồi tìm lại danh sách |
 
 Ví dụ tọa độ minh họa, cần thay theo máy thật:
 ```json

@@ -539,12 +539,14 @@ class CollectorService : AccessibilityService() {
                     if(b==null) return@grab then(null)
                     try { io.execute {
                         val p=try { if(HeroGrid.isGrid(b)) HeroGrid.profile(b) else FloatArray(0) } catch(e:Throwable) { null }
+                        val arrow=p?.isEmpty()==true&&try { HeroGrid.hasBackArrow(b) } catch(e:Throwable) { false }
                         val total=if(listTotal==null&&p?.isNotEmpty()==true) HeroNames.readListTotal(b) else null
                         handler.post { if(total!=null) listTotal=total; if(p==null) { b.recycle(); then(null) } else then(object:ListNavigator.Shot {
                             override val profile:FloatArray=p
                             override val height=b.height
+                            override val backArrow=arrow
                             override fun hasCard(x:Double,y:Double)=HeroGrid.hasCard(b,x,y)
-                            override fun done(keep:Boolean) { if(keep) store(b,runId,"$stamp-page-%02d-list".format(state.page)) {} else b.recycle() }
+                            override fun done(keep:String?) { if(keep!=null) store(b,runId,"$stamp-$keep") {} else b.recycle() }
                         }) }
                     } } catch(e:Exception) { b.recycle(); then(null) }
                 }
@@ -554,7 +556,9 @@ class CollectorService : AccessibilityService() {
                 touchGame(drag(.70,from,to.coerceIn(.02,.98),if(fling) 160 else 700,if(fling) 0 else 450),false,then)
             }
             override fun tap(x:Double,y:Double,then:(Boolean)->Unit) { touchGame(tapAt(x,y),true,then) }
+            override fun back(then:(Boolean)->Unit) { touchGame(tapAt(HeroGrid.BACK_X,HeroGrid.BACK_Y),true,then) }
             override fun later(ms:Long,then:()->Unit) { handler.postDelayed(then,ms) }
+            override fun note(text:String) { this@CollectorService.note(text) }
         }
         ListNavigator(card,state,screen) { outcome ->
             listRef=state.ref
