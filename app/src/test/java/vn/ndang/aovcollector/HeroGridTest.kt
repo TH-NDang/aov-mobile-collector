@@ -4,7 +4,8 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import javax.imageio.ImageIO
+import java.io.DataInputStream
+import java.util.zip.GZIPInputStream
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.random.Random
@@ -152,11 +153,18 @@ class HeroGridTest {
         assertEquals("failed at 0: Màn hình hiện tại không phải danh sách Tất cả tướng. Mở danh sách rồi bấm Tiếp tục.",end)
         assertEquals(0,run.backs); assertEquals(0,run.swipes)
     }
-    /** Crops of real 2400x1080 screens, placed at the top left of an otherwise black screen. */
+    /**
+     * Crops of real 2400x1080 screens, placed at the top left of an otherwise black screen. They are binary
+     * PPM files (gzipped), since unit tests compile against android.jar, which has no image decoder.
+     */
     @Test fun backArrowIsFoundOnRealScreensOnly() {
         fun arrow(name:String):Boolean {
-            val image=ImageIO.read(javaClass.getResourceAsStream("/screens/$name.png")!!)
-            return HeroGrid.hasBackArrow(2400,1080) { y,row -> for(x in row.indices) row[x]=if(x<image.width&&y<image.height) image.getRGB(x,y) else 0xff000000.toInt() }
+            val input=DataInputStream(GZIPInputStream(javaClass.getResourceAsStream("/screens/$name.ppm.gz")!!))
+            fun token()=buildString { while(true) { val c=input.readUnsignedByte().toChar(); if(c.isWhitespace()) { if(isNotEmpty()) break } else append(c) } }
+            check(token()=="P6"); val w=token().toInt(); val h=token().toInt(); check(token()=="255")
+            val rgb=ByteArray(w*h*3).also { input.readFully(it) }
+            return HeroGrid.hasBackArrow(2400,1080) { y,row -> for(x in row.indices) row[x]=if(x<w&&y<h) { val i=(y*w+x)*3
+                (0xff shl 24) or ((rgb[i].toInt() and 255) shl 16) or ((rgb[i+1].toInt() and 255) shl 8) or (rgb[i+2].toInt() and 255) } else 0xff000000.toInt() }
         }
         for(name in listOf("back-arrow-list","back-arrow-skill-panel","back-arrow-edras")) assertTrue(name,arrow(name))
         for(name in listOf("no-arrow-hair","no-arrow-currency","no-arrow-card")) assertFalse(name,arrow(name))
