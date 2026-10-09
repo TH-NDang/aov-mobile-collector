@@ -162,8 +162,9 @@ class MainActivity : Activity() {
         info.addView(Ui.text(this,title(file),16f,Ui.ink,true).apply { maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END })
         val size=all.sumOf { it.length() }/1048576.0
         val time=if(file.isDirectory) SimpleDateFormat("dd/MM/yyyy HH:mm",Locale.getDefault()).format(Date(createdAt(file)))+" · " else ""
-        info.addView(Ui.text(this,time+(if(file.isDirectory) "${all.size} ảnh · " else "PNG · ")+String.format(Locale.US,"%.1f MB",size),12f,Ui.muted))
         val m=meta(file)
+        val ran=m.optLong("activeMs",0L).takeIf { it>0 }?.let { " · chạy "+duration(it) }?:""
+        info.addView(Ui.text(this,time+(if(file.isDirectory) "${all.size} ảnh · " else "PNG · ")+String.format(Locale.US,"%.1f MB",size)+ran,12f,Ui.muted))
         val note=if(m.optString("nameSource")=="ocr") "Tên từ ảnh" else if(m.optString("nameSource")=="unknown") "Cần đặt tên" else when(m.optString("state")) { "completed"->"Hoàn tất";"paused"->"Tạm dừng";"stopped"->"Đã kết thúc";"running"->"Đang chạy";else->"" }
         if(note.isNotEmpty()) info.addView(Ui.text(this,note,11f,Ui.muted));row.addView(info,LinearLayout.LayoutParams(0,-2,1f))
         if(!selecting) row.addView(Ui.text(this,"⋮",26f,Ui.muted).apply { gravity=Gravity.CENTER;setOnClickListener { itemMenu(file) };contentDescription="Tùy chọn ${title(file)}" },LinearLayout.LayoutParams(dp(36),dp(48)))
@@ -222,9 +223,18 @@ class MainActivity : Activity() {
         // Filmstrip thumbnails decode off the main thread; the cache makes revisits instant.
         Thread { images.forEachIndexed { i,f -> val b=thumb(f,16);runOnUiThread { if(historyRoot==null) thumbsViews[i].setImageBitmap(b) } } }.start()
     }
+    private fun duration(ms:Long):String { val t=ms/1000; return if(t>=3600) "%d:%02d:%02d".format(t/3600,t/60%60,t%60) else "%d:%02d".format(t/60,t%60) }
     private fun itemMenu(file:File) {
-        val labels=if(file.isDirectory) arrayOf("Lưu thư mục thành ZIP","Đổi tên","Xóa thư mục") else arrayOf("Lưu ảnh trong ZIP","Xóa ảnh")
-        AlertDialog.Builder(this).setTitle(title(file)).setItems(labels) { _,i -> when { i==0 -> requestExport(listOf(file));file.isDirectory&&i==1 -> rename(file);else -> delete(listOf(file)) } }.show()
+        val events=File(file,"events.txt")
+        val labels=if(file.isDirectory) listOfNotNull("Lưu thư mục thành ZIP","Đổi tên","Xóa thư mục",if(events.exists()) "Nhật ký lượt" else null) else listOf("Lưu ảnh trong ZIP","Xóa ảnh")
+        AlertDialog.Builder(this).setTitle(title(file)).setItems(labels.toTypedArray()) { _,i -> when(labels[i]) {
+            "Lưu thư mục thành ZIP","Lưu ảnh trong ZIP" -> requestExport(listOf(file)); "Đổi tên" -> rename(file); "Nhật ký lượt" -> runLog(events); else -> delete(listOf(file)) } }.show()
+    }
+    /** Starts, pauses with their reasons, failures and the end of a run, written by the collector. */
+    private fun runLog(events:File) {
+        val text=try { events.readText() } catch(_:Exception) { "" }
+        AlertDialog.Builder(this).setTitle("Nhật ký lượt").setMessage(text.takeLast(4000).ifBlank { "Chưa có sự kiện." }).setPositiveButton("Đóng",null)
+            .setNeutralButton("Sao chép") { _,_ -> (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("AOV Collector",text));Toast.makeText(this,"Đã sao chép nhật ký",Toast.LENGTH_SHORT).show() }.show()
     }
     private fun editable():Boolean {
         if(CollectorService.libraryBusy) { message("Đang xử lý file. Vui lòng chờ hoàn tất.");return false }
@@ -267,7 +277,7 @@ class MainActivity : Activity() {
         }
     }
     private fun importMenu() { AlertDialog.Builder(this).setTitle("Nhập file").setItems(arrayOf("Ảnh và thư mục từ ZIP","Macro từ JSON")) { _,i -> if(editable()) startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type=if(i==0) "application/zip" else "application/json";addCategory(Intent.CATEGORY_OPENABLE) },if(i==0) 12 else 10) }.show() }
-    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Một tướng hoặc Danh sách → Chạy.\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080 và 4 biểu tượng chiêu. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nAOV Collector 0.4.1").setPositiveButton("Đã hiểu",null)
+    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Một tướng hoặc Danh sách → Chạy.\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080 và 4 biểu tượng chiêu. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nAOV Collector 0.4.2").setPositiveButton("Đã hiểu",null)
         if(CrashLog.file(this).exists()) dialog.setNeutralButton("Nhật ký lỗi") { _,_ -> showLog("Nhật ký lỗi") };dialog.show() }
     private fun requestExport(files:List<File>) {
         if(files.isEmpty()||!editable()) return

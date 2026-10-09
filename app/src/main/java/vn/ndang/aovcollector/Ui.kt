@@ -57,8 +57,12 @@ object MacroStore {
     fun saved(c:Context):List<File> = File(c.filesDir,"macros").listFiles()?.filter { it.extension=="json" }?.sortedByDescending { it.lastModified() }.orEmpty()
     fun title(m:Macro):String = when(m.json.optString("collectionMode")) { "single" -> "Một tướng"; "all" -> "Danh sách tướng"; else -> "Macro đã nhập" }
     fun description(m:Macro):String = when(m.json.optString("collectionMode")) {
-        "single" -> m.json.optString("heroName","").ifBlank { "Tướng đang mở · 10 ảnh" }
-        "all" -> "${m.json.optInt("heroCount",1)} ô tướng · cuộn có đo, dừng ở cuối danh sách"
+        "single","all" -> base(m)+(if(m.json.optBoolean("fast")) " · nhanh" else "")+(if(m.json.optBoolean("detailOnly")) " · chỉ Chi tiết" else "")
+        else -> m.name
+    }
+    private fun base(m:Macro):String = when(m.json.optString("collectionMode")) {
+        "single" -> m.json.optString("heroName","").ifBlank { "Tướng đang mở" }+" · ${m.photoSteps.size} ảnh"
+        "all" -> if(m.json.optInt("heroCount",1)>=BuiltInMacros.ALL) "Tất cả tướng · dừng ở cuối danh sách" else "${m.json.optInt("heroCount",1)} ô tướng · cuộn có đo, dừng ở cuối danh sách"
         else -> m.name
     }
     fun instruction(m:Macro):String = if(m.json.optString("collectionMode")=="all") "Mở danh sách Tất cả tướng; app tự đưa về đầu danh sách." else if(m.json.optString("collectionMode")=="single") "Mở trang chi tiết tướng, đóng bảng mô tả chiêu." else "Mở đúng màn hình bắt đầu của macro."
