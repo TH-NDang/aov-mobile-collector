@@ -37,17 +37,27 @@ KINDS = {
         {"van_ban": LINES, "ten_tuong": {"type": "string"}, "danh_hieu": {"type": "string"}, "so_truong": {"type": "string"}},
     ),
     "attributes": (
-        "Đây là bảng thuộc tính của một tướng trong game Liên Quân Mobile. Chép lại mọi dòng chữ, giữ nguyên dấu, "
-        "vào van_ban. Sau đó liệt kê từng chỉ số với tên và giá trị đúng như trên ảnh.",
-        {"van_ban": LINES, "chi_so": {"type": "array", "items": {"type": "object", "properties": {
-            "ten": {"type": "string"}, "gia_tri": {"type": "string"}}, "required": ["ten", "gia_tri"]}}},
+        "Ảnh là bảng thuộc tính của một tướng trong game Liên Quân Mobile: trên cùng là đoạn giới thiệu tướng, "
+        "dưới là \"Thuộc tính cơ bản\" và \"Thuộc tính tấn công\" gồm các cặp tên và giá trị (ví dụ Máu 3379, "
+        "Giáp 134 | 0%, Tầm đánh Đánh xa). mo_ta_tuong là đoạn giới thiệu, chép nguyên văn. chi_so có một phần tử "
+        "cho mỗi chỉ số, ví dụ {\"ten\": \"Máu\", \"gia_tri\": \"3379\"} rồi {\"ten\": \"Công vật lý\", \"gia_tri\": \"169\"}; "
+        "không gộp nhiều chỉ số vào một phần tử, không lấy tiêu đề nhóm làm tên. Giữ đúng dấu tiếng Việt và số.",
+        {"mo_ta_tuong": {"type": "string"}, "chi_so": {"type": "array", "maxItems": 24, "items": {"type": "object",
+            "properties": {"ten": {"type": "string"}, "gia_tri": {"type": "string"}}, "required": ["ten", "gia_tri"]}}},
     ),
     "skill": (
-        "Đây là bảng mô tả một chiêu (hoặc nội tại) của tướng trong game Liên Quân Mobile. Chép lại mọi dòng chữ "
-        "tiếng Việt, giữ nguyên dấu và số, vào van_ban theo thứ tự đọc. Sau đó điền tên chiêu, thời gian hồi chiêu, "
-        "tiêu hao (năng lượng/máu) và toàn bộ đoạn mô tả. Ô nào không thấy thì để chuỗi rỗng.",
-        {"van_ban": LINES, "ten_chieu": {"type": "string"}, "hoi_chieu": {"type": "string"},
-         "tieu_hao": {"type": "string"}, "mo_ta": {"type": "string"}},
+        "Ảnh là bảng mô tả một chiêu (hoặc nội tại) của tướng trong game Liên Quân Mobile. ten_chieu là dòng tiêu "
+        "đề trên cùng, bỏ số thứ tự trong vòng tròn. nhan là các nhãn nhỏ dưới tiêu đề (ví dụ Vật lý, ST vùng, "
+        "Đặc biệt). hoi_chieu là giá trị sau chữ \"H.chiêu\" (ví dụ 0.2s). tieu_hao là dòng tiêu hao kèm nhãn "
+        "(ví dụ \"Nội năng cần: 0\" hoặc \"Năng lượng: 60\"). mo_ta là toàn bộ đoạn mô tả, chép nguyên văn. "
+        "bang_cap là từng hàng của bảng theo cấp Lv 1, Lv 2…: tên hàng và các giá trị theo thứ tự cấp. Bỏ qua hai "
+        "nút \"Tóm tắt\", \"Chi tiết\" ở góc trên bên phải và chữ mờ in chìm ở nền (tên, danh hiệu tướng). Nội tại "
+        "thường không có H.chiêu, tiêu hao và bảng cấp: khi đó để rỗng. Giữ đúng dấu tiếng Việt và số, không tự thêm chữ.",
+        {"ten_chieu": {"type": "string"}, "nhan": {"type": "array", "items": {"type": "string"}, "maxItems": 6},
+         "hoi_chieu": {"type": "string"}, "tieu_hao": {"type": "string"}, "mo_ta": {"type": "string"},
+         "bang_cap": {"type": "array", "maxItems": 8, "items": {"type": "object", "properties": {
+             "ten": {"type": "string"}, "gia_tri": {"type": "array", "items": {"type": "string"}, "maxItems": 8}},
+             "required": ["ten", "gia_tri"]}}},
     ),
     "list": (
         "Đây là danh sách tướng trong game Liên Quân Mobile. Liệt kê tên tướng in trên từng thẻ, theo thứ tự từ "
@@ -94,22 +104,25 @@ def pick(images: list, limit: int) -> list:
     return chosen
 
 
-# Areas with text on a 2400x1080 screen, as fractions. They are read at full resolution, enlarged, instead of
-# the whole screen scaled down: small game text keeps its accents, and the model gets fewer image tokens.
+# Areas with text on a 2400x1080 screen, as fractions, and how much to enlarge them. They are read at full
+# resolution instead of the whole screen scaled down: game text keeps its accents, with fewer image tokens.
 REGIONS = {
-    "overview": [(0.06, 0.21, 0.29, 0.57), (0.71, 0.20, 0.96, 0.40)],
+    "overview": ([(0.06, 0.21, 0.29, 0.57), (0.71, 0.20, 0.96, 0.40)], 1.5),   # info panel; title and name
+    "attributes": ([(0.50, 0.08, 0.93, 0.80)], 1.0),                            # introduction and stats
+    "skill": ([(0.445, 0.015, 0.99, 0.90)], 1.0),                               # name, tags, cooldown, text, levels
 }
 
 
-def prepare(path: Path, kind: str, max_width: int, zoom: float, crops: bool) -> list:
+def prepare(path: Path, kind: str, max_width: int, crops: bool) -> list:
     """Drops the bottom strip, where the game prints the account UID, then cuts the text areas or scales down."""
     image = Image.open(path).convert("RGB")
     image = image.crop((0, 0, image.width, min(image.height, round(image.width * 1080 / 2400 * 0.955))))
     if crops and kind in REGIONS:
         # Heights follow the width, so a screenshot already cut at the bottom keeps the same areas.
+        boxes, zoom = REGIONS[kind]
         w, h, factor = image.width, image.width * 1080 / 2400, zoom * 2400 / image.width
         parts = []
-        for x0, y0, x1, y1 in REGIONS[kind]:
+        for x0, y0, x1, y1 in boxes:
             part = image.crop((round(x0 * w), round(y0 * h), round(x1 * w), min(image.height, round(y1 * h))))
             parts.append(part.resize((round(part.width * factor), round(part.height * factor)), Image.LANCZOS))
         return parts
@@ -124,10 +137,21 @@ def data_url(image: Image.Image) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode()
 
 
-def ask_model(server: str, images: list, kind: str, max_tokens: int) -> tuple:
+def hero_name(path: Path) -> str:
+    """The name the app read for this hero folder, if any; it keeps the model from misspelling the hero."""
+    try:
+        info = json.loads((path.parent / "hero.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return ""
+    return info.get("name", "") if info.get("nameSource") in ("ocr", "manual") else ""
+
+
+def ask_model(server: str, images: list, kind: str, max_tokens: int, name: str = "") -> tuple:
     prompt, properties = KINDS[kind]
-    if len(images) == 1 and kind in REGIONS:
+    if len(images) == 1 and kind == "overview":
         prompt = KINDS["other"][0] + " Sau đó điền các ô còn lại nếu thấy."
+    if name and kind in ("attributes", "skill"):
+        prompt = f"Tướng trong ảnh tên là {name}. " + prompt
     body = {
         "messages": [{"role": "user", "content": [{"type": "image_url", "image_url": {"url": data_url(i)}} for i in images]
                       + [{"type": "text", "text": prompt + " Trả lời bằng JSON."}]}],
@@ -187,12 +211,21 @@ def main() -> int:
     parser.add_argument("--server", default="http://127.0.0.1:8080")
     parser.add_argument("--limit", type=int, default=0, help="images to read, spread over the kinds of screen (0: all)")
     parser.add_argument("--max-width", type=int, default=1600, help="screens without text areas are scaled to this width")
-    parser.add_argument("--zoom", type=float, default=1.5, help="text areas are enlarged this much over a 2400px-wide screen")
     parser.add_argument("--no-crops", dest="crops", action="store_false", help="send whole screens, scaled down")
-    parser.add_argument("--max-tokens", type=int, default=1200)
+    parser.add_argument("--max-tokens", type=int, default=1600)
+    parser.add_argument("--kinds", default="", help="comma-separated kinds of screen to read (default: all)")
+    parser.add_argument("--shard", type=int, default=0, help="with --shards, read only this share of the heroes")
+    parser.add_argument("--shards", type=int, default=1)
     args = parser.parse_args()
 
     images = sorted(p for p in args.images.rglob("*") if p.suffix.lower() in IMAGE_TYPES)
+    if args.kinds:
+        images = [p for p in images if kind_of(p) in args.kinds.split(",")]
+    if args.shards > 1:
+        # A hero's screens stay in one share; folders are dealt out in turn so shares get similar work.
+        folders = sorted({p.parent for p in images})
+        mine = {f for i, f in enumerate(folders) if i % args.shards == args.shard}
+        images = [p for p in images if p.parent in mine]
     images = pick(images, args.limit)
     if not images:
         print(f"No images under {args.images}", file=sys.stderr)
@@ -202,14 +235,14 @@ def main() -> int:
     with open(args.out / "results.jsonl", "w", encoding="utf-8") as results:
         for number, path in enumerate(images, 1):
             kind = kind_of(path)
-            parts = prepare(path, kind, args.max_width, args.zoom, args.crops)
+            parts = prepare(path, kind, args.max_width, args.crops)
             started = time.monotonic()
             timings, finish, error = {}, None, None
             try:
                 if args.engine == "tesseract":
                     answer = ask_tesseract(parts)
                 else:
-                    answer, timings, finish = ask_model(args.server, parts, kind, args.max_tokens)
+                    answer, timings, finish = ask_model(args.server, parts, kind, args.max_tokens, hero_name(path))
             except Exception as e:  # keep going: one bad image should not lose the rest of the run
                 answer, error = {}, f"{type(e).__name__}: {e}"
             seconds = time.monotonic() - started
@@ -227,7 +260,7 @@ def main() -> int:
     done = [r for r in rows if not r["error"]]
     total = sum(r["seconds"] for r in rows)
     lines = [f"## {args.label or args.engine}", "",
-             f"{len(done)}/{len(rows)} ảnh đọc được · trung bình {total / max(1, len(rows)):.0f} giây/ảnh · " + (f"vùng chữ phóng {args.zoom}x, " if args.crops else "") + f"ảnh khác thu về {args.max_width}px", "",
+             f"{len(done)}/{len(rows)} ảnh đọc được · trung bình {total / max(1, len(rows)):.0f} giây/ảnh · " + ("đọc theo vùng chữ" if args.crops else f"cả màn hình thu về {args.max_width}px"), "",
              "| Ảnh | Loại | Giây | Token vào/ra | Kết quả chính |", "|---|---|---|---|---|"]
     for r in rows:
         tokens = f"{r['prompt_tokens']}/{r['output_tokens']}" if r["prompt_tokens"] else ""

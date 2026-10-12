@@ -28,18 +28,15 @@ Workflow `.github/workflows/extract-text.yml` đọc chữ trong ảnh AOV Colle
 | Qwen3-VL 4B, vùng chữ phóng 1,5x | ~50 | 3/3 | đúng "Soái tặc", "Tiền đạo", "Thánh quang đạo sư"; còn sai "Câu ria" (đúng là "Cấu rỉa") |
 | Tesseract, vùng chữ | <1 | 0/3 | phần lớn ra ký tự rác trên chữ cách điệu |
 
-**Cần làm tiếp khi có ảnh thật** của bảng thuộc tính và bảng chiêu:
+**Trên ảnh thật** (Capheny: tổng quan, thuộc tính, nội tại, 3 chiêu), CPU 4 nhân:
 
-- Thêm vùng chữ cho hai loại này vào `REGIONS`.
-- Chỉnh prompt cho từng loại.
-
-**Trên runner GitHub** (4 nhân), tốc độ tuỳ CPU được cấp:
-
-| Model | Runner chậm | Runner nhanh |
+| Model | Giây/ảnh chiêu | Kết quả |
 |---|---|---|
-| 4B | ~50 giây/trang tướng | ~29 giây/trang tướng |
-| 2B | ~28 giây/trang tướng | ~18 giây/trang tướng |
+| 4B | 81–129 | Tên chiêu, nhãn, hồi chiêu, tiêu hao, bảng Lv và 16 chỉ số đúng hết. Mô tả còn sai dấu: "làm chật", "lâm chấn" (làm chậm), "Cappheny" |
+| 8B | 157–196 | Như 4B, và mô tả gần như đúng nguyên văn |
 
-Tesseract cho kết quả không dùng được.
+Lượt chạy toàn bộ dùng 8B:
 
-**Toàn bộ khoảng 1.300 ảnh** với 4B mất cỡ 10–18 giờ CPU, nên phải chia thành nhiều job song song.
+- Workflow chia 129 tướng cho 20 job song song, mỗi job khoảng 6–7 tướng, ước 2–2,5 giờ.
+- Job `merge` gộp kết quả thành `heroes.json`. Mỗi tướng gồm: tên, danh hiệu, sở trường, giới thiệu, chỉ số, nội tại, chiêu 1–3 (tên, nhãn, hồi chiêu, tiêu hao, mô tả, bảng cấp) và danh sách ảnh lỗi.
+- Tên tướng app đã đọc (`hero.json`) được đưa vào prompt, để model không viết sai tên.

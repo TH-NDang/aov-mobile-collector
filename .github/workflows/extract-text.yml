@@ -1,7 +1,9 @@
 name: Extract text (Qwen3-VL)
-# Reads the text in collector screenshots with Qwen3-VL running on the runner's CPU through llama.cpp.
-# Screenshots come from a release of this repository (PNG/JPG files or ZIP exports from the app);
-# without a release the samples in extraction/samples are used. Results are uploaded as an artifact.
+# Reads the text in collector screenshots with Qwen3-VL running on the runners' CPUs through llama.cpp.
+# Screenshots come from a release of this repository (PNG/JPG files or ZIP exports from the app); without
+# a release the samples in extraction/samples are used. The heroes are dealt out to parallel jobs, since
+# reading every screen of every hero takes far longer than one job may run; a last job merges the answers
+# into heroes.json (artifact "heroes").
 on:
   push:
     branches: ['claude/**']
@@ -11,40 +13,63 @@ on:
       release:
         description: 'Release tag with the screenshots (empty: newest release, drafts included)'
         default: ''
-      models:
-        description: 'Models to run: 2b, 4b or 2b,4b'
-        default: '2b,4b'
+      model:
+        description: 'Qwen3-VL size: 2b, 4b or 8b (8b reads accents best, 4b is about 1.5 times faster)'
+        default: '8b'
       limit:
-        description: 'Images per model, spread over the kinds of screen (0: all)'
-        default: '10'
-      max_width:
-        description: 'Screenshots are scaled down to this width before reading'
-        default: '1600'
+        description: 'Images per job, spread over the kinds of screen (0: all)'
+        default: '0'
+      kinds:
+        description: 'Kinds of screen to read'
+        default: 'overview,attributes,skill'
 concurrency:
   group: extract-text-${{ github.ref }}
   cancel-in-progress: true
 permissions:
-  # Draft releases are only visible with write access. The job reads; it pushes nothing.
+  # Draft releases are only visible with write access. The jobs read; they push nothing.
   contents: write
 env:
   LLAMA_CPP_TAG: b11564
+  SHARDS: 20
   RELEASE: ${{ inputs.release }}
-  MODELS: ${{ inputs.models || '2b,4b' }}
-  LIMIT: ${{ inputs.limit || '10' }}
-  MAX_WIDTH: ${{ inputs.max_width || '1600' }}
+  MODEL: ${{ inputs.model || '8b' }}
+  LIMIT: ${{ inputs.limit || '0' }}
+  KINDS: ${{ inputs.kinds || 'overview,attributes,skill' }}
 jobs:
-  extract:
+  model:
+    # Fetches the model into the cache once, so the parallel jobs do not each download it.
     runs-on: ubuntu-latest
-    timeout-minutes: 180
+    steps:
+      - name: Restore the model
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: qwen3-vl-gguf-q4km-mmproj-q8-${{ env.MODEL }}
+      - name: Download the model
+        # Official Qwen GGUF builds (Apache-2.0): Q4_K_M weights and the Q8_0 vision projector.
+        run: |
+          mkdir -p models
+          S=${MODEL^^}
+          for file in "Qwen3VL-$S-Instruct-Q4_K_M.gguf" "mmproj-Qwen3VL-$S-Instruct-Q8_0.gguf"; do
+            [ -s "models/$file" ] || curl -fsSL --retry 3 -o "models/$file" "https://huggingface.co/Qwen/Qwen3-VL-$S-Instruct-GGUF/resolve/main/$file"
+          done
+          ls -la models
+  extract:
+    needs: model
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
     steps:
       - uses: actions/checkout@v4
       - name: Describe the runner CPU
         id: cpu
-        # The build is tuned to the CPU it runs on, so the cache is kept per CPU model. Cache keys take no commas.
+        # The build is tuned to the CPU it runs on, so the cache is kept per CPU model.
         run: |
           nproc; grep -m1 'model name' /proc/cpuinfo
           echo "id=$(grep -m1 'model name' /proc/cpuinfo | sha1sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
-          echo "models=${MODELS//,/-}" >> "$GITHUB_OUTPUT"
       - name: Restore llama.cpp
         id: llama
         uses: actions/cache@v4
@@ -59,22 +84,18 @@ jobs:
             -DLLAMA_CURL=OFF -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF
           cmake --build llama.cpp/build -j"$(nproc)" --target llama-server
           mkdir -p llama-bin && cp llama.cpp/build/bin/llama-server llama-bin/
-      - name: Restore models
+      - name: Restore the model
         uses: actions/cache@v4
         with:
           path: models
-          key: qwen3-vl-gguf-q4km-mmproj-q8-${{ steps.cpu.outputs.models }}
-      - name: Download models
-        # Official Qwen GGUF builds (Apache-2.0): Q4_K_M weights and the Q8_0 vision projector.
+          key: qwen3-vl-gguf-q4km-mmproj-q8-${{ env.MODEL }}
+      - name: Download the model if the cache was missed
         run: |
           mkdir -p models
-          for size in ${MODELS//,/ }; do
-            S=${size^^}
-            for file in "Qwen3VL-$S-Instruct-Q4_K_M.gguf" "mmproj-Qwen3VL-$S-Instruct-Q8_0.gguf"; do
-              [ -s "models/$file" ] || curl -fsSL --retry 3 -o "models/$file" "https://huggingface.co/Qwen/Qwen3-VL-$S-Instruct-GGUF/resolve/main/$file"
-            done
+          S=${MODEL^^}
+          for file in "Qwen3VL-$S-Instruct-Q4_K_M.gguf" "mmproj-Qwen3VL-$S-Instruct-Q8_0.gguf"; do
+            [ -s "models/$file" ] || curl -fsSL --retry 3 -o "models/$file" "https://huggingface.co/Qwen/Qwen3-VL-$S-Instruct-GGUF/resolve/main/$file"
           done
-          ls -la models
       - name: Get the screenshots
         env:
           GH_TOKEN: ${{ github.token }}
@@ -105,29 +126,42 @@ jobs:
             echo "::warning::No screenshots in a release; reading extraction/samples instead"
             cp -r extraction/samples/. input/
           fi
-          find input -type f | sort | head -50
-          echo "$(find input -type f | wc -l) files"
-      - name: Install Pillow and Tesseract
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq python3-pil tesseract-ocr tesseract-ocr-vie > /dev/null
-      - name: Read with Tesseract (baseline)
-        run: python3 extraction/extract.py --engine tesseract --images input --out out/tesseract --label "Tesseract (vie)" --limit "$LIMIT" --max-width "$MAX_WIDTH"
+          echo "$(find input -type f -name '*.png' -o -type f -name '*.jpg' | wc -l) images"
+      - name: Install Pillow
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq python3-pil > /dev/null
       - name: Read with Qwen3-VL
         run: |
           mkdir -p out
-          for size in ${MODELS//,/ }; do
-            S=${size^^}
-            ./llama-bin/llama-server -m "models/Qwen3VL-$S-Instruct-Q4_K_M.gguf" --mmproj "models/mmproj-Qwen3VL-$S-Instruct-Q8_0.gguf" \
-              -c 8192 -t "$(nproc)" --port 8080 --no-webui > "out/server-$size.log" 2>&1 &
-            server=$!
-            for i in $(seq 1 120); do curl -sf http://127.0.0.1:8080/health > /dev/null && break; sleep 2; done
-            python3 extraction/extract.py --images input --out "out/qwen3-vl-$size" --label "Qwen3-VL $S (Q4_K_M, CPU)" --limit "$LIMIT" --max-width "$MAX_WIDTH" || true
-            kill "$server" 2>/dev/null || true; wait "$server" || true
-          done
+          S=${MODEL^^}
+          ./llama-bin/llama-server -m "models/Qwen3VL-$S-Instruct-Q4_K_M.gguf" --mmproj "models/mmproj-Qwen3VL-$S-Instruct-Q8_0.gguf" \
+            -c 8192 -t "$(nproc)" --port 8080 --no-webui > out/server.log 2>&1 &
+          for i in $(seq 1 300); do curl -sf http://127.0.0.1:8080/health > /dev/null && break; sleep 2; done
+          python3 extraction/extract.py --images input --out "out/shard-${{ matrix.shard }}" \
+            --label "Qwen3-VL $S · phần ${{ matrix.shard }}/$SHARDS" --kinds "$KINDS" --limit "$LIMIT" \
+            --shard ${{ matrix.shard }} --shards "$SHARDS"
       - name: Summary
         if: always()
         run: cat out/*/summary.md >> "$GITHUB_STEP_SUMMARY" || true
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: extracted-text
+          name: extracted-${{ matrix.shard }}
           path: out
+  merge:
+    needs: extract
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: extracted-*
+          path: parts
+      - name: Merge the answers per hero
+        run: |
+          python3 extraction/merge.py parts/*/shard-*/results.jsonl --out heroes
+          cat heroes/summary.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: heroes
+          path: heroes
