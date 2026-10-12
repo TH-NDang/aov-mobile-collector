@@ -116,7 +116,7 @@ Bundled ML Kit reads the hero-name region from overview screenshots. A valid-loo
   - Mũi tên được nhận ra trên ảnh cắt thật (danh sách, bảng kỹ năng, trang Edras), và không bị nhận nhầm trên tóc trắng, thanh tiền tệ hay thẻ tướng.
 
 
-## v0.4.4: chạy nhanh hơn, chuyển thẳng giữa các chiêu, tiến trình lưu ZIP
+## v0.4.4: chạy nhanh hơn, chuyển thẳng giữa các chiêu, tiến trình lưu ZIP, dung lượng dễ đọc
 
 - Mỗi tướng có khoảng 58 bước. Trước đây, sau mỗi bước app nghỉ thêm 150 ms, tổng khoảng 8,7 giây mỗi tướng. Khoảng nghỉ này thừa vì:
   - Mỗi cú chạm đã có bước chờ riêng ngay sau nó.
@@ -145,3 +145,12 @@ Bundled ML Kit reads the hero-name region from overview screenshots. A valid-loo
 - **Lưu ZIP nhanh hơn:**
   - Ảnh PNG vốn đã nén. Nén lại trong ZIP không giảm dung lượng: đo trên ảnh thật vẫn 100%, mà tốn khoảng 37 MB/s CPU trên máy tính, trên điện thoại chậm hơn.
   - Giờ ảnh PNG được ghi thẳng vào ZIP, chỉ file JSON và nhật ký còn được nén. File ZIP vẫn mở bình thường bằng mọi công cụ giải nén.
+- **Dung lượng dễ đọc:**
+  - Mọi chỗ hiện dung lượng tự đổi đơn vị KB/MB/GB, dùng dấu phẩy thập phân, ví dụ "850 KB", "24 MB", "2,61 GB".
+  - Tiến trình ZIP hiện theo đơn vị của tổng, ví dụ "0,85/2,61 GB".
+  - Khi chọn mục trong lịch sử, app hiện tổng dung lượng đã chọn (file ZIP có dung lượng gần như vậy) và dung lượng máy còn trống. Màn hình lịch sử hiện tổng dung lượng ảnh đã lưu.
+- **Ước tính trước khi chạy:** form chọn tác vụ không còn dòng cố định "Khoảng 1 phút và 25 MB mỗi tướng". Thay vào đó là ước tính cho cả lượt, tính lại khi đổi số ô hoặc tùy chọn, ví dụ "Ước tính: Tất cả 129 tướng · 1290 ảnh · khoảng 1 giờ 19 phút / Cần khoảng 1,8 GB · máy còn trống 21 GB".
+  - Thời gian được tính từ chính các bước của macro.
+  - Dung lượng mỗi ảnh lấy trung bình từ các ảnh đã lưu trên máy; chưa có ảnh nào thì dùng 1,5 MB.
+  - Số tướng của "Tất cả" lấy từ bộ đếm danh sách đọc được ở lần chạy trước; chưa đọc được thì tạm tính 130.
+  - Nếu không đủ chỗ trống, dòng ước tính chuyển màu đỏ.

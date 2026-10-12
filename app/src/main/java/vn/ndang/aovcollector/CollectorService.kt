@@ -312,7 +312,7 @@ class CollectorService : AccessibilityService() {
         body.addView(Ui.text(this,if(batch) "Số ô tướng cần lấy" else "Tên tướng (không bắt buộc)",13f,Ui.muted,true))
         val field=Ui.field(this,if(batch) "1–${BuiltInMacros.ALL}" else "Để trống để tự đọc tên",if(batch) uiPrefs.getInt("count",2).toString() else "",batch);body.addView(field)
         if(batch) {
-            body.addView(Ui.text(this,"Khoảng 1 phút và 25 MB mỗi tướng. Chọn Tất cả để lấy đến cuối danh sách.",12f,Ui.muted))
+            body.addView(Ui.text(this,"Chọn Tất cả để lấy đến cuối danh sách.",12f,Ui.muted))
             val quick=LinearLayout(this)
             listOf(2 to "2 ô",11 to "11 ô",BuiltInMacros.ALL to "Tất cả").forEach { (n,text) -> quick.addView(Ui.button(this,text) { field.setText(n.toString()) },LinearLayout.LayoutParams(0,dp(40),1f).apply { marginEnd=dp(4) }) };body.addView(quick)
         } else body.addView(Ui.text(this,"Tên được đọc từ ảnh. Nếu không rõ, app dùng thư mục đánh số; có thể đổi tên trong Ảnh đã lưu.",12f,Ui.muted))
@@ -320,6 +320,26 @@ class CollectorService : AccessibilityService() {
         val fast=option("Chạy nhanh: chờ ngắn hơn sau mỗi lần chạm (nên thử 2 tướng trước)","fast")
         val detailOnly=option("Chỉ chụp Chi tiết: bỏ ảnh Tóm tắt của nội tại và chiêu","detailOnly")
         val directSkills=option("Chuyển thẳng giữa các chiêu: bấm sang chiêu kế tiếp khi bảng chiêu còn mở, chỉ đóng sau chiêu cuối","directSkills")
+        // Time and space for the whole run, updated as the count and options change.
+        val estimate=Ui.text(this,"",13f,Ui.ink,true).also { body.addView(it) }
+        val shot=averageShot(); val known=uiPrefs.getInt("heroTotal",0).takeIf { it>0 }
+        fun updateEstimate() {
+            val asked=if(batch) field.text.toString().toIntOrNull()?.coerceIn(0,BuiltInMacros.ALL)?:0 else 1
+            val heroes=if(asked>=BuiltInMacros.ALL) known?:130 else asked
+            val photos=heroes*(if(detailOnly.isChecked) 6 else 10)
+            val need=photos*shot; val free=filesDir.usableSpace
+            val seconds=(heroes*BuiltInMacros.secondsPerHero(batch,fast.isChecked,detailOnly.isChecked,directSkills.isChecked)).toLong()
+            val who=when { !batch -> ""; asked>=BuiltInMacros.ALL -> if(known!=null) "Tất cả $heroes tướng · " else "Khoảng $heroes tướng · "; else -> "$heroes tướng · " }
+            estimate.text="Ước tính: $who$photos ảnh · khoảng ${Format.duration(seconds)}\nCần khoảng ${Format.size(need)} · máy còn trống ${Format.size(free)}"+
+                (if(need>free-30L*1024*1024) "\nKhông đủ chỗ cho cả lượt: app sẽ dừng khi còn dưới 30 MB." else "")
+            estimate.setTextColor(if(need>free-30L*1024*1024) Ui.danger else Ui.ink)
+        }
+        updateEstimate()
+        field.addTextChangedListener(object:android.text.TextWatcher {
+            override fun afterTextChanged(s:android.text.Editable?) { updateEstimate() }
+            override fun beforeTextChanged(s:CharSequence?,a:Int,b:Int,c:Int) {}
+            override fun onTextChanged(s:CharSequence?,a:Int,b:Int,c:Int) {} })
+        listOf(fast,detailOnly,directSkills).forEach { it.setOnCheckedChangeListener { _,_ -> updateEstimate() } }
         body.addView(Ui.text(this,"Chọn tác vụ sẽ tạo lượt mới. Ảnh đã chụp vẫn giữ lại.",12f,Ui.muted))
         val formScroll=ScrollView(this).apply { addView(body) }
         val dialog=AlertDialog.Builder(this).setTitle(if(batch) "Danh sách tướng" else "Một tướng").setView(formScroll)
@@ -334,6 +354,11 @@ class CollectorService : AccessibilityService() {
                 if(selectMacro(BuiltInMacros.create(if(batch) "Danh sách tướng" else field.text.toString(),count,batch,fast.isChecked,detailOnly.isChecked,directSkills.isChecked))) dialog.dismiss()
             } catch(e:Exception) { field.error=e.message }
         }
+    }
+    /** Mean size of the screenshots saved on this phone, which depends on its screen and the game's art; 1.5 MB before any. */
+    private fun averageShot():Long {
+        val sizes=File(filesDir,"captures").walkTopDown().filter { it.isFile&&it.extension=="png" }.take(300).map { it.length() }.toList()
+        return if(sizes.size>=5) sizes.average().toLong() else 1_500_000L
     }
     private fun savedPicker() {
         val entries=MacroStore.saved(this).mapNotNull { f -> try { Macro(f.readText()) } catch(e:Exception) { null } }
@@ -544,7 +569,7 @@ class CollectorService : AccessibilityService() {
                         val p=try { if(HeroGrid.isGrid(b)) HeroGrid.profile(b) else FloatArray(0) } catch(e:Throwable) { null }
                         val arrow=p?.isEmpty()==true&&try { HeroGrid.hasBackArrow(b) } catch(e:Throwable) { false }
                         val total=if(listTotal==null&&p?.isNotEmpty()==true) HeroNames.readListTotal(b) else null
-                        handler.post { if(total!=null) listTotal=total; if(p==null) { b.recycle(); then(null) } else then(object:ListNavigator.Shot {
+                        handler.post { if(total!=null) { listTotal=total; uiPrefs.edit().putInt("heroTotal",total).apply() }; if(p==null) { b.recycle(); then(null) } else then(object:ListNavigator.Shot {
                             override val profile:FloatArray=p
                             override val height=b.height
                             override val backArrow=arrow

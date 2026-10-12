@@ -81,4 +81,14 @@ object BuiltInMacros {
             .put("heroCount",if(batch) count else 1).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills)
             .put("builtinVersion",VERSION).put("steps",steps).toString(2)
     }
+    /**
+     * Rough seconds per hero, read from the steps themselves: every wait, plus typical times measured for a tap
+     * (hiding the panel first), a screenshot and finding the card in the list.
+     */
+    fun secondsPerHero(batch:Boolean,fast:Boolean,detailOnly:Boolean,directSkills:Boolean):Double {
+        val steps=JSONObject(create("",1,batch,fast,detailOnly,directSkills)).getJSONArray("steps")
+        // Step 0 is the wait before the run starts, once per run.
+        return (1 until steps.length()).sumOf { i -> val s=steps.getJSONObject(i)
+            when(s.getString("type")) { "wait" -> s.getLong("ms")/1000.0; "tap" -> .28; "screenshot" -> .45; "pick" -> 1.5; else -> 0.0 } }
+    }
 }

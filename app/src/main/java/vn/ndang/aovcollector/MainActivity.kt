@@ -62,7 +62,6 @@ class MainActivity : Activity() {
         }
     }
     private fun message(s:String) { AlertDialog.Builder(this).setMessage(s).setPositiveButton("Đã hiểu",null).show() }
-    private fun mb(bytes:Long)=String.format(Locale.US,if(bytes<100L*1024*1024) "%.1f" else "%.0f",bytes/1048576.0)
     /** Dialog for a long ZIP export or import. The worker thread reports into it and stops when [cancelled] is set. */
     private inner class FileProgress(title:String) {
         @Volatile var cancelled=false
@@ -84,7 +83,7 @@ class MainActivity : Activity() {
         fun report(done:Long,total:Long,text:String,file:String) {
             val now=SystemClock.elapsedRealtime(); if(now-shownAt<200&&(total<=0||done<total)) return; shownAt=now
             val elapsed=now-started
-            val eta=if(total>0&&done in 1 until total&&elapsed>2000) (elapsed*(total-done)/done).let { left -> " · còn khoảng "+if(left<60_000) "${maxOf(1,left/1000)} giây" else "${(left+30_000)/60_000} phút" } else ""
+            val eta=if(total>0&&done in 1 until total&&elapsed>2000) " · còn khoảng "+Format.duration(elapsed*(total-done)/done/1000) else ""
             runOnUiThread { if(cancelled||isFinishing) return@runOnUiThread
                 bar.isIndeterminate=total<=0; if(total>0) bar.progress=(done*1000/total).toInt().coerceIn(0,1000)
                 line.text=text+eta; detail.text=file }
@@ -173,6 +172,11 @@ class MainActivity : Activity() {
             pager.addView(Ui.text(this," ${pageIndex+1}/$pages ",14f,Ui.muted).apply { gravity=Gravity.CENTER },LinearLayout.LayoutParams(dp(64),dp(44)))
             pager.addView(Ui.button(this,"Sau ›") { getPreferences(MODE_PRIVATE).edit().putInt("page-${folder?.path?:"root"}",minOf(pages-1,pageIndex+1)).apply();showHistory() },LinearLayout.LayoutParams(0,dp(44),1f));body.addView(pager)
         }
+        // Sizes help decide what to save or delete: the ZIP is about as large as what is selected.
+        val free=" · máy còn trống "+Format.size(filesDir.usableSpace)
+        if(selecting) root.addView(Ui.text(this,if(selected.isEmpty()) "Chọn mục để lưu ZIP hoặc xóa$free"
+            else "Đã chọn ${Format.size(selected.sumOf { f -> if(f.isDirectory) f.walkTopDown().filter { it.isFile }.sumOf { it.length() } else f.length() })} · file ZIP có dung lượng gần như vậy$free",12f,Ui.muted).apply { setPadding(dp(20),dp(6),dp(20),0) })
+        else if(folder==null&&list.isNotEmpty()) root.addView(Ui.text(this,"Ảnh đã lưu: "+Format.size(captures.walkTopDown().filter { it.isFile }.sumOf { it.length() })+free,12f,Ui.muted).apply { setPadding(dp(20),dp(6),dp(20),dp(6)) })
         if(selecting) {
             val actions=LinearLayout(this).apply { setPadding(dp(20),dp(8),dp(20),dp(12)) }
             actions.addView(Ui.button(this,"Lưu ZIP",true) { requestExport(selected.toList()) }.apply { isEnabled=selected.isNotEmpty();alpha=if(isEnabled) 1f else .45f },LinearLayout.LayoutParams(0,dp(48),1f))
@@ -190,11 +194,11 @@ class MainActivity : Activity() {
         row.addView(thumb,LinearLayout.LayoutParams(dp(74),dp(60)))
         val info=Ui.stack(this).apply { setPadding(dp(12),0,dp(6),0) }
         info.addView(Ui.text(this,title(file),16f,Ui.ink,true).apply { maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END })
-        val size=all.sumOf { it.length() }/1048576.0
+        val size=all.sumOf { it.length() }
         val time=if(file.isDirectory) SimpleDateFormat("dd/MM/yyyy HH:mm",Locale.getDefault()).format(Date(createdAt(file)))+" · " else ""
         val m=meta(file)
         val ran=m.optLong("activeMs",0L).takeIf { it>0 }?.let { " · chạy "+duration(it) }?:""
-        info.addView(Ui.text(this,time+(if(file.isDirectory) "${all.size} ảnh · " else "PNG · ")+String.format(Locale.US,"%.1f MB",size)+ran,12f,Ui.muted))
+        info.addView(Ui.text(this,time+(if(file.isDirectory) "${all.size} ảnh · " else "PNG · ")+Format.size(size)+ran,12f,Ui.muted))
         val note=if(m.optString("nameSource")=="ocr") "Tên từ ảnh" else if(m.optString("nameSource")=="unknown") "Cần đặt tên" else when(m.optString("state")) { "completed"->"Hoàn tất";"paused"->"Tạm dừng";"stopped"->"Đã kết thúc";"running"->"Đang chạy";else->"" }
         if(note.isNotEmpty()) info.addView(Ui.text(this,note,11f,Ui.muted));row.addView(info,LinearLayout.LayoutParams(0,-2,1f))
         if(!selecting) row.addView(Ui.text(this,"⋮",26f,Ui.muted).apply { gravity=Gravity.CENTER;setOnClickListener { itemMenu(file) };contentDescription="Tùy chọn ${title(file)}" },LinearLayout.LayoutParams(dp(36),dp(48)))
@@ -333,9 +337,9 @@ class MainActivity : Activity() {
                     val entries=pendingExport.flatMap { if(it.isDirectory) it.walkTopDown().filter { f->f.isFile }.toList() else listOf(it) }.distinctBy { it.canonicalPath }
                     require(entries.isNotEmpty()) { "Không có file để lưu" }
                     val out=contentResolver.openOutputStream(uri)?:error("Không mở được nơi lưu")
-                    val bytes=try { ZipFiles.export(entries,captures,out,{ progress.cancelled }) { done,all,number,name -> progress.report(done,all,"File $number/${entries.size} · ${mb(done)}/${mb(all)} MB",name) } }
+                    val bytes=try { ZipFiles.export(entries,captures,out,{ progress.cancelled }) { done,all,number,name -> progress.report(done,all,"File $number/${entries.size} · ${Format.sizes(done,all)}",name) } }
                         catch(e:Exception) { if(progress.cancelled) try { DocumentsContract.deleteDocument(contentResolver,uri) } catch(_:Exception) {}; throw e }
-                    "Đã lưu ZIP gồm ${entries.size} file · ${mb(bytes)} MB."
+                    "Đã lưu ZIP gồm ${entries.size} file · ${Format.size(bytes)}."
                 } else {
                     var total=0L;var count=0;var imageCount=0;val made=linkedSetOf<File>();val prefix="import-${System.currentTimeMillis()}-"
                     // Progress follows how much of the ZIP has been read.
@@ -359,7 +363,7 @@ class MainActivity : Activity() {
                                     target.outputStream().use { out -> val buffer=ByteArray(8192);var n=zip.read(buffer);var fileSize=0L
                                         while(n!=-1) { total+=n;fileSize+=n;require(total<5L*1024*1024*1024&&fileSize<64L*1024*1024&&filesDir.usableSpace>30L*1024*1024) { "File quá lớn hoặc không đủ dung lượng" };out.write(buffer,0,n)
                                             if(progress.cancelled) throw ZipFiles.Cancelled()
-                                            progress.report(read,size,"$imageCount ảnh · ${mb(read)}${if(size>0) "/"+mb(size) else ""} MB",parts.joinToString("/"));n=zip.read(buffer) }
+                                            progress.report(read,size,"$imageCount ảnh · "+(if(size>0) Format.sizes(read,size) else Format.size(read)),parts.joinToString("/"));n=zip.read(buffer) }
                                     };if(target.extension=="png") imageCount++
                                 }
                                 zip.closeEntry();entry=zip.nextEntry

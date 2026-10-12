@@ -45,6 +45,7 @@ class UiSmoke:Instrumentation() {
             val direct=Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true,directSkills=true))
             check(direct.photoSteps.size==6&&Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true)).steps.length()-direct.steps.length()==6) { "Chuyển thẳng chiêu should drop the 3 panel closes between skills and their waits" }
             check(Macro(BuiltInMacros.create("",11,true)).steps.toString().contains("\"pick\""))
+            check(BuiltInMacros.secondsPerHero(true,false,false,false) in 30.0..45.0&&BuiltInMacros.secondsPerHero(true,true,true,true) in 15.0..25.0) { "Time estimate per hero is off" }
             val run=File(targetContext.filesDir,"captures/smoke-demo").apply { mkdirs() }
             File(run,"run.json").writeText(JSONObject().put("collectionMode","all").put("label","Buổi thu thập mẫu").put("state","completed").put("updatedAt",System.currentTimeMillis()).toString())
             val hero=File(run,"elandorr").apply { mkdirs() }
