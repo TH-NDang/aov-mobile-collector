@@ -4,3 +4,4 @@ local.properties
 .idea/
 *.iml
 collector-debug.keystore
+__pycache__/
