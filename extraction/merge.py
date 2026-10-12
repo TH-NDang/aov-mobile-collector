@@ -2,6 +2,10 @@
 """Merges the per-image answers of extract.py into one record per hero.
 
     python3 extraction/merge.py out/*/results.jsonl --out heroes
+    python3 extraction/merge.py first-run/heroes.json redo/heroes.json --out heroes
+
+Inputs are results.jsonl files of extract.py, or heroes.json files of earlier merges (to join a run with a
+later one that redid some heroes: for each hero the record with fewer failed images is kept).
 
 Writes heroes.json (one entry per hero folder, in collection order) and summary.md, which lists every
 hero with its main fields and the images that failed or came back incomplete.
@@ -49,12 +53,18 @@ def main() -> int:
 
     heroes = {}
     for results in args.results:
+        if results.suffix == ".json":
+            for record in json.loads(results.read_text(encoding="utf-8")):
+                old = heroes.get(record["thu_muc"])
+                if old is None or len(record["loi"]) <= len(old["loi"]):
+                    heroes[record["thu_muc"]] = record
+            continue
         for line in results.read_text(encoding="utf-8").splitlines():
             r = json.loads(line)
             if r["kind"] not in ("overview", "attributes", "skill"):
                 continue
-            folder = str(Path(r["image"]).parent)
-            hero = heroes.setdefault(folder, {"so_thu_tu": number(r["image"]), "thu_muc": Path(folder).name, "loi": []})
+            folder = Path(r["image"]).parent.name
+            hero = heroes.setdefault(folder, {"so_thu_tu": number(r["image"]), "thu_muc": folder, "loi": []})
             answer = r.get("answer") or {}
             if r.get("error") or "raw" in answer:
                 hero["loi"].append(f"{Path(r['image']).name}: {r.get('error') or 'JSON không đọc được'}")
