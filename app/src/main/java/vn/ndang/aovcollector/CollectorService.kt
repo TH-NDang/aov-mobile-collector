@@ -316,12 +316,12 @@ class CollectorService : AccessibilityService() {
             val quick=LinearLayout(this)
             listOf(2 to "2 ô",11 to "11 ô",BuiltInMacros.ALL to "Tất cả").forEach { (n,text) -> quick.addView(Ui.button(this,text) { field.setText(n.toString()) },LinearLayout.LayoutParams(0,dp(40),1f).apply { marginEnd=dp(4) }) };body.addView(quick)
         } else body.addView(Ui.text(this,"Tên được đọc từ ảnh. Nếu không rõ, app dùng thư mục đánh số; có thể đổi tên trong Ảnh đã lưu.",12f,Ui.muted))
+        // Time and space for the whole run, near the top so it shows without scrolling; it follows the count and options.
+        val estimate=Ui.text(this,"",13f,Ui.ink,true).also { body.addView(it) }
         fun option(text:String,key:String)=CheckBox(this).apply { this.text=text;textSize=14f;isChecked=uiPrefs.getBoolean(key,false) }.also { body.addView(it) }
         val fast=option("Chạy nhanh: chờ ngắn hơn sau mỗi lần chạm (nên thử 2 tướng trước)","fast")
         val detailOnly=option("Chỉ chụp Chi tiết: bỏ ảnh Tóm tắt của nội tại và chiêu","detailOnly")
         val directSkills=option("Chuyển thẳng giữa các chiêu: bấm sang chiêu kế tiếp khi bảng chiêu còn mở, chỉ đóng sau chiêu cuối","directSkills")
-        // Time and space for the whole run, updated as the count and options change.
-        val estimate=Ui.text(this,"",13f,Ui.ink,true).also { body.addView(it) }
         val shot=averageShot(); val known=uiPrefs.getInt("heroTotal",0).takeIf { it>0 }
         fun updateEstimate() {
             val asked=if(batch) field.text.toString().toIntOrNull()?.coerceIn(0,BuiltInMacros.ALL)?:0 else 1
