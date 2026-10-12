@@ -39,8 +39,7 @@ env:
   MODEL: ${{ inputs.model || '8b' }}
   LIMIT: ${{ inputs.limit || '0' }}
   KINDS: ${{ inputs.kinds || 'overview,attributes,skill' }}
-  # Jobs 0 and 10 of run 38234306660 crashed on a mismatched llama.cpp build; this push redoes only them.
-  ONLY_SHARDS: ${{ inputs.shards || '0,10' }}
+  ONLY_SHARDS: ${{ inputs.shards }}
 jobs:
   model:
     # Fetches the model into the cache once, so the parallel jobs do not each download it.
