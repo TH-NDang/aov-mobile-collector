@@ -9,10 +9,31 @@ hero with its main fields and the images that failed or came back incomplete.
 import argparse
 import json
 import re
+import unicodedata
 from pathlib import Path
 
 SLOTS = {"passive": "noi_tai", "skill-1": "chieu_1", "skill-2": "chieu_2", "skill-3": "chieu_3"}
 SKILL_FIELDS = ("ten_chieu", "nhan", "hoi_chieu", "tieu_hao", "mo_ta", "bang_cap")
+
+
+def plain(text: str) -> str:
+    text = unicodedata.normalize("NFD", text.lower()).replace("đ", "d")
+    return "".join(c for c in text if not unicodedata.combining(c))
+
+
+def fix_name(text: str, name: str) -> str:
+    """The hero's name written with wrong accents ("Diêu Thuyền" for "Điêu Thuyền") becomes the name read on
+    the hero page. Only a run of words that matches the whole name without accents is replaced."""
+    if not text or not name:
+        return text
+    size, target = len(name.split()), plain(name)
+    words = list(re.finditer(r"\w+(?:['’]\w+)?", text))
+    for i in range(len(words) - size, -1, -1):
+        start, end = words[i].start(), words[i + size - 1].end()
+        span = text[start:end]
+        if span != name and plain(re.sub(r"\s+", " ", span)) == target:
+            text = text[:start] + name + text[end:]
+    return text
 
 
 def number(image: str) -> int:
@@ -57,6 +78,13 @@ def main() -> int:
                         skill.update({k: answer.get(k) for k in SKILL_FIELDS})
 
     ordered = sorted(heroes.values(), key=lambda h: (h["so_thu_tu"], h["thu_muc"]))
+    for h in ordered:
+        name = h.get("ten_tuong", "")
+        h["gioi_thieu"] = fix_name(h.get("gioi_thieu", ""), name)
+        for key in SLOTS.values():
+            for field in ("mo_ta", "tom_tat"):
+                if h.get(key, {}).get(field):
+                    h[key][field] = fix_name(h[key][field], name)
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "heroes.json").write_text(json.dumps(ordered, ensure_ascii=False, indent=2), encoding="utf-8")
 
