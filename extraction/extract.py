@@ -29,11 +29,11 @@ LINES = {"type": "array", "items": {"type": "string"}, "maxItems": 60}
 
 KINDS = {
     "overview": (
-        "Hai ảnh được cắt từ trang thông tin một tướng trong game Liên Quân Mobile. Ảnh 1 là bảng bên trái "
+        "Ba ảnh được cắt từ trang thông tin một tướng trong game Liên Quân Mobile. Ảnh 1 là bảng bên trái "
         "(tab Chi tiết/Trang phục, Sở trường, các chỉ số). Ảnh 2 là góc phải: dòng chữ nhỏ ở trên là danh hiệu, "
-        "dòng chữ lớn ở dưới là tên tướng. Chép lại mọi dòng chữ tiếng Việt, giữ đúng dấu, vào van_ban. "
-        "so_truong là chữ nằm bên phải chữ \"Sở trường\" (ví dụ Tiền đạo), không phải chính chữ \"Sở trường\". "
-        "Ô nào không thấy thì để chuỗi rỗng.",
+        "dòng chữ lớn ở dưới là tên tướng. Ảnh 3 là dòng Sở trường phóng to. Chép lại mọi dòng chữ tiếng Việt, "
+        "giữ đúng dấu, vào van_ban. so_truong là chữ nằm bên phải chữ \"Sở trường\" trong ảnh 3 (ví dụ Tiền đạo, "
+        "Cấu rỉa), không phải chính chữ \"Sở trường\"; chữ có thể sáng màu trên nền sáng. Ô nào không thấy thì để rỗng.",
         {"van_ban": LINES, "ten_tuong": {"type": "string"}, "danh_hieu": {"type": "string"}, "so_truong": {"type": "string"}},
     ),
     "attributes": (
@@ -104,12 +104,13 @@ def pick(images: list, limit: int) -> list:
     return chosen
 
 
-# Areas with text on a 2400x1080 screen, as fractions, and how much to enlarge them. They are read at full
+# Areas with text on a 2400x1080 screen, as fractions, each with how much to enlarge it. They are read at full
 # resolution instead of the whole screen scaled down: game text keeps its accents, with fewer image tokens.
 REGIONS = {
-    "overview": ([(0.06, 0.21, 0.29, 0.57), (0.71, 0.20, 0.96, 0.40)], 1.5),   # info panel; title and name
-    "attributes": ([(0.50, 0.08, 0.93, 0.80)], 1.0),                            # introduction and stats
-    "skill": ([(0.445, 0.015, 0.99, 0.90)], 1.0),                               # name, tags, cooldown, text, levels
+    # Info panel; title and name; the role row on its own, since a light role over light art was missed.
+    "overview": [(0.06, 0.21, 0.29, 0.57, 1.5), (0.71, 0.20, 0.96, 0.40, 1.5), (0.07, 0.29, 0.27, 0.35, 2.5)],
+    "attributes": [(0.50, 0.08, 0.93, 0.80, 1.0)],                              # introduction and stats
+    "skill": [(0.445, 0.015, 0.99, 0.90, 1.0)],                                 # name, tags, cooldown, text, levels
 }
 
 
@@ -119,10 +120,10 @@ def prepare(path: Path, kind: str, max_width: int, crops: bool) -> list:
     image = image.crop((0, 0, image.width, min(image.height, round(image.width * 1080 / 2400 * 0.955))))
     if crops and kind in REGIONS:
         # Heights follow the width, so a screenshot already cut at the bottom keeps the same areas.
-        boxes, zoom = REGIONS[kind]
-        w, h, factor = image.width, image.width * 1080 / 2400, zoom * 2400 / image.width
+        w, h = image.width, image.width * 1080 / 2400
         parts = []
-        for x0, y0, x1, y1 in boxes:
+        for x0, y0, x1, y1, zoom in REGIONS[kind]:
+            factor = zoom * 2400 / image.width
             part = image.crop((round(x0 * w), round(y0 * h), round(x1 * w), min(image.height, round(y1 * h))))
             parts.append(part.resize((round(part.width * factor), round(part.height * factor)), Image.LANCZOS))
         return parts

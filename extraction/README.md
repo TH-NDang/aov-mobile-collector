@@ -40,3 +40,29 @@ Lượt chạy toàn bộ dùng 8B:
 - Workflow chia 129 tướng cho 20 job song song, mỗi job khoảng 6–7 tướng, ước 2–2,5 giờ.
 - Job `merge` gộp kết quả thành `heroes.json`. Mỗi tướng gồm: tên, danh hiệu, sở trường, giới thiệu, chỉ số, nội tại, chiêu 1–3 (tên, nhãn, hồi chiêu, tiêu hao, mô tả, bảng cấp) và danh sách ảnh lỗi.
 - Tên tướng app đã đọc (`hero.json`) được đưa vào prompt, để model không viết sai tên.
+
+## Kết quả lượt chạy toàn bộ (release `assets`, 129 tướng)
+
+Dữ liệu nằm trong `data/`:
+
+- `heroes.json`: đầy đủ mọi trường.
+- `heroes.csv`: mỗi tướng một dòng, kèm chỉ số.
+- `skills.csv`: mỗi chiêu một dòng.
+- `summary.md`: bảng tóm tắt.
+
+Mở CSV bằng Excel sẽ hiện đúng dấu tiếng Việt.
+
+- 774 ảnh, đọc bằng Qwen3-VL 8B trên 20 job, mỗi job 1–2 giờ. Không ảnh nào lỗi hay bị cắt.
+- 129/129 tướng có tên, danh hiệu, sở trường, giới thiệu và 14–16 chỉ số. 387/387 chiêu có hồi chiêu và bảng theo cấp.
+- 12 trang tổng quan có chữ sở trường sáng trên nền sáng bị bỏ sót, nên được đọc lại với vùng dòng "Sở trường" phóng 2,5 lần. Vùng này nay là mặc định.
+- Tên cần xem lại (cuối `summary.md`):
+  - Model đọc sai: "Kahlil" (đúng là Kahlii), "Zephy" (Zephys).
+  - App đọc sai, model đúng: Billow, Annette, Qi, Iggy, Teeri.
+- `flowborn-2` là dạng thứ hai của Flowborn, không phải ảnh trùng.
+
+Tạo lại dữ liệu từ artifact của các lượt chạy:
+
+```
+python3 extraction/merge.py <lượt 38234306660>/heroes.json <lượt 38241910555>/heroes.json <đọc lại tổng quan>/results.jsonl --out data
+```
+
