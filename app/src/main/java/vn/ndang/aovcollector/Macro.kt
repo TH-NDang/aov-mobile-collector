@@ -41,9 +41,11 @@ object BuiltInMacros {
     const val ALL=300
     /**
      * [fast] shortens the waits after taps (tab switches most); [detailOnly] skips the summary ("Tóm tắt")
-     * shots of the passive and skills. Both stay off unless chosen, since they are untested on every device.
+     * shots of the passive and skills; [directSkills] taps the next skill icon while a skill panel is open,
+     * which switches the panel, and closes it only after the last skill. All stay off unless chosen, so the
+     * default steps do not change.
      */
-    fun create(heroName:String, count:Int = 1, batch:Boolean = false, fast:Boolean = false, detailOnly:Boolean = false):String {
+    fun create(heroName:String, count:Int = 1, batch:Boolean = false, fast:Boolean = false, detailOnly:Boolean = false, directSkills:Boolean = false):String {
         require(count in 1..ALL)
         val steps=org.json.JSONArray()
         val settle=if(fast) 600 else 900
@@ -61,7 +63,8 @@ object BuiltInMacros {
             for(i in skillNames.indices) {
                 tap(skillX[i],.605)
                 if(!detailOnly) { tab(.817); shot("${prefix}-${skillNames[i]}-summary") }
-                tab(.878); shot("${prefix}-${skillNames[i]}-detail"); tap(.60,.82)
+                tab(.878); shot("${prefix}-${skillNames[i]}-detail")
+                if(!directSkills||i==skillNames.lastIndex) tap(.60,.82)
             }
         }
         waitFor(3000)
@@ -75,7 +78,7 @@ object BuiltInMacros {
         return JSONObject().put("name",if(batch) "batch-heroes" else "single-hero")
             .put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
             .put("collectionMode",if(batch) "all" else "single").put("heroName",safeName)
-            .put("heroCount",if(batch) count else 1).put("fast",fast).put("detailOnly",detailOnly)
+            .put("heroCount",if(batch) count else 1).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills)
             .put("builtinVersion",VERSION).put("steps",steps).toString(2)
     }
 }

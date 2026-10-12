@@ -42,6 +42,8 @@ class UiSmoke:Instrumentation() {
             check(HeroNames.slug("Điêu Thuyền")=="dieu-thuyen")
             val m=Macro(BuiltInMacros.create(""));check(m.photoSteps.size==10)
             check(Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true)).photoSteps.size==6) { "Chỉ Chi tiết should keep overview, attributes and 4 details" }
+            val direct=Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true,directSkills=true))
+            check(direct.photoSteps.size==6&&Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true)).steps.length()-direct.steps.length()==6) { "Chuyển thẳng chiêu should drop the 3 panel closes between skills and their waits" }
             check(Macro(BuiltInMacros.create("",11,true)).steps.toString().contains("\"pick\""))
             val run=File(targetContext.filesDir,"captures/smoke-demo").apply { mkdirs() }
             File(run,"run.json").writeText(JSONObject().put("collectionMode","all").put("label","Buổi thu thập mẫu").put("state","completed").put("updatedAt",System.currentTimeMillis()).toString())

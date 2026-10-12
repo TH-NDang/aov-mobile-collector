@@ -130,3 +130,10 @@ Bundled ML Kit reads the hero-name region from overview screenshots. A valid-loo
 | Mặc định | ~45 giây | ~37 giây | ~1 giờ 20 phút |
 | Chạy nhanh | ~36 giây | ~28 giây | ~1 giờ |
 | Chạy nhanh + Chỉ chụp Chi tiết | ~30 giây | ~23 giây | ~50 phút |
+
+- **Tùy chọn mới "Chuyển thẳng giữa các chiêu"**, mặc định tắt nên kịch bản gốc không đổi:
+  - Khi bảng chiêu đang mở, app bấm luôn biểu tượng chiêu kế tiếp, không bấm đóng bảng rồi mở lại.
+  - Bảng chỉ được đóng sau chiêu cuối, trước khi quay về danh sách.
+  - Mỗi tướng bớt 3 lần đóng bảng cùng thời gian chờ sau mỗi lần.
+  - Sau mỗi lần chuyển, app vẫn bấm tab Chi tiết, nên ảnh đúng tab dù game có giữ tab cũ hay không.
+- Kịch bản bỏ ảnh Tóm tắt và chuyển thẳng giữa các chiêu: tick **Chỉ chụp Chi tiết** và **Chuyển thẳng giữa các chiêu**. Thêm **Chạy nhanh** thì ước tính khoảng 20 giây mỗi tướng, 129 tướng khoảng 45 phút.

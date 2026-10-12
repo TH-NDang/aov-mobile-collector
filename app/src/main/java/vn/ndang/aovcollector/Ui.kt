@@ -57,7 +57,7 @@ object MacroStore {
     fun saved(c:Context):List<File> = File(c.filesDir,"macros").listFiles()?.filter { it.extension=="json" }?.sortedByDescending { it.lastModified() }.orEmpty()
     fun title(m:Macro):String = when(m.json.optString("collectionMode")) { "single" -> "Một tướng"; "all" -> "Danh sách tướng"; else -> "Macro đã nhập" }
     fun description(m:Macro):String = when(m.json.optString("collectionMode")) {
-        "single","all" -> base(m)+(if(m.json.optBoolean("fast")) " · nhanh" else "")+(if(m.json.optBoolean("detailOnly")) " · chỉ Chi tiết" else "")
+        "single","all" -> base(m)+(if(m.json.optBoolean("fast")) " · nhanh" else "")+(if(m.json.optBoolean("detailOnly")) " · chỉ Chi tiết" else "")+(if(m.json.optBoolean("directSkills")) " · chuyển thẳng chiêu" else "")
         else -> m.name
     }
     private fun base(m:Macro):String = when(m.json.optString("collectionMode")) {

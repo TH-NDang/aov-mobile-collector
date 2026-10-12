@@ -319,6 +319,7 @@ class CollectorService : AccessibilityService() {
         fun option(text:String,key:String)=CheckBox(this).apply { this.text=text;textSize=14f;isChecked=uiPrefs.getBoolean(key,false) }.also { body.addView(it) }
         val fast=option("Chạy nhanh: chờ ngắn hơn sau mỗi lần chạm (nên thử 2 tướng trước)","fast")
         val detailOnly=option("Chỉ chụp Chi tiết: bỏ ảnh Tóm tắt của nội tại và chiêu","detailOnly")
+        val directSkills=option("Chuyển thẳng giữa các chiêu: bấm sang chiêu kế tiếp khi bảng chiêu còn mở, chỉ đóng sau chiêu cuối","directSkills")
         body.addView(Ui.text(this,"Chọn tác vụ sẽ tạo lượt mới. Ảnh đã chụp vẫn giữ lại.",12f,Ui.muted))
         val formScroll=ScrollView(this).apply { addView(body) }
         val dialog=AlertDialog.Builder(this).setTitle(if(batch) "Danh sách tướng" else "Một tướng").setView(formScroll)
@@ -329,8 +330,8 @@ class CollectorService : AccessibilityService() {
                 val count=if(batch) field.text.toString().toIntOrNull()?:0 else 1
                 require(count in 1..BuiltInMacros.ALL) { "Nhập số từ 1 đến ${BuiltInMacros.ALL}; ${BuiltInMacros.ALL} là lấy hết danh sách" }
                 if(batch) uiPrefs.edit().putInt("count",count).apply()
-                uiPrefs.edit().putBoolean("fast",fast.isChecked).putBoolean("detailOnly",detailOnly.isChecked).apply()
-                if(selectMacro(BuiltInMacros.create(if(batch) "Danh sách tướng" else field.text.toString(),count,batch,fast.isChecked,detailOnly.isChecked))) dialog.dismiss()
+                uiPrefs.edit().putBoolean("fast",fast.isChecked).putBoolean("detailOnly",detailOnly.isChecked).putBoolean("directSkills",directSkills.isChecked).apply()
+                if(selectMacro(BuiltInMacros.create(if(batch) "Danh sách tướng" else field.text.toString(),count,batch,fast.isChecked,detailOnly.isChecked,directSkills.isChecked))) dialog.dismiss()
             } catch(e:Exception) { field.error=e.message }
         }
     }
@@ -408,7 +409,7 @@ class CollectorService : AccessibilityService() {
             if((mode!="single"&&mode!="all")||m.json.optInt("builtinVersion",1)==BuiltInMacros.VERSION) return
             val step=if(prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
             if(step>0&&step<m.steps.length()&&!prefs.getBoolean("stopped",false)) return
-            MacroStore.current(this).writeText(BuiltInMacros.create(m.json.optString("heroName",""),m.json.optInt("heroCount",1),mode=="all",m.json.optBoolean("fast"),m.json.optBoolean("detailOnly")))
+            MacroStore.current(this).writeText(BuiltInMacros.create(m.json.optString("heroName",""),m.json.optInt("heroCount",1),mode=="all",m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills")))
             selectionCache=null
         } catch(e:Exception) { CrashLog.record(this,"Không nâng cấp được macro",e) }
     }
