@@ -22,8 +22,12 @@ on:
       kinds:
         description: 'Kinds of screen to read'
         default: 'overview,attributes,skill'
+      shards:
+        description: 'Only these jobs, e.g. 0,10 to redo two that failed (empty: all)'
+        default: ''
 concurrency:
-  group: extract-text-${{ github.ref }}
+  # Renamed so this run did not cancel the full run still going under the old name.
+  group: extract-text-v2-${{ github.ref }}
   cancel-in-progress: true
 permissions:
   # Draft releases are only visible with write access. The jobs read; they push nothing.
@@ -35,11 +39,20 @@ env:
   MODEL: ${{ inputs.model || '8b' }}
   LIMIT: ${{ inputs.limit || '0' }}
   KINDS: ${{ inputs.kinds || 'overview,attributes,skill' }}
+  # Jobs 0 and 10 of run 38234306660 crashed on a mismatched llama.cpp build; this push redoes only them.
+  ONLY_SHARDS: ${{ inputs.shards || '0,10' }}
 jobs:
   model:
     # Fetches the model into the cache once, so the parallel jobs do not each download it.
     runs-on: ubuntu-latest
+    outputs:
+      shards: ${{ steps.shards.outputs.list }}
     steps:
+      - name: List the jobs to run
+        id: shards
+        run: |
+          if [ -n "$ONLY_SHARDS" ]; then list="[$ONLY_SHARDS]"; else list="[$(seq -s, 0 $((SHARDS - 1)))]"; fi
+          echo "list=$list" >> "$GITHUB_OUTPUT"; echo "jobs: $list"
       - name: Restore the model
         uses: actions/cache@v4
         with:
@@ -61,21 +74,22 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+        shard: ${{ fromJSON(needs.model.outputs.shards) }}
     steps:
       - uses: actions/checkout@v4
       - name: Describe the runner CPU
         id: cpu
-        # The build is tuned to the CPU it runs on, so the cache is kept per CPU model.
+        # The build uses every instruction the CPU offers, so the cache is kept per instruction set: runners
+        # with the same CPU name can expose different ones, and a build from another crashed with SIGILL.
         run: |
           nproc; grep -m1 'model name' /proc/cpuinfo
-          echo "id=$(grep -m1 'model name' /proc/cpuinfo | sha1sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
+          echo "id=$(grep -m1 -E '^(flags|Features)' /proc/cpuinfo | tr ' ' '\n' | sort | sha1sum | cut -c1-12)" >> "$GITHUB_OUTPUT"
       - name: Restore llama.cpp
         id: llama
         uses: actions/cache@v4
         with:
           path: llama-bin
-          key: llama-cpp-${{ env.LLAMA_CPP_TAG }}-${{ steps.cpu.outputs.id }}
+          key: llama-cpp-${{ env.LLAMA_CPP_TAG }}-flags-${{ steps.cpu.outputs.id }}
       - name: Build llama.cpp for the CPU
         if: steps.llama.outputs.cache-hit != 'true'
         run: |
@@ -135,7 +149,12 @@ jobs:
           S=${MODEL^^}
           ./llama-bin/llama-server -m "models/Qwen3VL-$S-Instruct-Q4_K_M.gguf" --mmproj "models/mmproj-Qwen3VL-$S-Instruct-Q8_0.gguf" \
             -c 8192 -t "$(nproc)" --port 8080 --no-webui > out/server.log 2>&1 &
-          for i in $(seq 1 300); do curl -sf http://127.0.0.1:8080/health > /dev/null && break; sleep 2; done
+          server=$!
+          for i in $(seq 1 300); do
+            curl -sf http://127.0.0.1:8080/health > /dev/null && break
+            if ! kill -0 "$server" 2>/dev/null; then echo "::error::llama-server stopped while starting"; tail -20 out/server.log; exit 1; fi
+            sleep 2
+          done
           python3 extraction/extract.py --images input --out "out/shard-${{ matrix.shard }}" \
             --label "Qwen3-VL $S · phần ${{ matrix.shard }}/$SHARDS" --kinds "$KINDS" --limit "$LIMIT" \
             --shard ${{ matrix.shard }} --shards "$SHARDS"
