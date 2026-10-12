@@ -88,11 +88,12 @@ jobs:
             release=$(jq -c '.[0] // empty' <<<"$releases")
           fi
           if [ -n "$release" ]; then
-            echo "Release: $(jq -r '.name // .tag_name' <<<"$release") (draft: $(jq -r .draft <<<"$release"))"
-            jq -r '.assets[] | [.id, .name] | @tsv' <<<"$release" | while IFS=$'\t' read -r id name; do
+            echo "Release: '$(jq -r '.name // .tag_name' <<<"$release")' (draft: $(jq -r .draft <<<"$release")), $(jq '.assets | length' <<<"$release") files:"
+            jq -r '.assets[] | "  \(.name)  \(.size) bytes  \(.state)"' <<<"$release"
+            # Files still uploading are listed with a state other than "uploaded".
+            jq -r '.assets[] | select(.state == "uploaded") | [.id, .name] | @tsv' <<<"$release" | while IFS=$'\t' read -r id name; do
               case "${name,,}" in
                 *.png|*.jpg|*.jpeg|*.webp|*.zip)
-                  echo "  $name"
                   gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$id" > "input/$name" ;;
               esac
             done

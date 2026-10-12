@@ -33,4 +33,13 @@ Workflow `.github/workflows/extract-text.yml` đọc chữ trong ảnh AOV Colle
 - Thêm vùng chữ cho hai loại này vào `REGIONS`.
 - Chỉnh prompt cho từng loại.
 
-**Toàn bộ khoảng 1.300 ảnh** với 4B mất cỡ 18 giờ CPU, nên phải chia thành nhiều job song song.
+**Trên runner GitHub** (4 nhân), tốc độ tuỳ CPU được cấp:
+
+| Model | Runner chậm | Runner nhanh |
+|---|---|---|
+| 4B | ~50 giây/trang tướng | ~29 giây/trang tướng |
+| 2B | ~28 giây/trang tướng | ~18 giây/trang tướng |
+
+Tesseract cho kết quả không dùng được.
+
+**Toàn bộ khoảng 1.300 ảnh** với 4B mất cỡ 10–18 giờ CPU, nên phải chia thành nhiều job song song.
