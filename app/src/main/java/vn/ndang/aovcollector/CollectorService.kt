@@ -9,6 +9,7 @@ import android.graphics.Color
 import android.graphics.Path
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.*
 import android.view.accessibility.AccessibilityEvent
 import android.widget.*
@@ -27,8 +28,8 @@ class CollectorService : AccessibilityService() {
         const val SHIELD_MS=150L
         const val GESTURE_RETRIES=2
         const val GAME="com.garena.game.kgvn"
-        /** Pause between steps; each tap is already followed by an explicit wait step. */
-        const val STEP_GAP_MS=150L
+        /** Android accepts one accessibility screenshot per second; a little margin avoids a refused one. */
+        const val SHOT_INTERVAL_MS=1050L
         /** Screenshots saved in the background at once before the macro waits for the disk. */
         const val MAX_PENDING_SAVES=2
     }
@@ -450,7 +451,8 @@ class CollectorService : AccessibilityService() {
             shield(false)
             if(!ok) { pause(reason?:failure?:"Không thực hiện được thao tác ${index+1}. Kiểm tra màn hình rồi tiếp tục."); return }
             index++; save()
-            if(running) handler.postDelayed({ next(token) },STEP_GAP_MS)
+            // Next step at once: taps are followed by their own wait steps, and taps and screenshots hide the panel themselves.
+            if(running) handler.post { next(token) }
             else status(if(stopped) "Đã kết thúc lượt · ảnh được giữ lại" else "Đã tạm dừng · bấm Tiếp tục khi sẵn sàng")
         }
         fun listEnded(collected:Int) {
@@ -596,6 +598,7 @@ class CollectorService : AccessibilityService() {
         mapping.put(key,actual);mapFile.writeText(mapping.toString(2))
         return dir
     }
+    private var lastShotAt=0L
     /** Takes a screenshot with the panel hidden; [done] gets a software bitmap to recycle, or null. */
     private fun grab(done:(Bitmap?)->Unit) {
         val session=++shieldSession; shield(true)
@@ -617,9 +620,11 @@ class CollectorService : AccessibilityService() {
                     failure="Chụp màn hình thất bại (mã $errorCode)"; finish(null)
                 }
             }
+            lastShotAt=SystemClock.uptimeMillis()
             try { takeScreenshot(Display.DEFAULT_DISPLAY,mainExecutor,callback) } catch(e:Exception) { CrashLog.record(this,"Không gọi được chụp màn hình",e); finish(null) }
         }
-        handler.postDelayed({ shoot(true) },250)
+        // The panel needs 250 ms to disappear; a screenshot soon after the previous one waits out Android's interval instead of being refused.
+        handler.postDelayed({ shoot(true) },maxOf(250L,lastShotAt+SHOT_INTERVAL_MS-SystemClock.uptimeMillis()))
     }
     /**
      * Takes a screenshot and saves it in the background: [done] runs once the image is captured, so the

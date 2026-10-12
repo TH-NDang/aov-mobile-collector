@@ -114,3 +114,19 @@ Bundled ML Kit reads the hero-name region from overview screenshots. A valid-loo
   - Danh sách hiện chậm; app không bấm quay lại.
   - Đang ở màn hình chính; app không bấm gì.
   - Mũi tên được nhận ra trên ảnh cắt thật (danh sách, bảng kỹ năng, trang Edras), và không bị nhận nhầm trên tóc trắng, thanh tiền tệ hay thẻ tướng.
+
+
+## v0.4.4: bỏ thời gian nghỉ thừa giữa các bước
+
+- Mỗi tướng có khoảng 58 bước. Trước đây, sau mỗi bước app nghỉ thêm 150 ms, tổng khoảng 8,7 giây mỗi tướng. Khoảng nghỉ này thừa vì:
+  - Mỗi cú chạm đã có bước chờ riêng ngay sau nó.
+  - Mỗi cú chạm và mỗi lần chụp đều tự ẩn bảng nổi rồi chờ trước khi thao tác.
+- Giờ bước kế tiếp chạy ngay khi bước trước xong. Thời gian chờ sau mỗi cú chạm (để game chuyển màn hình) giữ nguyên, nên ảnh chụp không đổi.
+- Android chỉ cho dịch vụ trợ năng chụp 1 ảnh mỗi giây. Nếu lần chụp mới đến quá sớm, app chờ cho đủ 1,05 giây kể từ lần trước, thay vì để Android từ chối rồi thử lại sau 1,1 giây.
+- Ước tính mỗi tướng, gồm cả chọn tướng trong danh sách:
+
+| Chế độ | Trước | Sau | 129 tướng |
+|---|---|---|---|
+| Mặc định | ~45 giây | ~37 giây | ~1 giờ 20 phút |
+| Chạy nhanh | ~36 giây | ~28 giây | ~1 giờ |
+| Chạy nhanh + Chỉ chụp Chi tiết | ~30 giây | ~23 giây | ~50 phút |
