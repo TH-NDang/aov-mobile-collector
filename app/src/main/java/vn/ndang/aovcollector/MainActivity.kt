@@ -6,6 +6,9 @@ import android.content.Intent
 import android.graphics.*
 import android.graphics.drawable.Drawable
 import android.os.Bundle
+import android.os.SystemClock
+import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.*
 import android.widget.*
@@ -14,8 +17,6 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 
 class MainActivity : Activity() {
     private val captures by lazy { File(filesDir,"captures").apply { mkdirs() } }
@@ -61,6 +62,35 @@ class MainActivity : Activity() {
         }
     }
     private fun message(s:String) { AlertDialog.Builder(this).setMessage(s).setPositiveButton("Đã hiểu",null).show() }
+    private fun mb(bytes:Long)=String.format(Locale.US,if(bytes<100L*1024*1024) "%.1f" else "%.0f",bytes/1048576.0)
+    /** Dialog for a long ZIP export or import. The worker thread reports into it and stops when [cancelled] is set. */
+    private inner class FileProgress(title:String) {
+        @Volatile var cancelled=false
+        private val bar=ProgressBar(this@MainActivity,null,android.R.attr.progressBarStyleHorizontal).apply { max=1000; isIndeterminate=true; progressTintList=android.content.res.ColorStateList.valueOf(Ui.accent) }
+        private val line=Ui.text(this@MainActivity,"Đang chuẩn bị…",14f)
+        private val detail=Ui.text(this@MainActivity,"",12f,Ui.muted).apply { maxLines=2 }
+        private val started=SystemClock.elapsedRealtime()
+        private var shownAt=0L
+        private val dialog=AlertDialog.Builder(this@MainActivity).setTitle(title)
+            .setView(Ui.stack(this@MainActivity).apply { setPadding(dp(22),dp(10),dp(22),0); addView(bar,LinearLayout.LayoutParams(-1,dp(16))); addView(line); addView(detail) })
+            .setCancelable(false).setNegativeButton("Hủy",null).create()
+        init {
+            dialog.show()
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener { cancelled=true; it.isEnabled=false; line.text="Đang hủy…" }
+            // A long export must not stop because the screen went off.
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        /** From the worker, at most 5 times a second. [total] is 0 or less when the size is unknown. */
+        fun report(done:Long,total:Long,text:String,file:String) {
+            val now=SystemClock.elapsedRealtime(); if(now-shownAt<200&&(total<=0||done<total)) return; shownAt=now
+            val elapsed=now-started
+            val eta=if(total>0&&done in 1 until total&&elapsed>2000) (elapsed*(total-done)/done).let { left -> " · còn khoảng "+if(left<60_000) "${maxOf(1,left/1000)} giây" else "${(left+30_000)/60_000} phút" } else ""
+            runOnUiThread { if(cancelled||isFinishing) return@runOnUiThread
+                bar.isIndeterminate=total<=0; if(total>0) bar.progress=(done*1000/total).toInt().coerceIn(0,1000)
+                line.text=text+eta; detail.text=file }
+        }
+        fun close() { if(dialog.isShowing) dialog.dismiss(); window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
         CrashLog.install(this)
@@ -295,18 +325,28 @@ class MainActivity : Activity() {
             } catch(e:Exception) { message(e.message?:"Không nhập được macro") };return
         }
         CollectorService.libraryBusy=true
+        val exporting=requestCode==11
+        val progress=FileProgress(if(exporting) "Đang lưu ZIP" else "Đang nhập ZIP")
         Thread {
             val result=try {
-                if(requestCode==11) {
+                if(exporting) {
                     val entries=pendingExport.flatMap { if(it.isDirectory) it.walkTopDown().filter { f->f.isFile }.toList() else listOf(it) }.distinctBy { it.canonicalPath }
                     require(entries.isNotEmpty()) { "Không có file để lưu" }
-                    ZipOutputStream(contentResolver.openOutputStream(uri)?:error("Không mở được nơi lưu")).use { zip ->
-                        for(file in entries) { require(file.canonicalPath.startsWith(captures.canonicalPath+"/")) { "File ngoài thư mục ảnh" };zip.putNextEntry(ZipEntry(file.relativeTo(captures).invariantSeparatorsPath));file.inputStream().use { it.copyTo(zip) };zip.closeEntry() }
-                    };"Đã lưu ZIP gồm ${entries.size} file."
+                    val out=contentResolver.openOutputStream(uri)?:error("Không mở được nơi lưu")
+                    val bytes=try { ZipFiles.export(entries,captures,out,{ progress.cancelled }) { done,all,number,name -> progress.report(done,all,"File $number/${entries.size} · ${mb(done)}/${mb(all)} MB",name) } }
+                        catch(e:Exception) { if(progress.cancelled) try { DocumentsContract.deleteDocument(contentResolver,uri) } catch(_:Exception) {}; throw e }
+                    "Đã lưu ZIP gồm ${entries.size} file · ${mb(bytes)} MB."
                 } else {
                     var total=0L;var count=0;var imageCount=0;val made=linkedSetOf<File>();val prefix="import-${System.currentTimeMillis()}-"
+                    // Progress follows how much of the ZIP has been read.
+                    val size=try { contentResolver.query(uri,arrayOf(OpenableColumns.SIZE),null,null,null)?.use { if(it.moveToFirst()&&!it.isNull(0)) it.getLong(0) else -1L }?:-1L } catch(_:Exception) { -1L }
+                    var read=0L
+                    val source=object:java.io.FilterInputStream(contentResolver.openInputStream(uri)?:error("Không đọc được ZIP")) {
+                        override fun read():Int = super.read().also { if(it>=0) read++ }
+                        override fun read(b:ByteArray,off:Int,len:Int):Int = super.read(b,off,len).also { if(it>0) read+=it }
+                    }
                     try {
-                        java.util.zip.ZipInputStream(contentResolver.openInputStream(uri)?:error("Không đọc được ZIP")).use { zip ->
+                        java.util.zip.ZipInputStream(source).use { zip ->
                             var entry=zip.nextEntry
                             while(entry!=null) {
                                 require(++count<=20000) { "ZIP có quá nhiều file" }
@@ -317,7 +357,9 @@ class MainActivity : Activity() {
                                     val dir=File(captures,prefix+parts[0]).apply { mkdirs() };made.add(dir)
                                     val target=File(dir,parts.drop(1).joinToString("/"));require(target.canonicalPath.startsWith(dir.canonicalPath+"/"));target.parentFile?.mkdirs()
                                     target.outputStream().use { out -> val buffer=ByteArray(8192);var n=zip.read(buffer);var fileSize=0L
-                                        while(n!=-1) { total+=n;fileSize+=n;require(total<5L*1024*1024*1024&&fileSize<64L*1024*1024&&filesDir.usableSpace>30L*1024*1024) { "File quá lớn hoặc không đủ dung lượng" };out.write(buffer,0,n);n=zip.read(buffer) }
+                                        while(n!=-1) { total+=n;fileSize+=n;require(total<5L*1024*1024*1024&&fileSize<64L*1024*1024&&filesDir.usableSpace>30L*1024*1024) { "File quá lớn hoặc không đủ dung lượng" };out.write(buffer,0,n)
+                                            if(progress.cancelled) throw ZipFiles.Cancelled()
+                                            progress.report(read,size,"$imageCount ảnh · ${mb(read)}${if(size>0) "/"+mb(size) else ""} MB",parts.joinToString("/"));n=zip.read(buffer) }
                                     };if(target.extension=="png") imageCount++
                                 }
                                 zip.closeEntry();entry=zip.nextEntry
@@ -326,8 +368,8 @@ class MainActivity : Activity() {
                     } catch(e:Exception) { made.forEach { it.deleteRecursively() };throw e }
                     "Đã nhập $imageCount ảnh."
                 }
-            } catch(e:Exception) { "Không hoàn tất: ${e.message}" }
-            runOnUiThread { CollectorService.libraryBusy=false;selected.clear();selecting=false;showHistory();message(result) }
+            } catch(e:Exception) { if(progress.cancelled) (if(exporting) "Đã hủy lưu ZIP; file ZIP dở đã được xóa." else "Đã hủy nhập ZIP; phần đã nhập được xóa.") else "Không hoàn tất: ${e.message}" }
+            runOnUiThread { progress.close();CollectorService.libraryBusy=false;selected.clear();selecting=false;showHistory();message(result) }
         }.start()
     }
     private class ActionIcon(val kind:String,val color:Int):Drawable() {

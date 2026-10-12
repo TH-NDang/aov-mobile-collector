@@ -116,7 +116,7 @@ Bundled ML Kit reads the hero-name region from overview screenshots. A valid-loo
   - Mũi tên được nhận ra trên ảnh cắt thật (danh sách, bảng kỹ năng, trang Edras), và không bị nhận nhầm trên tóc trắng, thanh tiền tệ hay thẻ tướng.
 
 
-## v0.4.4: bỏ thời gian nghỉ thừa giữa các bước
+## v0.4.4: chạy nhanh hơn, chuyển thẳng giữa các chiêu, tiến trình lưu ZIP
 
 - Mỗi tướng có khoảng 58 bước. Trước đây, sau mỗi bước app nghỉ thêm 150 ms, tổng khoảng 8,7 giây mỗi tướng. Khoảng nghỉ này thừa vì:
   - Mỗi cú chạm đã có bước chờ riêng ngay sau nó.
@@ -137,3 +137,11 @@ Bundled ML Kit reads the hero-name region from overview screenshots. A valid-loo
   - Mỗi tướng bớt 3 lần đóng bảng cùng thời gian chờ sau mỗi lần.
   - Sau mỗi lần chuyển, app vẫn bấm tab Chi tiết, nên ảnh đúng tab dù game có giữ tab cũ hay không.
 - Kịch bản bỏ ảnh Tóm tắt và chuyển thẳng giữa các chiêu: tick **Chỉ chụp Chi tiết** và **Chuyển thẳng giữa các chiêu**. Thêm **Chạy nhanh** thì ước tính khoảng 20 giây mỗi tướng, 129 tướng khoảng 45 phút.
+- **Tiến trình lưu ZIP:**
+  - Khi lưu ZIP, một hộp thoại hiện thanh tiến trình theo dung lượng, số file đã ghi / tổng số file, số MB, thời gian còn lại ước tính và file đang ghi.
+  - Nút **Hủy** dừng ngay và xóa file ZIP dở.
+  - Màn hình được giữ sáng trong lúc lưu.
+  - Nhập ZIP cũng có hộp thoại này, tính theo phần file ZIP đã đọc. Hủy thì xóa phần đã nhập.
+- **Lưu ZIP nhanh hơn:**
+  - Ảnh PNG vốn đã nén. Nén lại trong ZIP không giảm dung lượng: đo trên ảnh thật vẫn 100%, mà tốn khoảng 37 MB/s CPU trên máy tính, trên điện thoại chậm hơn.
+  - Giờ ảnh PNG được ghi thẳng vào ZIP, chỉ file JSON và nhật ký còn được nén. File ZIP vẫn mở bình thường bằng mọi công cụ giải nén.
