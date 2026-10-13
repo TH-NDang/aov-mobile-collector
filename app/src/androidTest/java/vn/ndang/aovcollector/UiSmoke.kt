@@ -13,6 +13,10 @@ import android.os.Bundle
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import android.accessibilityservice.AccessibilityServiceInfo
+import android.accessibilityservice.GestureDescription
+import android.graphics.Path
+import android.graphics.Rect
+import android.view.View
 import org.json.JSONObject
 import java.io.File
 
@@ -37,17 +41,32 @@ class UiSmoke:Instrumentation() {
             check(name!=null&&HeroNames.slug(name)=="elandorr") { "OCR returned $name" }
             check(HeroNames.slug("Điêu Thuyền")=="dieu-thuyen")
             val m=Macro(BuiltInMacros.create(""));check(m.photoSteps.size==10)
-            check(Macro(BuiltInMacros.create("",11,true)).steps.toString().contains("swipe"))
+            check(Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true)).photoSteps.size==6) { "Chỉ Chi tiết should keep overview, attributes and 4 details" }
+            val direct=Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true,directSkills=true))
+            check(direct.photoSteps.size==6&&Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true)).steps.length()-direct.steps.length()==6) { "Chuyển thẳng chiêu should drop the 3 panel closes between skills and their waits" }
+            check(Macro(BuiltInMacros.create("",11,true)).steps.toString().contains("\"pick\""))
+            check(BuiltInMacros.secondsPerHero(true,false,false,false) in 30.0..45.0&&BuiltInMacros.secondsPerHero(true,true,true,true) in 15.0..25.0) { "Time estimate per hero is off" }
             val run=File(targetContext.filesDir,"captures/smoke-demo").apply { mkdirs() }
             File(run,"run.json").writeText(JSONObject().put("collectionMode","all").put("label","Buổi thu thập mẫu").put("state","completed").put("updatedAt",System.currentTimeMillis()).toString())
             val hero=File(run,"elandorr").apply { mkdirs() }
             File(hero,"hero.json").writeText(JSONObject().put("name","Eland’orr").put("nameSource","ocr").toString())
-            File(hero,"0004-hero-overview.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG,100,it) };image.recycle()
+            for(name in listOf("0004-hero-overview","0008-hero-attributes","0012-hero-skill-1-summary")) File(hero,"$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG,100,it) };image.recycle()
             MacroStore.current(targetContext).writeText(BuiltInMacros.create(""))
             val activity=startActivitySync(Intent(targetContext,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             val dest=File(targetContext.filesDir,"smoke").apply { mkdirs() }
             fun snap(n:String) { waitForIdleSync();SystemClock.sleep(700);val b=automation.takeScreenshot()?:error("No screenshot");File(dest,"$n.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG,100,it) };b.recycle() }
             snap("01-history")
+            // Viewer: open a photo from history, step to the next one, then return to the top level.
+            fun tapText(text:String) { waitForIdleSync();SystemClock.sleep(500)
+                var node=automation.rootInActiveWindow?.findAccessibilityNodeInfosByText(text)?.firstOrNull()?:error("Missing $text")
+                while(!node.isClickable) node=node.parent?:error("$text is not clickable")
+                check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK)) { "Cannot click $text" } }
+            tapText("Buổi thu thập mẫu");tapText("Eland’orr");tapText("Tổng quan");snap("01b-viewer")
+            tapText("Ảnh sau");waitForIdleSync();SystemClock.sleep(400)
+            check(automation.rootInActiveWindow?.findAccessibilityNodeInfosByText("2/3")?.isNotEmpty()==true) { "Viewer did not move to the next photo" }
+            snap("01c-viewer-next")
+            repeat(3) { automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK);waitForIdleSync();SystemClock.sleep(500) }
+            check(automation.rootInActiveWindow?.findAccessibilityNodeInfosByText("Buổi thu thập mẫu")?.isNotEmpty()==true) { "Back did not return to history" }
             shell("settings put secure enabled_accessibility_services null")
             SystemClock.sleep(1200)
             shell("settings put secure enabled_accessibility_services vn.ndang.aovcollector/vn.ndang.aovcollector.CollectorService")
@@ -63,6 +82,12 @@ class UiSmoke:Instrumentation() {
             }
             android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("dumpsys accessibility")).use { File(dest,"accessibility.txt").writeBytes(it.readBytes()) }
             check(service!=null) { "Accessibility service not connected" }
+            // A built-in macro saved by an older version is regenerated when a new run is created.
+            MacroStore.current(targetContext).writeText(JSONObject(BuiltInMacros.create("Danh sách tướng",2,true)).apply { remove("builtinVersion") }.toString())
+            runOnMainSync { service!!.reset() }
+            val upgraded=Macro(MacroStore.current(targetContext).readText())
+            check(upgraded.json.optInt("builtinVersion")==BuiltInMacros.VERSION&&upgraded.json.optInt("heroCount")==2) { "Old built-in macro was not upgraded" }
+            MacroStore.current(targetContext).writeText(BuiltInMacros.create(""));runOnMainSync { service!!.reset() }
             runOnMainSync { service!!.showPanel() }
             // Exercise the actual chooser button, repeatedly, then after rotation.
             fun chooserClick() {
@@ -88,7 +113,26 @@ class UiSmoke:Instrumentation() {
             check(Macro(MacroStore.current(targetContext).readText()).json.optString("heroName")=="Violet")
             snap("04-panel")
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1500);snap("05-landscape")
-            result.putString("stream","SMOKE_OK: history, OCR, task selection, overlay and rotation passed\n")
+            // v0.3.1 regression: a macro tap under the floating panel pressed its hidden buttons
+            // (Đóng removed the panel mid-run) instead of reaching the game.
+            fun closeButton()=nodes().flatMap { it.findAccessibilityNodeInfosByText("Đóng") }.firstOrNull { it.text?.toString()=="Đóng" }
+            val box=Rect().also { (closeButton()?:error("Missing panel close button")).getBoundsInScreen(it) }
+            fun tapAt()=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(Path().apply { moveTo(box.exactCenterX(),box.exactCenterY()) },0,CollectorService.TAP_MS)).build()
+            // Old behaviour, recorded only: hide the panel and inject in the same frame.
+            runOnMainSync { service!!.panelView?.visibility=View.INVISIBLE;service!!.dispatchGesture(tapAt(),null,null) }
+            SystemClock.sleep(1500);var legacyClosed=false
+            runOnMainSync { legacyClosed=service!!.panelView==null;if(legacyClosed) service!!.showPanel() else service!!.panelView?.visibility=View.VISIBLE }
+            waitForIdleSync();SystemClock.sleep(800)
+            val finished=java.util.concurrent.CountDownLatch(1);val delivered=java.util.concurrent.atomic.AtomicBoolean(false)
+            runOnMainSync { service!!.touchGame(tapAt(),true) { delivered.set(it);finished.countDown() } }
+            check(finished.await(8,java.util.concurrent.TimeUnit.SECONDS)) { "Macro tap never finished" }
+            waitForIdleSync();SystemClock.sleep(600)
+            var panelKept=false;var swallowed=0
+            runOnMainSync { panelKept=service!!.panelView?.visibility==View.VISIBLE;swallowed=service!!.swallowedTaps }
+            snap("06-after-macro-tap")
+            check(delivered.get()) { "Macro tap was not delivered past the panel (swallowed=$swallowed)" }
+            check(panelKept&&closeButton()!=null) { "Macro tap closed or hid the floating panel" }
+            result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, overlay, rotation and tap-through passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
             finish(Activity.RESULT_OK,result)
         } catch(t:Throwable) { result.putString("stream","SMOKE_FAILED: ${t.stackTraceToString()}\n");finish(Activity.RESULT_CANCELED,result) }
     }

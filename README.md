@@ -42,3 +42,115 @@ The main screen is collection history, with Accessibility, Import and Floating p
 Choose Single hero, Hero list or an imported JSON macro directly on the floating controller. Name and count inputs are available over the game. Collapse keeps the task running; closing the panel pauses it. End retains captured images and requires a new session. The searchable dropdown includes imported JSON macros. The controller has Run/Pause/Resume, Stop, Capture, Back to app and Close controls on a translucent background.
 
 Bundled ML Kit reads the hero-name region from overview screenshots. A valid-looking result is used as a folder name, with suffixes to prevent overwrites. No readable name means a numbered folder; the raw OCR value and its source are saved in hero.json, and users can correct names in history. Recognition is not validated against a complete roster and can misread stylized fonts. Coordinates still target the supplied 2400x1080 layout. This changes naming, not batch completeness guarantees.
+
+
+## v0.3.2: chạm xuyên bảng nổi và khôi phục khi bị gián đoạn
+
+- Lỗi chính của v0.3.1: khi macro chạm vào game, bảng nổi chỉ được ẩn hình, cửa sổ của nó vẫn nhận cú chạm thêm vài khung hình. Cú chạm nằm dưới bảng (biểu tượng chiêu, nút Chi tiết…) rơi vào nút ẩn của bảng thay vì vào game: ảnh chiêu/thuộc tính bị trùng ảnh tổng quan, và có lúc bấm nhầm **Đóng**/**Tạm dừng** làm mất bảng nổi giữa lượt.
+- Từ v0.3.2, trước mỗi lần chạm/vuốt bảng được ẩn và đặt không nhận chạm, chờ 150 ms rồi mới gửi thao tác. Nếu cú chạm vẫn rơi vào bảng, bảng nuốt cú chạm (không bấm nút nào) và macro gửi lại, tối đa 2 lần; chạm bị Android hủy cũng được gửi lại. Thời gian giữ một cú chạm tăng từ 70 lên 100 ms.
+- `run.json` có thêm `panelTapRetries`: số cú chạm đã rơi vào bảng nổi và phải gửi lại. Giá trị lớn hơn 0 xác nhận lỗi trên đúng máy đó; nếu bằng 0 mà ảnh vẫn trùng thì nguyên nhân nằm ở tọa độ/thời gian chờ của game.
+- Mỗi bước có giới hạn thời gian; bước treo sẽ tạm dừng lượt thay vì kẹt ở "Đang xử lý". Lỗi ghi file/ảnh tạm dừng lượt thay vì làm sập dịch vụ.
+- Nếu dịch vụ bị dừng khi đang chạy, lần kết nối lại bảng nổi tự mở với lượt ở trạng thái tạm dừng. Android thường tắt Trợ năng của dịch vụ bị lỗi: vào **Bật Trợ năng**, tắt rồi bật lại AOV Collector.
+- Lỗi và gián đoạn được ghi vào nhật ký trên máy. App hiện nhật ký khi mở lại sau sự cố; **Hướng dẫn → Nhật ký lỗi** cho phép xem và sao chép để gửi khi báo lỗi.
+- Build tách APK theo loại chip: `app-arm64-v8a-debug.apk` (khoảng 22 MB, dùng cho hầu hết điện thoại) và `app-universal-debug.apk` (khoảng 50 MB, chạy trên mọi máy). Trên GitHub Actions là hai mục `aov-mobile-collector-apk-arm64` và `aov-mobile-collector-apk`.
+- Mở danh sách macro không còn đẩy bảng nổi lên đầu màn hình vĩnh viễn; bảng trở về vị trí cũ khi đóng danh sách. Chọn tác vụ mới không còn đổi trạng thái lượt đã hoàn tất thành "đã kết thúc". Tên OCR bỏ ký tự thừa ở đầu/cuối (". Flowborn" → "Flowborn").
+
+
+## v0.4.0: cuộn danh sách có đo và giao diện lịch sử
+
+- **Danh sách tướng không còn lặp hoặc bỏ sót khi cuộn.** Bản cũ vuốt một đoạn cố định rồi chạm theo tọa độ cố định. Game vẫn trượt tiếp sau khi thả tay, còn ở cuối danh sách thì cuộn ít hơn (hàng cuối lẻ), nên lệch hàng và lấy lại tướng ở hàng trên. Bước `pick` mới:
+  - Lần đầu tự hất danh sách về đầu và kiểm tra rằng nó không còn cuộn được nữa.
+  - Vuốt từng đoạn rồi giữ tay 0,45 giây trước khi thả để danh sách không trượt thêm.
+  - So ảnh chụp trước và sau mỗi lần vuốt để đo chính xác số pixel đã cuộn, rồi tính vị trí thẻ từ số đo đó thay vì giả định.
+  - Trước mỗi tướng, đối chiếu với ảnh lần trước. Nếu màn hình không còn là danh sách (ví dụ nút quay lại không ăn), lượt tạm dừng với hướng dẫn; khi chạy tiếp, app tự về đầu danh sách và đếm lại.
+  - Ô không có thẻ, hoặc danh sách không cuộn thêm được, nghĩa là đã hết danh sách: lượt kết thúc với "Đã hết danh sách". Chọn **Tất cả** (200) để lấy đến cuối.
+  - Ảnh `page-XX-list` được lưu sau mỗi lần cuộn để kiểm tra lại.
+- Kiểm thử: unit test giả lập danh sách 7, 61 và 129 tướng với độ trượt ngẫu nhiên tới 30%; mỗi tướng được chạm đúng một lần theo thứ tự và lượt dừng đúng ở cuối. Các ngưỡng đo được hiệu chỉnh trên ảnh danh sách thật 2400×1080 (thẻ, kể cả thẻ tướng chưa có, so với nền trống).
+- **Lịch sử:**
+  - Chọn mục, vào thư mục rồi quay ra không còn nhảy lên đầu: vị trí cuộn được nhớ theo từng thư mục. Ảnh thu nhỏ được giữ trong bộ nhớ đệm.
+  - Xem ảnh: vuốt ngang hoặc bấm ‹ › để sang ảnh khác cùng thư mục, có dải ảnh nhỏ bên dưới, kèm số thứ tự (ví dụ 3/10).
+  - Mỗi thư mục hiện ngày giờ tạo. Đổi tên có ô **Thêm mốc thời gian**, mặc định bật cho lượt thu thập (ví dụ "Đợt thử · 08/10 21:48").
+
+
+## v0.4.1: macro cũ được nâng cấp, cuộn thích nghi
+
+- **Lỗi của v0.4.0:** macro "Danh sách tướng" đã chọn từ bản cũ được lưu sẵn trong `macro.json` cùng các bước cũ. Cập nhật app không tạo lại macro này, nên lượt chạy vẫn vuốt một đoạn cố định và chạm theo tọa độ cố định: trượt quá, rồi chọn Enzo thay vì Bolt Baron. Ảnh `0595-page-02-list` là dấu hiệu: macro mới đặt số bước khác (0582).
+- Macro dựng sẵn giờ có số phiên bản và được tạo lại với cùng thiết lập (tên, số ô) khi kết nối dịch vụ, khi tạo lượt mới hoặc khi bấm Chạy, trừ khi đang có lượt dở dang của macro đó.
+- Nếu một lần vuốt trượt xa đến mức không đo được (ảnh trước và sau không còn phần chung), app vuốt ngược lại, đo so với ảnh trước, rồi dùng bước vuốt bằng một nửa cho các lần sau (thấp nhất một phần tư). Chỉ khi vẫn mất dấu mới quay về đầu danh sách để đếm lại. Bước vuốt tối đa giảm còn 0,45 màn hình và phạm vi đo được tăng lên khoảng 0,74 màn hình.
+- Logic điều hướng nằm trong `ListNavigator`. Unit test chạy đúng logic này trên danh sách vẽ giả lập, gồm trường hợp vuốt trượt 1,5–2,3 lần (khi giữ tay không chặn được quán tính) và trường hợp bắt đầu giữa danh sách.
+
+
+## v0.4.2: tạm dừng có lý do, đo thời gian, chạy nhanh hơn
+
+- **Tạm dừng vô lý giữa lượt:**
+  - Trước đây mọi sự kiện "cửa sổ thay đổi" từ app khác (thông báo, bàn phím, chế độ game hoặc tiết kiệm pin) đều làm lượt dừng ngay.
+  - Mỗi bước app đều kiểm tra cửa sổ ở phía trước. Với game Unity, Android đôi khi không trả lời; trường hợp đó bị coi là "đã rời game".
+  - Giờ app chỉ dừng khi một app khác thực sự nằm phía trước sau 1,5–2 giây. Không biết cửa sổ nào ở trước thì không còn bị coi là rời game.
+  - Chụp màn hình lỗi được thử lại một lần.
+- **Lý do tạm dừng:** hiện trên bảng nổi, kèm tên app đang ở phía trước và lỗi cụ thể (chụp màn hình, chạm bị hủy, quá thời gian…). Lý do cũng được ghi vào `events.txt` của lượt, xem trong lịch sử qua ⋮ → **Nhật ký lượt**.
+- **Thời gian thu thập:** bảng nổi hiện "Tướng 23/129 · 25:12 · còn ~1:10:00". Đồng hồ không tính lúc tạm dừng. Tổng số tướng được đọc từ bộ đếm "14/129" trên danh sách. `run.json` lưu `activeMs`, lịch sử hiện "chạy 1:05:12".
+- **Tất cả:** nút này giờ là 300 ô và luôn dừng ở cuối danh sách. Không cần biết trước số tướng.
+- **Nhanh hơn, ảnh không đổi:**
+  - Ảnh PNG được lưu ngầm, tối đa 2 ảnh chờ ghi; macro không còn đợi nén xong mới đi tiếp.
+  - Thời gian nghỉ giữa các bước giảm từ 400 xuống 150 ms; chờ trước khi chụp giảm từ 350 xuống 250 ms.
+  - Ước tính khoảng 45 giây mỗi tướng, so với khoảng 75 giây trước đây.
+- **Tùy chọn trong form, mặc định tắt:**
+  - **Chạy nhanh:** chờ 600 ms sau mỗi lần chạm, 450 ms khi chuyển tab Tóm tắt/Chi tiết; ước tính khoảng 36 giây mỗi tướng.
+  - **Chỉ chụp Chi tiết:** bỏ 4 ảnh Tóm tắt; bật cùng Chạy nhanh thì ước tính khoảng 30 giây và 6 ảnh mỗi tướng.
+  - Nên thử với 2 tướng rồi xem ảnh trước khi chạy cả danh sách.
+
+
+## v0.4.3: tự quay về danh sách khi còn kẹt ở trang tướng
+
+- **Lỗi:** một lượt dừng ở trang chi tiết của Edras với thông báo "Màn hình hiện tại không phải danh sách Tất cả tướng". Tướng trước đã chụp xong, nhưng game không nhận lần chạm nút quay lại của macro, nên bước chọn tướng kế tiếp vẫn thấy trang tướng.
+- Giờ khi bước chọn tướng không thấy danh sách:
+  - App chờ 1,2 giây rồi nhìn lại, phòng trường hợp danh sách đang hiện dần.
+  - Nếu vẫn chưa thấy và góc trên trái có mũi tên quay lại "‹" của game, app bấm mũi tên đó, chờ 1,5 giây rồi tìm lại danh sách. Mỗi bước được bấm tối đa 3 lần.
+  - Danh sách thường giữ nguyên vị trí cuộn, nên app so với ảnh danh sách trước đó và chạy tiếp mà không phải cuộn lại từ đầu.
+- Mũi tên được nhận dạng theo hình dạng: 2 nét trắng hội tụ về một mũi nhọn. Màn hình chính của game không có mũi tên này, nên app không bấm bừa ở đó mà tạm dừng như trước.
+- Mỗi lần bấm quay lại được ghi vào **Nhật ký lượt**. Ảnh màn hình lúc đó được giữ trong lượt với tên `…-not-list-1`, để biết game đang mở gì.
+- Unit test thêm 4 trường hợp:
+  - Game bỏ qua lần chạm quay lại ở 3 tướng trong danh sách 61 tướng; vẫn lấy đủ, đúng thứ tự.
+  - Danh sách hiện chậm; app không bấm quay lại.
+  - Đang ở màn hình chính; app không bấm gì.
+  - Mũi tên được nhận ra trên ảnh cắt thật (danh sách, bảng kỹ năng, trang Edras), và không bị nhận nhầm trên tóc trắng, thanh tiền tệ hay thẻ tướng.
+
+
+## v0.4.4: chạy nhanh hơn, chuyển thẳng giữa các chiêu, tiến trình lưu ZIP, dung lượng dễ đọc
+
+- Mỗi tướng có khoảng 58 bước. Trước đây, sau mỗi bước app nghỉ thêm 150 ms, tổng khoảng 8,7 giây mỗi tướng. Khoảng nghỉ này thừa vì:
+  - Mỗi cú chạm đã có bước chờ riêng ngay sau nó.
+  - Mỗi cú chạm và mỗi lần chụp đều tự ẩn bảng nổi rồi chờ trước khi thao tác.
+- Giờ bước kế tiếp chạy ngay khi bước trước xong. Thời gian chờ sau mỗi cú chạm (để game chuyển màn hình) giữ nguyên, nên ảnh chụp không đổi.
+- Android chỉ cho dịch vụ trợ năng chụp 1 ảnh mỗi giây. Nếu lần chụp mới đến quá sớm, app chờ cho đủ 1,05 giây kể từ lần trước, thay vì để Android từ chối rồi thử lại sau 1,1 giây.
+- Ước tính mỗi tướng, gồm cả chọn tướng trong danh sách:
+
+| Chế độ | Trước | Sau | 129 tướng |
+|---|---|---|---|
+| Mặc định | ~45 giây | ~37 giây | ~1 giờ 20 phút |
+| Chạy nhanh | ~36 giây | ~28 giây | ~1 giờ |
+| Chạy nhanh + Chỉ chụp Chi tiết | ~30 giây | ~23 giây | ~50 phút |
+
+- **Tùy chọn mới "Chuyển thẳng giữa các chiêu"**, mặc định tắt nên kịch bản gốc không đổi:
+  - Khi bảng chiêu đang mở, app bấm luôn biểu tượng chiêu kế tiếp, không bấm đóng bảng rồi mở lại.
+  - Bảng chỉ được đóng sau chiêu cuối, trước khi quay về danh sách.
+  - Mỗi tướng bớt 3 lần đóng bảng cùng thời gian chờ sau mỗi lần.
+  - Sau mỗi lần chuyển, app vẫn bấm tab Chi tiết, nên ảnh đúng tab dù game có giữ tab cũ hay không.
+- Kịch bản bỏ ảnh Tóm tắt và chuyển thẳng giữa các chiêu: tick **Chỉ chụp Chi tiết** và **Chuyển thẳng giữa các chiêu**. Thêm **Chạy nhanh** thì ước tính khoảng 20 giây mỗi tướng, 129 tướng khoảng 45 phút.
+- **Tiến trình lưu ZIP:**
+  - Khi lưu ZIP, một hộp thoại hiện thanh tiến trình theo dung lượng, số file đã ghi / tổng số file, số MB, thời gian còn lại ước tính và file đang ghi.
+  - Nút **Hủy** dừng ngay và xóa file ZIP dở.
+  - Màn hình được giữ sáng trong lúc lưu.
+  - Nhập ZIP cũng có hộp thoại này, tính theo phần file ZIP đã đọc. Hủy thì xóa phần đã nhập.
+- **Lưu ZIP nhanh hơn:**
+  - Ảnh PNG vốn đã nén. Nén lại trong ZIP không giảm dung lượng: đo trên ảnh thật vẫn 100%, mà tốn khoảng 37 MB/s CPU trên máy tính, trên điện thoại chậm hơn.
+  - Giờ ảnh PNG được ghi thẳng vào ZIP, chỉ file JSON và nhật ký còn được nén. File ZIP vẫn mở bình thường bằng mọi công cụ giải nén.
+- **Dung lượng dễ đọc:**
+  - Mọi chỗ hiện dung lượng tự đổi đơn vị KB/MB/GB, dùng dấu phẩy thập phân, ví dụ "850 KB", "24 MB", "2,61 GB".
+  - Tiến trình ZIP hiện theo đơn vị của tổng, ví dụ "0,85/2,61 GB".
+  - Khi chọn mục trong lịch sử, app hiện tổng dung lượng đã chọn (file ZIP có dung lượng gần như vậy) và dung lượng máy còn trống. Màn hình lịch sử hiện tổng dung lượng ảnh đã lưu.
+- **Ước tính trước khi chạy:** form chọn tác vụ không còn dòng cố định "Khoảng 1 phút và 25 MB mỗi tướng". Thay vào đó là ước tính cho cả lượt, tính lại khi đổi số ô hoặc tùy chọn, ví dụ "Ước tính: Tất cả 129 tướng · 1290 ảnh · khoảng 1 giờ 19 phút / Cần khoảng 1,8 GB · máy còn trống 21 GB".
+  - Thời gian được tính từ chính các bước của macro.
+  - Dung lượng mỗi ảnh lấy trung bình từ các ảnh đã lưu trên máy; chưa có ảnh nào thì dùng 1,5 MB.
+  - Số tướng của "Tất cả" lấy từ bộ đếm danh sách đọc được ở lần chạy trước; chưa đọc được thì tạm tính 130.
+  - Nếu không đủ chỗ trống, dòng ước tính chuyển màu đỏ.

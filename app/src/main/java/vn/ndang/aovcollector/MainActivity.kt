@@ -6,6 +6,9 @@ import android.content.Intent
 import android.graphics.*
 import android.graphics.drawable.Drawable
 import android.os.Bundle
+import android.os.SystemClock
+import android.provider.DocumentsContract
+import android.provider.OpenableColumns
 import android.provider.Settings
 import android.view.*
 import android.widget.*
@@ -14,8 +17,6 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import java.util.zip.ZipEntry
-import java.util.zip.ZipOutputStream
 
 class MainActivity : Activity() {
     private val captures by lazy { File(filesDir,"captures").apply { mkdirs() } }
@@ -24,6 +25,18 @@ class MainActivity : Activity() {
     private var selecting=false
     private var pendingExport=listOf<File>()
     private var historyRoot:LinearLayout?=null
+    // Rebuilding the list must not throw the reader back to the top.
+    private val scrollMemory=HashMap<String,Int>()
+    private var historyScroll:ScrollView?=null
+    private var shownKey="root"
+    private val thumbs=object:android.util.LruCache<String,Bitmap>(24*1024*1024) { override fun sizeOf(key:String,value:Bitmap)=value.byteCount }
+    private fun thumb(file:File,sample:Int):Bitmap? { val key="${file.path}:${file.lastModified()}:$sample"
+        return thumbs.get(key)?:BitmapFactory.decodeFile(file.path,BitmapFactory.Options().apply { inSampleSize=sample })?.also { thumbs.put(key,it) } }
+    private fun createdAt(dir:File):Long {
+        val m=meta(dir); if(m.has("createdAt")) return m.optLong("createdAt")
+        Regex("\\d{8}-\\d{6}").find(dir.name)?.let { found -> try { return SimpleDateFormat("yyyyMMdd-HHmmss",Locale.US).parse(found.value)!!.time } catch(_:Exception) {} }
+        return dir.lastModified()
+    }
     private fun dp(n:Int)=Ui.dp(this,n)
     private fun meta(dir:File):JSONObject = try { JSONObject(File(dir,if(File(dir,"hero.json").exists()) "hero.json" else "run.json").readText()) } catch(_:Exception) { JSONObject() }
     private fun photos(dir:File)=dir.walkTopDown().filter { it.isFile&&it.extension=="png" }.toList()
@@ -49,8 +62,37 @@ class MainActivity : Activity() {
         }
     }
     private fun message(s:String) { AlertDialog.Builder(this).setMessage(s).setPositiveButton("Đã hiểu",null).show() }
+    /** Dialog for a long ZIP export or import. The worker thread reports into it and stops when [cancelled] is set. */
+    private inner class FileProgress(title:String) {
+        @Volatile var cancelled=false
+        private val bar=ProgressBar(this@MainActivity,null,android.R.attr.progressBarStyleHorizontal).apply { max=1000; isIndeterminate=true; progressTintList=android.content.res.ColorStateList.valueOf(Ui.accent) }
+        private val line=Ui.text(this@MainActivity,"Đang chuẩn bị…",14f)
+        private val detail=Ui.text(this@MainActivity,"",12f,Ui.muted).apply { maxLines=2 }
+        private val started=SystemClock.elapsedRealtime()
+        private var shownAt=0L
+        private val dialog=AlertDialog.Builder(this@MainActivity).setTitle(title)
+            .setView(Ui.stack(this@MainActivity).apply { setPadding(dp(22),dp(10),dp(22),0); addView(bar,LinearLayout.LayoutParams(-1,dp(16))); addView(line); addView(detail) })
+            .setCancelable(false).setNegativeButton("Hủy",null).create()
+        init {
+            dialog.show()
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener { cancelled=true; it.isEnabled=false; line.text="Đang hủy…" }
+            // A long export must not stop because the screen went off.
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+        /** From the worker, at most 5 times a second. [total] is 0 or less when the size is unknown. */
+        fun report(done:Long,total:Long,text:String,file:String) {
+            val now=SystemClock.elapsedRealtime(); if(now-shownAt<200&&(total<=0||done<total)) return; shownAt=now
+            val elapsed=now-started
+            val eta=if(total>0&&done in 1 until total&&elapsed>2000) " · còn khoảng "+Format.duration(elapsed*(total-done)/done/1000) else ""
+            runOnUiThread { if(cancelled||isFinishing) return@runOnUiThread
+                bar.isIndeterminate=total<=0; if(total>0) bar.progress=(done*1000/total).toInt().coerceIn(0,1000)
+                line.text=text+eta; detail.text=file }
+        }
+        fun close() { if(dialog.isShowing) dialog.dismiss(); window.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+    }
     override fun onCreate(savedInstanceState:Bundle?) {
         super.onCreate(savedInstanceState)
+        CrashLog.install(this)
         if(!MacroStore.current(this).exists()) MacroStore.current(this).writeText(BuiltInMacros.create(""))
         folder=savedInstanceState?.getString("folder")?.let { File(it) }?.takeIf { it.isDirectory&&it.canonicalPath.startsWith(captures.canonicalPath+"/") }
         pendingExport=savedInstanceState?.getStringArrayList("export")?.map { File(it) }.orEmpty()
@@ -59,7 +101,19 @@ class MainActivity : Activity() {
         showHistory()
     }
     override fun onSaveInstanceState(out:Bundle) { super.onSaveInstanceState(out);out.putString("folder",folder?.path);out.putStringArrayList("export",ArrayList(pendingExport.map { it.path })) }
-    override fun onResume() { super.onResume();if(historyRoot!=null) showHistory() }
+    override fun onResume() { super.onResume();if(historyRoot!=null) showHistory();crashNotice() }
+    private fun crashNotice() {
+        val log=CrashLog.file(this);if(!log.exists()) return
+        val prefs=getPreferences(MODE_PRIVATE);if(log.lastModified()<=prefs.getLong("crash-seen",0L)) return
+        prefs.edit().putLong("crash-seen",log.lastModified()).apply();showLog("Lần trước có lỗi hoặc bị gián đoạn")
+    }
+    private fun showLog(title:String) {
+        val text=try { CrashLog.file(this).readText() } catch(_:Exception) { "" }
+        // A crashed accessibility service stays off until the user re-enables it.
+        val hint=if(CollectorService.current==null) "Trợ năng đang tắt hoặc bị Android dừng: bấm Bật Trợ năng, tắt rồi bật lại AOV Collector.\n\n" else ""
+        AlertDialog.Builder(this).setTitle(title).setMessage(hint+"Bấm Sao chép để gửi nhật ký khi báo lỗi.\n\n"+text.takeLast(1500)).setPositiveButton("Đã hiểu",null)
+            .setNeutralButton("Sao chép") { _,_ -> (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("AOV Collector",text));Toast.makeText(this,"Đã sao chép nhật ký",Toast.LENGTH_SHORT).show() }.show()
+    }
     private fun shell():LinearLayout {
         val root=Ui.stack(this).apply { setBackgroundColor(Ui.canvas) }
         root.setOnApplyWindowInsetsListener { v,ins -> val b=ins.getInsets(WindowInsets.Type.systemBars());v.setPadding(b.left,b.top,b.right,b.bottom);ins }
@@ -90,6 +144,7 @@ class MainActivity : Activity() {
     }
     private fun items():List<File> = (folder?:captures).listFiles()?.filter { it.isDirectory || it.extension=="png" }?.sortedWith(compareBy<File> { !it.isDirectory }.thenByDescending { if(folder==null) meta(it).optLong("updatedAt",it.lastModified()) else 0L }.thenBy { it.name }).orEmpty()
     private fun showHistory() {
+        historyScroll?.let { scrollMemory[shownKey]=it.scrollY }
         val root=shell();historyRoot=root;header(root)
         if(folder?.exists()==false) folder=null
         selected.retainAll(items().toSet())
@@ -99,6 +154,10 @@ class MainActivity : Activity() {
         bar.addView(Ui.text(this,if(selecting) "Xong" else "Chọn",14f,Ui.accent,true).apply { setPadding(dp(16),dp(12),0,dp(12));setOnClickListener { selecting=!selecting;selected.clear();showHistory() } });root.addView(bar)
         if(selecting) root.addView(Ui.text(this,if(selected.size==items().size&&items().isNotEmpty()) "Bỏ chọn tất cả" else "Chọn tất cả",13f,Ui.accent,true).apply { setPadding(dp(20),0,dp(20),dp(10));setOnClickListener { if(selected.size==items().size) selected.clear() else selected.addAll(items());showHistory() } })
         val scroll=ScrollView(this);val body=Ui.stack(this).apply { setPadding(dp(20),dp(4),dp(20),dp(16)) };scroll.addView(body);root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
+        shownKey=folder?.path?:"root";historyScroll=scroll
+        val restoreY=scrollMemory[shownKey]?:0
+        if(restoreY>0) scroll.viewTreeObserver.addOnGlobalLayoutListener(object:ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() { scroll.viewTreeObserver.removeOnGlobalLayoutListener(this);scroll.scrollTo(0,restoreY) } })
         val list=items()
         if(list.isEmpty()) {
             val empty=Ui.card(this);empty.addView(Ui.text(this,"Ảnh sẽ xuất hiện ở đây",20f,Ui.ink,true));empty.addView(Ui.text(this,"Mở bảng nổi → chọn tác vụ → Chạy. Mỗi lượt được lưu thành một thư mục riêng.",14f,Ui.muted));body.addView(empty)
@@ -113,6 +172,11 @@ class MainActivity : Activity() {
             pager.addView(Ui.text(this," ${pageIndex+1}/$pages ",14f,Ui.muted).apply { gravity=Gravity.CENTER },LinearLayout.LayoutParams(dp(64),dp(44)))
             pager.addView(Ui.button(this,"Sau ›") { getPreferences(MODE_PRIVATE).edit().putInt("page-${folder?.path?:"root"}",minOf(pages-1,pageIndex+1)).apply();showHistory() },LinearLayout.LayoutParams(0,dp(44),1f));body.addView(pager)
         }
+        // Sizes help decide what to save or delete: the ZIP is about as large as what is selected.
+        val free=" · máy còn trống "+Format.size(filesDir.usableSpace)
+        if(selecting) root.addView(Ui.text(this,if(selected.isEmpty()) "Chọn mục để lưu ZIP hoặc xóa$free"
+            else "Đã chọn ${Format.size(selected.sumOf { f -> if(f.isDirectory) f.walkTopDown().filter { it.isFile }.sumOf { it.length() } else f.length() })} · file ZIP có dung lượng gần như vậy$free",12f,Ui.muted).apply { setPadding(dp(20),dp(6),dp(20),0) })
+        else if(folder==null&&list.isNotEmpty()) root.addView(Ui.text(this,"Ảnh đã lưu: "+Format.size(captures.walkTopDown().filter { it.isFile }.sumOf { it.length() })+free,12f,Ui.muted).apply { setPadding(dp(20),dp(6),dp(20),dp(6)) })
         if(selecting) {
             val actions=LinearLayout(this).apply { setPadding(dp(20),dp(8),dp(20),dp(12)) }
             actions.addView(Ui.button(this,"Lưu ZIP",true) { requestExport(selected.toList()) }.apply { isEnabled=selected.isNotEmpty();alpha=if(isEnabled) 1f else .45f },LinearLayout.LayoutParams(0,dp(48),1f))
@@ -126,15 +190,17 @@ class MainActivity : Activity() {
         if(selecting) row.addView(Ui.text(this,if(selected.contains(file)) "✓" else "○",23f,Ui.accent,true),LinearLayout.LayoutParams(dp(30),-2))
         val cover=all.firstOrNull()
         val thumb=ImageView(this).apply { scaleType=ImageView.ScaleType.CENTER_CROP;background=Ui.shape(Ui.pale,dp(12));clipToOutline=true;contentDescription=null
-            if(cover!=null) setImageBitmap(BitmapFactory.decodeFile(cover.path,BitmapFactory.Options().apply { inSampleSize=12 })) else setImageDrawable(ActionIcon("float",Ui.accent)) }
+            if(cover!=null) setImageBitmap(thumb(cover,12)) else setImageDrawable(ActionIcon("float",Ui.accent)) }
         row.addView(thumb,LinearLayout.LayoutParams(dp(74),dp(60)))
         val info=Ui.stack(this).apply { setPadding(dp(12),0,dp(6),0) }
         info.addView(Ui.text(this,title(file),16f,Ui.ink,true).apply { maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END })
-        val size=all.sumOf { it.length() }/1048576.0
-        info.addView(Ui.text(this,(if(file.isDirectory) "${all.size} ảnh · " else "PNG · ")+String.format(Locale.US,"%.1f MB",size),12f,Ui.muted))
-        val m=meta(file);val date=SimpleDateFormat("dd/MM · HH:mm",Locale.getDefault()).format(Date(m.optLong("updatedAt",file.lastModified())))
-        val note=if(m.optString("nameSource")=="ocr") "Tên từ ảnh" else if(m.optString("nameSource")=="unknown") "Cần đặt tên" else when(m.optString("state")) { "completed"->"Hoàn tất";"paused"->"Tạm dừng";"stopped"->"Đã kết thúc";else->date }
-        info.addView(Ui.text(this,note,11f,Ui.muted));row.addView(info,LinearLayout.LayoutParams(0,-2,1f))
+        val size=all.sumOf { it.length() }
+        val time=if(file.isDirectory) SimpleDateFormat("dd/MM/yyyy HH:mm",Locale.getDefault()).format(Date(createdAt(file)))+" · " else ""
+        val m=meta(file)
+        val ran=m.optLong("activeMs",0L).takeIf { it>0 }?.let { " · chạy "+duration(it) }?:""
+        info.addView(Ui.text(this,time+(if(file.isDirectory) "${all.size} ảnh · " else "PNG · ")+Format.size(size)+ran,12f,Ui.muted))
+        val note=if(m.optString("nameSource")=="ocr") "Tên từ ảnh" else if(m.optString("nameSource")=="unknown") "Cần đặt tên" else when(m.optString("state")) { "completed"->"Hoàn tất";"paused"->"Tạm dừng";"stopped"->"Đã kết thúc";"running"->"Đang chạy";else->"" }
+        if(note.isNotEmpty()) info.addView(Ui.text(this,note,11f,Ui.muted));row.addView(info,LinearLayout.LayoutParams(0,-2,1f))
         if(!selecting) row.addView(Ui.text(this,"⋮",26f,Ui.muted).apply { gravity=Gravity.CENTER;setOnClickListener { itemMenu(file) };contentDescription="Tùy chọn ${title(file)}" },LinearLayout.LayoutParams(dp(36),dp(48)))
         card.addView(row);body.addView(card)
         card.setOnClickListener { if(selecting) { if(!selected.add(file)) selected.remove(file);showHistory() } else if(file.isDirectory) { folder=file;selected.clear();showHistory() } else preview(file) }
@@ -144,15 +210,65 @@ class MainActivity : Activity() {
     @Deprecated("Legacy navigation") override fun onBackPressed() { if(historyRoot==null) showHistory() else if(folder!=null||selecting) goBack() else super.onBackPressed() }
     private fun preview(file:File) {
         historyRoot=null;val root=shell()
-        val content=Ui.stack(this).apply { setPadding(dp(20),dp(14),dp(20),dp(16)) }
-        content.addView(Ui.button(this,"‹ Về danh sách") { showHistory() });content.addView(Ui.text(this,title(file),23f,Ui.ink,true));content.addView(Ui.text(this,file.name,12f,Ui.muted))
-        val image=ImageView(this).apply { scaleType=ImageView.ScaleType.FIT_CENTER;setImageBitmap(BitmapFactory.decodeFile(file.path,BitmapFactory.Options().apply { inSampleSize=2 })) }
-        content.addView(image,LinearLayout.LayoutParams(-1,0,1f))
-        content.addView(Ui.button(this,"Lưu ảnh trong ZIP",true) { requestExport(listOf(file)) });content.addView(Ui.button(this,"Xóa ảnh",dangerous=true) { delete(listOf(file)) });root.addView(content,LinearLayout.LayoutParams(-1,-1))
+        val images=(file.parentFile?.listFiles()?.filter { it.isFile&&it.extension=="png" }?.sortedBy { it.name }).orEmpty().ifEmpty { listOf(file) }
+        var pos=images.indexOf(file).coerceAtLeast(0)
+        val content=Ui.stack(this).apply { setPadding(dp(16),dp(6),dp(16),dp(12)) }
+        val top=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
+        top.addView(Ui.text(this,"‹",30f,Ui.accent).apply { setPadding(dp(4),0,dp(14),0);contentDescription="Về danh sách";setOnClickListener { showHistory() } })
+        val heading=Ui.text(this,"",19f,Ui.ink,true).apply { maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END };top.addView(heading,LinearLayout.LayoutParams(0,-2,1f))
+        val counter=Ui.text(this,"",13f,Ui.muted,true);top.addView(counter);content.addView(top)
+        val caption=Ui.text(this,"",11f,Ui.muted).apply { maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.MIDDLE };content.addView(caption)
+        val frame=FrameLayout(this)
+        val image=ImageView(this).apply { scaleType=ImageView.ScaleType.FIT_CENTER;background=Ui.shape(Color.rgb(24,26,40),dp(14));clipToOutline=true;contentDescription="Ảnh đang xem, vuốt ngang để đổi ảnh" }
+        frame.addView(image,FrameLayout.LayoutParams(-1,-1))
+        fun arrow(text:String,gravity:Int)=Ui.text(this,text,26f,Color.WHITE,true).apply { this.gravity=Gravity.CENTER;background=Ui.shape(Color.argb(110,0,0,0),dp(22))
+            frame.addView(this,FrameLayout.LayoutParams(dp(44),dp(44),gravity or Gravity.CENTER_VERTICAL).apply { marginStart=dp(8);marginEnd=dp(8) }) }
+        val prev=arrow("‹",Gravity.START).apply { contentDescription="Ảnh trước" }
+        val next=arrow("›",Gravity.END).apply { contentDescription="Ảnh sau" }
+        content.addView(frame,LinearLayout.LayoutParams(-1,0,1f).apply { topMargin=dp(8) })
+        val strip=HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled=false };val cells=LinearLayout(this);strip.addView(cells)
+        content.addView(strip,LinearLayout.LayoutParams(-1,dp(66)).apply { topMargin=dp(10) })
+        val actions=LinearLayout(this)
+        actions.addView(Ui.button(this,"Lưu ZIP",true) { requestExport(listOf(images[pos])) },LinearLayout.LayoutParams(0,dp(46),1f))
+        actions.addView(Ui.button(this,"Xóa ảnh",dangerous=true) { delete(listOf(images[pos])) },LinearLayout.LayoutParams(0,dp(46),1f).apply { leftMargin=dp(10) })
+        content.addView(actions,LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(4) });root.addView(content,LinearLayout.LayoutParams(-1,-1))
+        val thumbsViews=images.mapIndexed { i,f -> ImageView(this).apply { scaleType=ImageView.ScaleType.CENTER_CROP;clipToOutline=true;setPadding(dp(2),dp(2),dp(2),dp(2));contentDescription=title(f)
+            cells.addView(this,LinearLayout.LayoutParams(dp(112),-1).apply { if(i>0) leftMargin=dp(6) }) } }
+        fun show(i:Int) {
+            pos=i.coerceIn(0,images.size-1);val f=images[pos]
+            heading.text=title(f);counter.text="${pos+1}/${images.size}";caption.text=f.name
+            image.setImageBitmap(BitmapFactory.decodeFile(f.path,BitmapFactory.Options().apply { inSampleSize=2 }));image.alpha=.3f;image.animate().alpha(1f).setDuration(140).start()
+            prev.visibility=if(pos>0) View.VISIBLE else View.INVISIBLE;next.visibility=if(pos<images.size-1) View.VISIBLE else View.INVISIBLE
+            thumbsViews.forEachIndexed { k,v -> v.background=Ui.shape(if(k==pos) Ui.accent else Color.TRANSPARENT,dp(10));v.alpha=if(k==pos) 1f else .65f }
+            val cell=thumbsViews[pos];strip.post { strip.smoothScrollTo(cell.left-(strip.width-cell.width)/2,0) }
+        }
+        prev.setOnClickListener { show(pos-1) };next.setOnClickListener { show(pos+1) }
+        thumbsViews.forEachIndexed { i,v -> v.setOnClickListener { show(i) } }
+        val swipe=GestureDetector(this,object:GestureDetector.SimpleOnGestureListener() {
+            override fun onDown(e:MotionEvent)=true
+            override fun onFling(e1:MotionEvent?,e2:MotionEvent,vx:Float,vy:Float):Boolean {
+                val dx=e2.x-(e1?.x?:e2.x)
+                if(kotlin.math.abs(dx)<dp(48)||kotlin.math.abs(vx)<kotlin.math.abs(vy)) return false
+                show(if(dx<0) pos+1 else pos-1);return true
+            }
+        })
+        image.setOnTouchListener { v,e -> if(e.actionMasked==MotionEvent.ACTION_UP) v.performClick();swipe.onTouchEvent(e) }
+        show(pos)
+        // Filmstrip thumbnails decode off the main thread; the cache makes revisits instant.
+        Thread { images.forEachIndexed { i,f -> val b=thumb(f,16);runOnUiThread { if(historyRoot==null) thumbsViews[i].setImageBitmap(b) } } }.start()
     }
+    private fun duration(ms:Long):String { val t=ms/1000; return if(t>=3600) "%d:%02d:%02d".format(t/3600,t/60%60,t%60) else "%d:%02d".format(t/60,t%60) }
     private fun itemMenu(file:File) {
-        val labels=if(file.isDirectory) arrayOf("Lưu thư mục thành ZIP","Đổi tên","Xóa thư mục") else arrayOf("Lưu ảnh trong ZIP","Xóa ảnh")
-        AlertDialog.Builder(this).setTitle(title(file)).setItems(labels) { _,i -> when { i==0 -> requestExport(listOf(file));file.isDirectory&&i==1 -> rename(file);else -> delete(listOf(file)) } }.show()
+        val events=File(file,"events.txt")
+        val labels=if(file.isDirectory) listOfNotNull("Lưu thư mục thành ZIP","Đổi tên","Xóa thư mục",if(events.exists()) "Nhật ký lượt" else null) else listOf("Lưu ảnh trong ZIP","Xóa ảnh")
+        AlertDialog.Builder(this).setTitle(title(file)).setItems(labels.toTypedArray()) { _,i -> when(labels[i]) {
+            "Lưu thư mục thành ZIP","Lưu ảnh trong ZIP" -> requestExport(listOf(file)); "Đổi tên" -> rename(file); "Nhật ký lượt" -> runLog(events); else -> delete(listOf(file)) } }.show()
+    }
+    /** Starts, pauses with their reasons, failures and the end of a run, written by the collector. */
+    private fun runLog(events:File) {
+        val text=try { events.readText() } catch(_:Exception) { "" }
+        AlertDialog.Builder(this).setTitle("Nhật ký lượt").setMessage(text.takeLast(4000).ifBlank { "Chưa có sự kiện." }).setPositiveButton("Đóng",null)
+            .setNeutralButton("Sao chép") { _,_ -> (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("AOV Collector",text));Toast.makeText(this,"Đã sao chép nhật ký",Toast.LENGTH_SHORT).show() }.show()
     }
     private fun editable():Boolean {
         if(CollectorService.libraryBusy) { message("Đang xử lý file. Vui lòng chờ hoàn tất.");return false }
@@ -175,11 +291,15 @@ class MainActivity : Activity() {
     }
     private fun rename(file:File) {
         if(!editable()) return
-        val field=Ui.field(this,"Tên thư mục",title(file));val wrapper=Ui.stack(this).apply { setPadding(dp(20),dp(8),dp(20),dp(8));addView(field) }
+        val stamp=" · "+SimpleDateFormat("dd/MM HH:mm",Locale.getDefault()).format(Date(createdAt(file)));val current=title(file)
+        val field=Ui.field(this,"Tên thư mục",current.removeSuffix(stamp))
+        val withTime=CheckBox(this).apply { text="Thêm mốc thời gian (${stamp.removePrefix(" · ")})";textSize=14f;isChecked=current.endsWith(stamp)||!File(file,"hero.json").exists() }
+        val wrapper=Ui.stack(this).apply { setPadding(dp(20),dp(8),dp(20),dp(8));addView(field);addView(withTime) }
         val dialog=AlertDialog.Builder(this).setTitle("Đổi tên").setView(wrapper).setPositiveButton("Lưu",null).setNegativeButton("Hủy",null).create();dialog.show()
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             try {
-                val value=field.text.toString().trim();require(value.length in 1..80) { "Nhập tên từ 1 đến 80 ký tự" };if(!editable()) return@setOnClickListener
+                val base=field.text.toString().trim();require(base.length in 1..80) { "Nhập tên từ 1 đến 80 ký tự" };if(!editable()) return@setOnClickListener
+                val value=if(withTime.isChecked) base+stamp else base
                 if(File(file,"hero.json").exists()) {
                     val newDir=File(file.parentFile,HeroNames.slug(value));require(newDir==file||!newDir.exists()) { "Tên thư mục đã tồn tại" }
                     require(newDir==file||file.renameTo(newDir)) { "Không đổi tên được thư mục" }
@@ -191,7 +311,8 @@ class MainActivity : Activity() {
         }
     }
     private fun importMenu() { AlertDialog.Builder(this).setTitle("Nhập file").setItems(arrayOf("Ảnh và thư mục từ ZIP","Macro từ JSON")) { _,i -> if(editable()) startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type=if(i==0) "application/zip" else "application/json";addCategory(Intent.CATEGORY_OPENABLE) },if(i==0) 12 else 10) }.show() }
-    private fun help() { message("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Một tướng hoặc Danh sách → Chạy.\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tự vuốt còn thử nghiệm, có thể trùng hoặc thiếu. Bố cục hiện hỗ trợ màn ngang 2400×1080 và 4 biểu tượng chiêu.\n\nAOV Collector 0.3") }
+    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Một tướng hoặc Danh sách → Chạy.\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080 và 4 biểu tượng chiêu. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nAOV Collector 0.4.4").setPositiveButton("Đã hiểu",null)
+        if(CrashLog.file(this).exists()) dialog.setNeutralButton("Nhật ký lỗi") { _,_ -> showLog("Nhật ký lỗi") };dialog.show() }
     private fun requestExport(files:List<File>) {
         if(files.isEmpty()||!editable()) return
         pendingExport=files
@@ -208,18 +329,28 @@ class MainActivity : Activity() {
             } catch(e:Exception) { message(e.message?:"Không nhập được macro") };return
         }
         CollectorService.libraryBusy=true
+        val exporting=requestCode==11
+        val progress=FileProgress(if(exporting) "Đang lưu ZIP" else "Đang nhập ZIP")
         Thread {
             val result=try {
-                if(requestCode==11) {
+                if(exporting) {
                     val entries=pendingExport.flatMap { if(it.isDirectory) it.walkTopDown().filter { f->f.isFile }.toList() else listOf(it) }.distinctBy { it.canonicalPath }
                     require(entries.isNotEmpty()) { "Không có file để lưu" }
-                    ZipOutputStream(contentResolver.openOutputStream(uri)?:error("Không mở được nơi lưu")).use { zip ->
-                        for(file in entries) { require(file.canonicalPath.startsWith(captures.canonicalPath+"/")) { "File ngoài thư mục ảnh" };zip.putNextEntry(ZipEntry(file.relativeTo(captures).invariantSeparatorsPath));file.inputStream().use { it.copyTo(zip) };zip.closeEntry() }
-                    };"Đã lưu ZIP gồm ${entries.size} file."
+                    val out=contentResolver.openOutputStream(uri)?:error("Không mở được nơi lưu")
+                    val bytes=try { ZipFiles.export(entries,captures,out,{ progress.cancelled }) { done,all,number,name -> progress.report(done,all,"File $number/${entries.size} · ${Format.sizes(done,all)}",name) } }
+                        catch(e:Exception) { if(progress.cancelled) try { DocumentsContract.deleteDocument(contentResolver,uri) } catch(_:Exception) {}; throw e }
+                    "Đã lưu ZIP gồm ${entries.size} file · ${Format.size(bytes)}."
                 } else {
                     var total=0L;var count=0;var imageCount=0;val made=linkedSetOf<File>();val prefix="import-${System.currentTimeMillis()}-"
+                    // Progress follows how much of the ZIP has been read.
+                    val size=try { contentResolver.query(uri,arrayOf(OpenableColumns.SIZE),null,null,null)?.use { if(it.moveToFirst()&&!it.isNull(0)) it.getLong(0) else -1L }?:-1L } catch(_:Exception) { -1L }
+                    var read=0L
+                    val source=object:java.io.FilterInputStream(contentResolver.openInputStream(uri)?:error("Không đọc được ZIP")) {
+                        override fun read():Int = super.read().also { if(it>=0) read++ }
+                        override fun read(b:ByteArray,off:Int,len:Int):Int = super.read(b,off,len).also { if(it>0) read+=it }
+                    }
                     try {
-                        java.util.zip.ZipInputStream(contentResolver.openInputStream(uri)?:error("Không đọc được ZIP")).use { zip ->
+                        java.util.zip.ZipInputStream(source).use { zip ->
                             var entry=zip.nextEntry
                             while(entry!=null) {
                                 require(++count<=20000) { "ZIP có quá nhiều file" }
@@ -230,7 +361,9 @@ class MainActivity : Activity() {
                                     val dir=File(captures,prefix+parts[0]).apply { mkdirs() };made.add(dir)
                                     val target=File(dir,parts.drop(1).joinToString("/"));require(target.canonicalPath.startsWith(dir.canonicalPath+"/"));target.parentFile?.mkdirs()
                                     target.outputStream().use { out -> val buffer=ByteArray(8192);var n=zip.read(buffer);var fileSize=0L
-                                        while(n!=-1) { total+=n;fileSize+=n;require(total<5L*1024*1024*1024&&fileSize<64L*1024*1024&&filesDir.usableSpace>30L*1024*1024) { "File quá lớn hoặc không đủ dung lượng" };out.write(buffer,0,n);n=zip.read(buffer) }
+                                        while(n!=-1) { total+=n;fileSize+=n;require(total<5L*1024*1024*1024&&fileSize<64L*1024*1024&&filesDir.usableSpace>30L*1024*1024) { "File quá lớn hoặc không đủ dung lượng" };out.write(buffer,0,n)
+                                            if(progress.cancelled) throw ZipFiles.Cancelled()
+                                            progress.report(read,size,"$imageCount ảnh · "+(if(size>0) Format.sizes(read,size) else Format.size(read)),parts.joinToString("/"));n=zip.read(buffer) }
                                     };if(target.extension=="png") imageCount++
                                 }
                                 zip.closeEntry();entry=zip.nextEntry
@@ -239,8 +372,8 @@ class MainActivity : Activity() {
                     } catch(e:Exception) { made.forEach { it.deleteRecursively() };throw e }
                     "Đã nhập $imageCount ảnh."
                 }
-            } catch(e:Exception) { "Không hoàn tất: ${e.message}" }
-            runOnUiThread { CollectorService.libraryBusy=false;selected.clear();selecting=false;showHistory();message(result) }
+            } catch(e:Exception) { if(progress.cancelled) (if(exporting) "Đã hủy lưu ZIP; file ZIP dở đã được xóa." else "Đã hủy nhập ZIP; phần đã nhập được xóa.") else "Không hoàn tất: ${e.message}" }
+            runOnUiThread { progress.close();CollectorService.libraryBusy=false;selected.clear();selecting=false;showHistory();message(result) }
         }.start()
     }
     private class ActionIcon(val kind:String,val color:Int):Drawable() {

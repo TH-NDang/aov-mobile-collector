@@ -24,6 +24,7 @@ class Macro(val raw: String) {
                 "wait" -> require(s.getLong("ms") in 0..60000) { "Thời gian chờ tối đa 60 giây" }
                 "screenshot" -> require(s.getString("name").matches(Regex("[a-zA-Z0-9_-]{1,64}"))) { "Tên ảnh không hợp lệ" }
                 "back" -> Unit
+                "pick" -> require(s.getInt("index") in 0..9999) { "pick: index từ 0 đến 9999" }
                 else -> error("Bước ${i+1}: type không hỗ trợ")
             }
         }
@@ -34,11 +35,24 @@ class Macro(val raw: String) {
 
 /** Coordinates calibrated from the user's 2400x1080 VN hero menu. */
 object BuiltInMacros {
-    fun create(heroName:String, count:Int = 1, batch:Boolean = false):String {
-        require(count in 1..200)
+    /** Bump when the generated steps change; selected built-in macros are then regenerated with the same settings. */
+    const val VERSION=3
+    /** "Tất cả": more cards than the game has; the run stops at the end of the list. */
+    const val ALL=300
+    /**
+     * [fast] shortens the waits after taps (tab switches most); [detailOnly] skips the summary ("Tóm tắt")
+     * shots of the passive and skills; [directSkills] taps the next skill icon while a skill panel is open,
+     * which switches the panel, and closes it only after the last skill. All stay off unless chosen, so the
+     * default steps do not change.
+     */
+    fun create(heroName:String, count:Int = 1, batch:Boolean = false, fast:Boolean = false, detailOnly:Boolean = false, directSkills:Boolean = false):String {
+        require(count in 1..ALL)
         val steps=org.json.JSONArray()
-        fun waitFor(ms:Int=900) { steps.put(JSONObject().put("type","wait").put("ms",ms)) }
-        fun tap(x:Double,y:Double) { steps.put(JSONObject().put("type","tap").put("x",x).put("y",y)); waitFor() }
+        val settle=if(fast) 600 else 900
+        fun waitFor(ms:Int=settle) { steps.put(JSONObject().put("type","wait").put("ms",ms)) }
+        fun tap(x:Double,y:Double,ms:Int=settle) { steps.put(JSONObject().put("type","tap").put("x",x).put("y",y)); waitFor(ms) }
+        // Switching between the Tóm tắt and Chi tiết tabs only swaps text.
+        fun tab(x:Double) = tap(x,.05,if(fast) 450 else 900)
         fun shot(name:String) { steps.put(JSONObject().put("type","screenshot").put("name",name)) }
         fun collect(prefix:String) {
             tap(.60,.82); shot("${prefix}-overview")
@@ -47,29 +61,34 @@ object BuiltInMacros {
             val skillNames=listOf("passive","skill-1","skill-2","skill-3")
             val skillX=listOf(.093,.138,.181,.225)
             for(i in skillNames.indices) {
-                tap(skillX[i],.605); tap(.817,.05); shot("${prefix}-${skillNames[i]}-summary")
-                tap(.878,.05); shot("${prefix}-${skillNames[i]}-detail"); tap(.60,.82)
+                tap(skillX[i],.605)
+                if(!detailOnly) { tab(.817); shot("${prefix}-${skillNames[i]}-summary") }
+                tab(.878); shot("${prefix}-${skillNames[i]}-detail")
+                if(!directSkills||i==skillNames.lastIndex) tap(.60,.82)
             }
         }
         waitFor(3000)
-        if(!batch) collect("hero") else {
-            val columns=listOf(.337,.459,.580,.702,.823)
-            for(i in 0 until count) {
-                val slot=i%10
-                if(slot==0) shot("page-%02d-list".format(i/10+1))
-                tap(columns[slot%5],if(slot<5) .31 else .72); waitFor(1800)
-                collect("hero-%03d".format(i+1))
-                tap(.09,.05); waitFor(1400)
-                if(slot==9 && i<count-1) {
-                    steps.put(JSONObject().put("type","swipe").put("x",.70).put("y",.94).put("toX",.70).put("toY",.112).put("ms",1400))
-                    waitFor(1600)
-                }
-            }
+        if(!batch) collect("hero") else for(i in 0 until count) {
+            // "pick" scrolls the list by measured amounts and taps card i; the run ends early at the end of the list.
+            steps.put(JSONObject().put("type","pick").put("index",i)); waitFor(if(fast) 2000 else 2700)
+            collect("hero-%03d".format(i+1))
+            tap(HeroGrid.BACK_X,HeroGrid.BACK_Y); waitFor(if(fast) 1000 else 1400)
         }
         val safeName=heroName.trim().take(80)
         return JSONObject().put("name",if(batch) "batch-heroes" else "single-hero")
             .put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
             .put("collectionMode",if(batch) "all" else "single").put("heroName",safeName)
-            .put("heroCount",if(batch) count else 1).put("steps",steps).toString(2)
+            .put("heroCount",if(batch) count else 1).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills)
+            .put("builtinVersion",VERSION).put("steps",steps).toString(2)
+    }
+    /**
+     * Rough seconds per hero, read from the steps themselves: every wait, plus typical times measured for a tap
+     * (hiding the panel first), a screenshot and finding the card in the list.
+     */
+    fun secondsPerHero(batch:Boolean,fast:Boolean,detailOnly:Boolean,directSkills:Boolean):Double {
+        val steps=JSONObject(create("",1,batch,fast,detailOnly,directSkills)).getJSONArray("steps")
+        // Step 0 is the wait before the run starts, once per run.
+        return (1 until steps.length()).sumOf { i -> val s=steps.getJSONObject(i)
+            when(s.getString("type")) { "wait" -> s.getLong("ms")/1000.0; "tap" -> .28; "screenshot" -> .45; "pick" -> 1.5; else -> 0.0 } }
     }
 }
