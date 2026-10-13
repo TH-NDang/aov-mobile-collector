@@ -175,3 +175,27 @@ Bundled ML Kit reads the hero-name region from overview screenshots. A valid-loo
   - Tướng đã đọc đúng ở lượt đầu không bị ảnh hưởng.
   - Ảnh vùng tên thật của Qi được đưa vào bài kiểm tra trên máy ảo. App phải đọc ra đúng "Qi".
   - Lượt đã chụp trước đây vẫn giữ tên cũ; đổi tên `tuong-112` thành Qi trong menu ⋮ của thư mục.
+
+## v0.4.6: lưu và nhập ZIP chạy nền, tiến độ trên thanh thông báo
+
+- **Nút "Chạy nền"** trong hộp thoại lưu hoặc nhập ZIP: hộp thoại đóng lại, việc lưu vẫn chạy tiếp. Trong lúc đó vẫn xem ảnh được, hoặc rời app, tắt màn hình.
+- **Thông báo tiến độ** hiện suốt lúc lưu hoặc nhập:
+  - Tiêu đề có phần trăm, ví dụ "Đang lưu ZIP · 46%".
+  - Có thanh tiến độ, dòng "Phần 2 · file 340/933 · 0,61/1,32 GB · còn khoảng 2 phút" và file đang ghi.
+  - Nút **Hủy** ngay trên thông báo.
+  - Bấm vào thông báo để mở lại hộp thoại tiến độ.
+  - Thông báo cập nhật mỗi giây.
+- **Khi xong:**
+  - Nếu đang mở app, kết quả hiện trong app như trước.
+  - Nếu không, kết quả đến bằng một thông báo, ví dụ "Lưu ZIP: Đã lưu ZIP gồm 933 file, chia thành 4 ZIP nhỏ…".
+- **Lần đầu bấm "Chạy nền"** trên Android 13 trở lên, app xin quyền thông báo. Nếu từ chối, việc lưu vẫn chạy nền nhưng tiến độ chỉ xem được khi mở lại app.
+- **Đang chạy nền mà bấm Lưu ZIP, Xóa hoặc Nhập:** app báo đang bận, kèm nút **Xem tiến độ**.
+- **Để không bị Android dừng giữa chừng:**
+  - Trong lúc lưu hoặc nhập, app chạy một dịch vụ nền có thông báo (loại đồng bộ dữ liệu).
+  - App giữ CPU chạy cả khi tắt màn hình, tối đa 3 giờ mỗi lần, và nhả ra ngay khi xong.
+  - Quyền mới: thông báo, dịch vụ nền, giữ máy thức. App vẫn không có quyền Internet.
+- **Nếu đóng hẳn màn hình app trong lúc lưu,** app giữ quyền ghi vào file ZIP đã chọn đến khi xong. Nhờ vậy nút Hủy vẫn xóa được file dở.
+- **Kiểm tra trên máy ảo:**
+  - Một lượt lưu giả lập phải hiện thông báo có thanh tiến độ và vào chế độ dịch vụ nền.
+  - Nút Hủy của thông báo phải hủy được.
+  - Khi xong phải tắt dịch vụ và để lại thông báo kết quả.

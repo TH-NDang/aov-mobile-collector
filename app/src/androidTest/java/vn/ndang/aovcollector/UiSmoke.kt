@@ -59,6 +59,20 @@ class UiSmoke:Instrumentation() {
             File(hero,"hero.json").writeText(JSONObject().put("name","Eland’orr").put("nameSource","ocr").toString())
             for(name in listOf("0004-hero-overview","0008-hero-attributes","0012-hero-skill-1-summary")) File(hero,"$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG,100,it) };image.recycle()
             MacroStore.current(targetContext).writeText(BuiltInMacros.create(""))
+            // A ZIP job left to the background: the foreground service shows its progress, Hủy cancels it, and with no
+            // screen in front its result comes as a notification.
+            val notifications=targetContext.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            fun waitFor(what:String,test:()->Boolean) { val until=SystemClock.uptimeMillis()+5000;while(!test()) { check(SystemClock.uptimeMillis()<until) { what };SystemClock.sleep(100) } }
+            FileJob.start(targetContext,"Đang lưu ZIP","Lưu ZIP")
+            FileJob.report(50,100,"File 1/2","run/hero/0001-hero-001-overview.png")
+            waitFor("No progress notification") { notifications.activeNotifications.any { it.id==FileJob.NOTIFICATION&&it.notification.extras.getInt(android.app.Notification.EXTRA_PROGRESS)==500 } }
+            var jobService:FileJobService?=null;waitFor("The ZIP job did not enter the foreground") { runOnMainSync { jobService=FileJobService.current };jobService!=null }
+            targetContext.startService(Intent(targetContext,FileJobService::class.java).setAction(FileJobService.CANCEL))
+            waitFor("Hủy in the notification did not cancel the job") { FileJob.cancelled }
+            FileJob.finish("Đã hủy lưu ZIP; file ZIP dở đã được xóa.")
+            waitFor("No result notification") { notifications.activeNotifications.let { all -> all.none { it.id==FileJob.NOTIFICATION }&&all.any { it.notification.extras.getString(android.app.Notification.EXTRA_TITLE)=="Lưu ZIP" } } }
+            runOnMainSync { jobService=FileJobService.current };check(jobService==null&&!CollectorService.libraryBusy) { "The ZIP job did not stop" }
+            notifications.cancelAll()
             val activity=startActivitySync(Intent(targetContext,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             val dest=File(targetContext.filesDir,"smoke").apply { mkdirs() }
             fun snap(n:String) { waitForIdleSync();SystemClock.sleep(700);val b=automation.takeScreenshot()?:error("No screenshot");File(dest,"$n.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG,100,it) };b.recycle() }
