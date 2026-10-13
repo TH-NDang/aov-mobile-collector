@@ -167,9 +167,11 @@ Bundled ML Kit reads the hero-name region from overview screenshots. A valid-loo
 - **Nhập ZIP:** đọc được cả ZIP mới (chứa ZIP nhỏ) lẫn ZIP xuất từ bản cũ. Các ZIP nhỏ được đọc lần lượt ngay trong file lớn, không cần giải nén ra máy trước.
 - **Tên tướng Qi:**
   - Trước đây ML Kit không trả về chữ nào ở vùng tên của Qi. Tên chỉ có 2 chữ, nét mảnh, nằm trên nền nhiều chi tiết. Thư mục tướng vì vậy bị đặt là `tuong-112`, tên "Chưa rõ tên".
-  - Giờ nếu lượt đọc đầu không ra tên hợp lệ, app đọc lại vùng tên dưới dạng chữ đen trên nền trắng:
-    - Tên là phần sáng nhất trong vùng.
-    - Điểm ảnh sáng hơn mức giữa nền và chữ được tô đen, còn lại để trắng, có thêm lề trắng.
+  - Kể cả khi vùng tên được đổi thành chữ đen trên nền trắng, ML Kit vẫn không trả về chữ nào: chữ quá ngắn nên bị bỏ qua. Cùng chữ đó nằm trong một dòng dài hơn thì được đọc.
+  - Giờ nếu lượt đọc đầu không ra tên hợp lệ, app đọc lần hai như sau:
+    - Tách tên ra thành chữ đen trên nền trắng. Tên là phần sáng nhất trong vùng: điểm ảnh sáng hơn mức giữa nền và chữ là tên.
+    - Cắt sát quanh tên, rồi vẽ tên 3 lần trên một dòng, cách nhau một khoảng như giữa hai từ ("Qi Qi Qi").
+    - Đọc dòng đó, rồi lấy chữ trong từng bản theo vị trí. Kết quả là cách đọc mà nhiều bản giống nhau nhất.
   - Tướng đã đọc đúng ở lượt đầu không bị ảnh hưởng.
   - Ảnh vùng tên thật của Qi được đưa vào bài kiểm tra trên máy ảo. App phải đọc ra đúng "Qi".
   - Lượt đã chụp trước đây vẫn giữ tên cũ; đổi tên `tuong-112` thành Qi trong menu ⋮ của thư mục.
