@@ -311,7 +311,7 @@ class MainActivity : Activity() {
         }
     }
     private fun importMenu() { AlertDialog.Builder(this).setTitle("Nhập file").setItems(arrayOf("Ảnh và thư mục từ ZIP","Macro từ JSON")) { _,i -> if(editable()) startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type=if(i==0) "application/zip" else "application/json";addCategory(Intent.CATEGORY_OPENABLE) },if(i==0) 12 else 10) }.show() }
-    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Một tướng hoặc Danh sách → Chạy.\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080 và 4 biểu tượng chiêu. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nAOV Collector 0.4.4").setPositiveButton("Đã hiểu",null)
+    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Một tướng hoặc Danh sách → Chạy.\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080 và 4 biểu tượng chiêu. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nAOV Collector 0.4.5").setPositiveButton("Đã hiểu",null)
         if(CrashLog.file(this).exists()) dialog.setNeutralButton("Nhật ký lỗi") { _,_ -> showLog("Nhật ký lỗi") };dialog.show() }
     private fun requestExport(files:List<File>) {
         if(files.isEmpty()||!editable()) return
@@ -337,9 +337,10 @@ class MainActivity : Activity() {
                     val entries=pendingExport.flatMap { if(it.isDirectory) it.walkTopDown().filter { f->f.isFile }.toList() else listOf(it) }.distinctBy { it.canonicalPath }
                     require(entries.isNotEmpty()) { "Không có file để lưu" }
                     val out=contentResolver.openOutputStream(uri)?:error("Không mở được nơi lưu")
-                    val bytes=try { ZipFiles.export(entries,captures,out,{ progress.cancelled }) { done,all,number,name -> progress.report(done,all,"File $number/${entries.size} · ${Format.sizes(done,all)}",name) } }
+                    val parts=try { ZipFiles.export(entries,captures,out,{ progress.cancelled }) { done,all,number,part,name ->
+                            progress.report(done,all,"Phần $part · file $number/${entries.size} · ${Format.sizes(done,all)}",name) } }
                         catch(e:Exception) { if(progress.cancelled) try { DocumentsContract.deleteDocument(contentResolver,uri) } catch(_:Exception) {}; throw e }
-                    "Đã lưu ZIP gồm ${entries.size} file · ${Format.size(bytes)}."
+                    "Đã lưu ZIP gồm ${entries.size} file, chia thành ${parts.size} ZIP nhỏ dưới 450 MB theo thứ tự chữ cái · ${Format.size(parts.sumOf { it.bytes })}."
                 } else {
                     var total=0L;var count=0;var imageCount=0;val made=linkedSetOf<File>();val prefix="import-${System.currentTimeMillis()}-"
                     // Progress follows how much of the ZIP has been read.
@@ -349,27 +350,29 @@ class MainActivity : Activity() {
                         override fun read():Int = super.read().also { if(it>=0) read++ }
                         override fun read(b:ByteArray,off:Int,len:Int):Int = super.read(b,off,len).also { if(it>0) read+=it }
                     }
-                    try {
-                        java.util.zip.ZipInputStream(source).use { zip ->
-                            var entry=zip.nextEntry
-                            while(entry!=null) {
-                                require(++count<=20000) { "ZIP có quá nhiều file" }
-                                val parts=entry.name.trimEnd('/').split('/')
-                                require(parts.all { it.isNotBlank()&&it!=".."&&it!="."&&!it.contains('\\') }) { "Đường dẫn ZIP không hợp lệ" }
-                                if(!entry.isDirectory&&parts.size in 2..3&&(parts.last().endsWith(".png")||parts.last().endsWith(".json"))) {
-                                    require(parts[0].matches(Regex("[a-zA-Z0-9_-]{1,200}"))) { "Tên thư mục không hợp lệ" }
-                                    val dir=File(captures,prefix+parts[0]).apply { mkdirs() };made.add(dir)
-                                    val target=File(dir,parts.drop(1).joinToString("/"));require(target.canonicalPath.startsWith(dir.canonicalPath+"/"));target.parentFile?.mkdirs()
-                                    target.outputStream().use { out -> val buffer=ByteArray(8192);var n=zip.read(buffer);var fileSize=0L
-                                        while(n!=-1) { total+=n;fileSize+=n;require(total<5L*1024*1024*1024&&fileSize<64L*1024*1024&&filesDir.usableSpace>30L*1024*1024) { "File quá lớn hoặc không đủ dung lượng" };out.write(buffer,0,n)
-                                            if(progress.cancelled) throw ZipFiles.Cancelled()
-                                            progress.report(read,size,"$imageCount ảnh · "+(if(size>0) Format.sizes(read,size) else Format.size(read)),parts.joinToString("/"));n=zip.read(buffer) }
-                                    };if(target.extension=="png") imageCount++
-                                }
-                                zip.closeEntry();entry=zip.nextEntry
+                    fun take(zip:java.util.zip.ZipInputStream,outer:Boolean) {
+                        var entry=zip.nextEntry
+                        while(entry!=null) {
+                            require(++count<=20000) { "ZIP có quá nhiều file" }
+                            val parts=entry.name.trimEnd('/').split('/')
+                            require(parts.all { it.isNotBlank()&&it!=".."&&it!="."&&!it.contains('\\') }) { "Đường dẫn ZIP không hợp lệ" }
+                            // An export from v0.4.5 holds part ZIPs, read in turn as they stream out of it.
+                            if(outer&&!entry.isDirectory&&parts.size==1&&parts[0].endsWith(".zip",true))
+                                java.util.zip.ZipInputStream(object:java.io.FilterInputStream(zip) { override fun close() {} }).use { take(it,false) }
+                            else if(!entry.isDirectory&&parts.size in 2..3&&(parts.last().endsWith(".png")||parts.last().endsWith(".json"))) {
+                                require(parts[0].matches(Regex("[a-zA-Z0-9_-]{1,200}"))) { "Tên thư mục không hợp lệ" }
+                                val dir=File(captures,prefix+parts[0]).apply { mkdirs() };made.add(dir)
+                                val target=File(dir,parts.drop(1).joinToString("/"));require(target.canonicalPath.startsWith(dir.canonicalPath+"/"));target.parentFile?.mkdirs()
+                                target.outputStream().use { out -> val buffer=ByteArray(8192);var n=zip.read(buffer);var fileSize=0L
+                                    while(n!=-1) { total+=n;fileSize+=n;require(total<5L*1024*1024*1024&&fileSize<64L*1024*1024&&filesDir.usableSpace>30L*1024*1024) { "File quá lớn hoặc không đủ dung lượng" };out.write(buffer,0,n)
+                                        if(progress.cancelled) throw ZipFiles.Cancelled()
+                                        progress.report(read,size,"$imageCount ảnh · "+(if(size>0) Format.sizes(read,size) else Format.size(read)),parts.joinToString("/"));n=zip.read(buffer) }
+                                };if(target.extension=="png") imageCount++
                             }
+                            zip.closeEntry();entry=zip.nextEntry
                         }
-                    } catch(e:Exception) { made.forEach { it.deleteRecursively() };throw e }
+                    }
+                    try { java.util.zip.ZipInputStream(source).use { take(it,true) } } catch(e:Exception) { made.forEach { it.deleteRecursively() };throw e }
                     "Đã nhập $imageCount ảnh."
                 }
             } catch(e:Exception) { if(progress.cancelled) (if(exporting) "Đã hủy lưu ZIP; file ZIP dở đã được xóa." else "Đã hủy nhập ZIP; phần đã nhập được xóa.") else "Không hoàn tất: ${e.message}" }

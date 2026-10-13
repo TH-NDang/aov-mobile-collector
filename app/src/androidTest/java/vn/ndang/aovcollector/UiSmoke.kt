@@ -6,6 +6,7 @@ import android.app.UiAutomation
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -39,6 +40,12 @@ class UiSmoke:Instrumentation() {
             canvas.drawText("Eland'orr",1770f,385f,Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.rgb(248,226,170);textSize=58f })
             val name=HeroNames.read(image)
             check(name!=null&&HeroNames.slug(name)=="elandorr") { "OCR returned $name" }
+            // Qi's name region from a real run, where ML Kit read nothing.
+            val qi=Bitmap.createBitmap(2400,1080,Bitmap.Config.ARGB_8888)
+            context.assets.open("qi-name.png").use { BitmapFactory.decodeStream(it) }.let { Canvas(qi).apply { drawColor(Color.rgb(20,30,50)) }.drawBitmap(it,1752f,318f,null);it.recycle() }
+            val qiLog=ArrayList<String>();val qiName=HeroNames.read(qi) { qiLog+=it };qi.recycle()
+            File(targetContext.filesDir,"smoke").apply { mkdirs() }.resolve("ocr-qi.txt").writeText("$qiName\n"+qiLog.joinToString("\n"))
+            check(qiName=="Qi") { "OCR read $qiName for Qi: ${qiLog.joinToString("; ")}" }
             check(HeroNames.slug("Điêu Thuyền")=="dieu-thuyen")
             val m=Macro(BuiltInMacros.create(""));check(m.photoSteps.size==10)
             check(Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true)).photoSteps.size==6) { "Chỉ Chi tiết should keep overview, attributes and 4 details" }

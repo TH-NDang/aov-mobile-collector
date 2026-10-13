@@ -9,8 +9,8 @@ App thử nghiệm Android 11+ để chụp dữ liệu menu Liên Quân VN bằ
 4. Chọn **Một tướng đang mở** hoặc **Danh sách tướng**; nhập tên tùy chọn hoặc số ô cần thu thập.
 5. Bấm **Chạy**. Nút đổi thành **Tạm dừng**, rồi **Tiếp tục**. **Dừng** kết thúc lượt và giữ ảnh.
 6. **Chụp** lưu ảnh thủ công. **Về app** tạm dừng và mở lịch sử. **Đóng** tạm dừng và ẩn bảng. Dấu **−** thu gọn, vẫn chạy.
-7. Trong lịch sử, mở thư mục để xem ảnh; bấm **Chọn** hoặc nhấn giữ để chọn nhiều, **Lưu ZIP** hoặc **Xóa**. Menu từng mục có đổi tên.
-8. **Nhập** trên header nhận ZIP đã xuất hoặc macro JSON. Macro JSON xuất hiện trong ô tìm của bảng nổi.
+7. Trong lịch sử, mở thư mục để xem ảnh; bấm **Chọn** hoặc nhấn giữ để chọn nhiều, **Lưu ZIP** hoặc **Xóa**. Menu từng mục có đổi tên. File ZIP lưu ra chứa các ZIP nhỏ dưới 450 MB, xếp theo chữ cái.
+8. **Nhập** trên header nhận ZIP đã xuất (cả dạng ZIP chứa ZIP nhỏ lẫn ZIP cũ) hoặc macro JSON. Macro JSON xuất hiện trong ô tìm của bảng nổi.
 
 Nền bảng nổi bán trong suốt, có thể kéo ở thanh tiêu đề. Bảng tự ẩn khi chụp để không dính vào ảnh. Xuất ZIP trước khi gỡ app vì gỡ app sẽ xóa ảnh nội bộ.
 
@@ -154,3 +154,22 @@ Bundled ML Kit reads the hero-name region from overview screenshots. A valid-loo
   - Dung lượng mỗi ảnh lấy trung bình từ các ảnh đã lưu trên máy; chưa có ảnh nào thì dùng 1,5 MB.
   - Số tướng của "Tất cả" lấy từ bộ đếm danh sách đọc được ở lần chạy trước; chưa đọc được thì tạm tính 130.
   - Nếu không đủ chỗ trống, dòng ước tính chuyển màu đỏ.
+
+## v0.4.5: ZIP chia phần dưới 450 MB, đọc được tên Qi
+
+- **Lưu ZIP thành nhiều ZIP nhỏ:**
+  - File ZIP lưu ra giờ chứa các ZIP nhỏ, mỗi ZIP tối đa 450.000.000 byte. Con số này dưới 450 MB theo cả hai cách tính (1 MB = 1.000.000 hay 1.048.576 byte).
+  - Thư mục được xếp theo thứ tự chữ cái, không phân biệt hoa thường: các file của lượt (trang danh sách, `run.json`) trước, rồi từng thư mục tướng từ A đến Z. Trong mỗi thư mục, file xếp theo tên, tức theo thứ tự chụp.
+  - Mỗi thư mục tướng nằm trọn trong một ZIP nhỏ. ZIP nhỏ đầy thì tướng kế tiếp sang ZIP mới. Chỉ thư mục lớn hơn 450 MB mới bị chia theo file.
+  - Tên ZIP nhỏ gồm số thứ tự và tướng đầu, tướng cuối, ví dụ `01_airi_errol.zip`, `02_fennik_omega.zip`.
+  - Thử trên bộ ảnh thật (129 tướng, 933 file, 1,32 GB): ra 4 ZIP nhỏ 420 MB, 426 MB, 421 MB và 84 MB. Giải nén bằng `unzip` và Python đều đúng từng byte, không tướng nào bị chia đôi.
+  - Hộp thoại tiến trình hiện thêm ZIP nhỏ đang ghi, ví dụ "Phần 2 · file 340/933 · 0,61/1,32 GB".
+- **Nhập ZIP:** đọc được cả ZIP mới (chứa ZIP nhỏ) lẫn ZIP xuất từ bản cũ. Các ZIP nhỏ được đọc lần lượt ngay trong file lớn, không cần giải nén ra máy trước.
+- **Tên tướng Qi:**
+  - Trước đây ML Kit không trả về chữ nào ở vùng tên của Qi. Tên chỉ có 2 chữ, nét mảnh, nằm trên nền nhiều chi tiết. Thư mục tướng vì vậy bị đặt là `tuong-112`, tên "Chưa rõ tên".
+  - Giờ nếu lượt đọc đầu không ra tên hợp lệ, app đọc lại vùng tên dưới dạng chữ đen trên nền trắng:
+    - Tên là phần sáng nhất trong vùng.
+    - Điểm ảnh sáng hơn mức giữa nền và chữ được tô đen, còn lại để trắng, có thêm lề trắng.
+  - Tướng đã đọc đúng ở lượt đầu không bị ảnh hưởng.
+  - Ảnh vùng tên thật của Qi được đưa vào bài kiểm tra trên máy ảo. App phải đọc ra đúng "Qi".
+  - Lượt đã chụp trước đây vẫn giữ tên cũ; đổi tên `tuong-112` thành Qi trong menu ⋮ của thư mục.
