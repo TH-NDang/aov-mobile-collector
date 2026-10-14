@@ -44,10 +44,12 @@ object BuiltInMacros {
      * [fast] shortens the waits after taps (tab switches most); [detailOnly] skips the summary ("Tóm tắt")
      * shots of the passive and skills; [directSkills] taps the next skill icon while a skill panel is open,
      * which switches the panel, and closes it only after the last skill. [openGame], for the list only, starts with
-     * an "enter" step that opens the game and goes through its popups to the All-heroes list ([GameEntry]). All
-     * stay off unless chosen, so the default steps do not change.
+     * an "enter" step that opens the game and goes through its popups to the All-heroes list ([GameEntry]);
+     * there [checkAccount] makes sure the saved test account is in play, and [traceEntry] keeps each step for
+     * review. All stay off unless chosen (the trace is on by default), so the default steps do not change.
      */
-    fun create(heroName:String, count:Int = 1, batch:Boolean = false, fast:Boolean = false, detailOnly:Boolean = false, directSkills:Boolean = false, openGame:Boolean = false):String {
+    fun create(heroName:String, count:Int = 1, batch:Boolean = false, fast:Boolean = false, detailOnly:Boolean = false, directSkills:Boolean = false,
+               openGame:Boolean = false, checkAccount:Boolean = false, traceEntry:Boolean = true):String {
         require(count in 1..ALL)
         val steps=org.json.JSONArray()
         val settle=if(fast) 600 else 900
@@ -82,7 +84,7 @@ object BuiltInMacros {
         return JSONObject().put("name",if(batch) "batch-heroes" else "single-hero")
             .put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
             .put("collectionMode",if(batch) "all" else "single").put("heroName",safeName)
-            .put("heroCount",if(batch) count else 1).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills).put("openGame",entering)
+            .put("heroCount",if(batch) count else 1).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills).put("openGame",entering).put("checkAccount",entering&&checkAccount).put("traceEntry",traceEntry)
             .put("builtinVersion",VERSION).put("steps",steps).toString(2)
     }
     /**

@@ -152,6 +152,7 @@ class MainActivity : Activity() {
         val connected=CollectorService.current!=null
         headerAction(row,"access",if(connected) "Đã bật Trợ năng" else "Bật Trợ năng",if(connected) Color.rgb(31,132,112) else Ui.accent) { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         headerAction(row,"import","Nhập file",Ui.accent) { importMenu() }
+        headerAction(row,"account",if(Accounts.uid(this)!=null) "Tài khoản test" else "Tài khoản",Ui.accent) { accountDialog() }
         headerAction(row,"float","Bảng nổi",Ui.accent) { val service=CollectorService.current;if(service==null) message("Bấm Bật Trợ năng, bật AOV Collector rồi quay lại.") else { service.showPanel();Toast.makeText(this,"Mở game, bấm Chọn macro trên bảng nổi để chọn cách chụp.",Toast.LENGTH_LONG).show() } }
         top.addView(row);root.addView(top)
     }
@@ -165,7 +166,8 @@ class MainActivity : Activity() {
         cell.addView(Ui.text(this,label,11f,Ui.muted,true).apply { gravity=Gravity.CENTER;setOnClickListener { action() } })
         row.addView(cell,LinearLayout.LayoutParams(0,-2,1f))
     }
-    private fun items():List<File> = (folder?:captures).listFiles()?.filter { it.isDirectory || it.extension=="png" }?.sortedWith(compareBy<File> { !it.isDirectory }.thenByDescending { if(folder==null) meta(it).optLong("updatedAt",it.lastModified()) else 0L }.thenBy { it.name }).orEmpty()
+    // A run's record of the way into the game is opened from the run's menu, not listed as a hero folder.
+    private fun items():List<File> = (folder?:captures).listFiles()?.filter { (it.isDirectory&&it.name!=GameEntry.TRACE_DIR) || it.extension=="png" }?.sortedWith(compareBy<File> { !it.isDirectory }.thenByDescending { if(folder==null) meta(it).optLong("updatedAt",it.lastModified()) else 0L }.thenBy { it.name }).orEmpty()
     private fun showHistory() {
         historyScroll?.let { scrollMemory[shownKey]=it.scrollY }
         val root=shell();historyRoot=root;header(root)
@@ -283,9 +285,11 @@ class MainActivity : Activity() {
     private fun duration(ms:Long):String { val t=ms/1000; return if(t>=3600) "%d:%02d:%02d".format(t/3600,t/60%60,t%60) else "%d:%02d".format(t/60,t%60) }
     private fun itemMenu(file:File) {
         val events=File(file,"events.txt")
-        val labels=if(file.isDirectory) listOfNotNull("Lưu thư mục thành ZIP","Đổi tên","Xóa thư mục",if(events.exists()) "Nhật ký lượt" else null) else listOf("Lưu ảnh trong ZIP","Xóa ảnh")
+        val steps=File(file,"${GameEntry.TRACE_DIR}/steps.jsonl")
+        val labels=if(file.isDirectory) listOfNotNull("Lưu thư mục thành ZIP","Đổi tên","Xóa thư mục",if(events.exists()) "Nhật ký lượt" else null,if(steps.exists()) "Xem lại các bước vào game" else null) else listOf("Lưu ảnh trong ZIP","Xóa ảnh")
         AlertDialog.Builder(this).setTitle(title(file)).setItems(labels.toTypedArray()) { _,i -> when(labels[i]) {
-            "Lưu thư mục thành ZIP","Lưu ảnh trong ZIP" -> requestExport(listOf(file)); "Đổi tên" -> rename(file); "Nhật ký lượt" -> runLog(events); else -> delete(listOf(file)) } }.show()
+            "Lưu thư mục thành ZIP","Lưu ảnh trong ZIP" -> requestExport(listOf(file)); "Đổi tên" -> rename(file); "Nhật ký lượt" -> runLog(events)
+            "Xem lại các bước vào game" -> entrySteps(steps.parentFile!!); else -> delete(listOf(file)) } }.show()
     }
     /** Starts, pauses with their reasons, failures and the end of a run, written by the collector. */
     private fun runLog(events:File) {
@@ -339,7 +343,7 @@ class MainActivity : Activity() {
         }
     }
     private fun importMenu() { AlertDialog.Builder(this).setTitle("Nhập file").setItems(arrayOf("Ảnh và thư mục từ ZIP","Macro từ JSON")) { _,i -> if(editable()) startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type=if(i==0) "application/zip" else "application/json";addCategory(Intent.CATEGORY_OPENABLE) },if(i==0) 12 else 10) }.show() }
-    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Một tướng hoặc Danh sách → Chạy. Với Danh sách, tick Tự mở game thì app tự mở Liên Quân, đóng popup sự kiện và vào danh sách tướng.\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080 và 4 biểu tượng chiêu. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nAOV Collector 0.4.7").setPositiveButton("Đã hiểu",null)
+    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Một tướng hoặc Danh sách → Chạy. Với Danh sách, tick Tự mở game thì app tự mở Liên Quân, đóng popup sự kiện và vào danh sách tướng.\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080 và 4 biểu tượng chiêu. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nAOV Collector 0.4.8").setPositiveButton("Đã hiểu",null)
         if(CrashLog.file(this).exists()) dialog.setNeutralButton("Nhật ký lỗi") { _,_ -> showLog("Nhật ký lỗi") };dialog.show() }
     private fun requestExport(files:List<File>) {
         if(files.isEmpty()||!editable()) return
@@ -390,7 +394,7 @@ class MainActivity : Activity() {
                             // An export from v0.4.5 holds part ZIPs, read in turn as they stream out of it.
                             if(outer&&!entry.isDirectory&&parts.size==1&&parts[0].endsWith(".zip",true))
                                 java.util.zip.ZipInputStream(object:java.io.FilterInputStream(zip) { override fun close() {} }).use { take(it,false) }
-                            else if(!entry.isDirectory&&parts.size in 2..3&&(parts.last().endsWith(".png")||parts.last().endsWith(".json"))) {
+                            else if(!entry.isDirectory&&parts.size in 2..3&&(parts.last().endsWith(".png")||parts.last().endsWith(".json")||parts.last().endsWith(".jpg")||parts.last().endsWith(".jsonl"))) {
                                 require(parts[0].matches(Regex("[a-zA-Z0-9_-]{1,200}"))) { "Tên thư mục không hợp lệ" }
                                 val dir=File(captures,prefix+parts[0]).apply { mkdirs() };made.add(dir)
                                 val target=File(dir,parts.drop(1).joinToString("/"));require(target.canonicalPath.startsWith(dir.canonicalPath+"/"));target.parentFile?.mkdirs()
@@ -411,12 +415,71 @@ class MainActivity : Activity() {
             FileJob.finish(result)
         }.start()
     }
+    /**
+     * The Garena test account a run with "Kiểm tra UID" logs in with when the game is on another account. The
+     * password is encrypted by the phone's keystore and never shown again; only the UID and account name are.
+     */
+    private fun accountDialog() {
+        val saved=Accounts.uid(this)
+        val body=Ui.stack(this).apply { setPadding(dp(22),dp(6),dp(22),0) }
+        body.addView(Ui.text(this,if(saved!=null) "Đã lưu: UID $saved · tài khoản ${Accounts.user(this)?:"?"}" else "Chưa lưu tài khoản test.",13f,Ui.muted))
+        body.addView(Ui.text(this,"Khi chạy Danh sách tướng có Tự mở game và Kiểm tra UID, app đọc UID trong game. Khác UID này thì app đăng xuất và đăng nhập tài khoản dưới đây trên trang Garena, mỗi lượt một lần. Mật khẩu được mã hóa trong máy, không nằm trong file ZIP và không hiện lại.",12f,Ui.muted).apply { setPadding(0,dp(6),0,dp(6)) })
+        val uid=Ui.field(this,"UID (xem trong game: hồ sơ → UID)",saved?:"",true)
+        val user=Ui.field(this,"Tài khoản Garena, email hoặc số điện thoại",Accounts.user(this)?:"")
+        val password=Ui.field(this,"Mật khẩu","").apply { inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD }
+        listOf(uid,user,password).forEach { body.addView(it) }
+        val dialog=AlertDialog.Builder(this).setTitle("Tài khoản test").setView(body).setPositiveButton("Lưu",null).setNegativeButton("Đóng",null)
+            .apply { if(saved!=null) setNeutralButton("Xóa") { _,_ -> Accounts.clear(this@MainActivity);showHistory();Toast.makeText(this@MainActivity,"Đã xóa tài khoản test",Toast.LENGTH_SHORT).show() } }.create()
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            try { Accounts.save(this,uid.text.toString().trim(),user.text.toString(),password.text.toString());dialog.dismiss();showHistory()
+                Toast.makeText(this,"Đã lưu tài khoản test",Toast.LENGTH_SHORT).show() }
+            catch(e:Exception) { password.error=e.message?:"Không lưu được" }
+        }
+    }
+    /** The way into the game step by step: each screenshot the run decided on, what it decided and where it tapped. */
+    private fun entrySteps(dir:File) {
+        val steps=try { File(dir,"steps.jsonl").readLines().filter { it.isNotBlank() }.map { JSONObject(it) } } catch(_:Exception) { emptyList() }
+        if(steps.isEmpty()) { message("Chưa có bước nào được lưu.");return }
+        historyRoot=null;val root=shell()
+        val content=Ui.stack(this).apply { setPadding(dp(16),dp(6),dp(16),dp(12)) }
+        val top=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
+        top.addView(Ui.text(this,"‹",30f,Ui.accent).apply { setPadding(dp(4),0,dp(14),0);contentDescription="Về danh sách";setOnClickListener { showHistory() } })
+        top.addView(Ui.text(this,"Các bước vào game",19f,Ui.ink,true),LinearLayout.LayoutParams(0,-2,1f))
+        val counter=Ui.text(this,"",13f,Ui.muted,true);top.addView(counter);content.addView(top)
+        val caption=Ui.text(this,"",14f,Ui.ink).apply { setPadding(0,dp(4),0,0) };content.addView(caption)
+        val image=ImageView(this).apply { scaleType=ImageView.ScaleType.FIT_CENTER;background=Ui.shape(Color.rgb(24,26,40),dp(14));clipToOutline=true }
+        content.addView(image,LinearLayout.LayoutParams(-1,0,1f).apply { topMargin=dp(8) })
+        val nav=LinearLayout(this)
+        var pos=0
+        fun show(i:Int) {
+            pos=i.coerceIn(0,steps.size-1); val step=steps[pos]
+            counter.text="${pos+1}/${steps.size}"
+            val time=SimpleDateFormat("HH:mm:ss",Locale.getDefault()).format(Date(step.optLong("time")))
+            caption.text="Bước ${step.optInt("n")} · $time · ${step.optString("what")}"
+            val file=step.optString("image").takeIf { it.isNotEmpty()&&it!="null" }?.let { File(dir,it) }
+            val bitmap=file?.takeIf { it.exists() }?.let { BitmapFactory.decodeFile(it.path)?.copy(Bitmap.Config.ARGB_8888,true) }
+            if(bitmap!=null&&!step.isNull("x")) {
+                // Where the run tapped: a red ring.
+                val x=(step.optDouble("x")*bitmap.width).toFloat(); val y=(step.optDouble("y")*bitmap.height).toFloat()
+                val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.RED;style=Paint.Style.STROKE;strokeWidth=bitmap.width/160f }
+                Canvas(bitmap).apply { drawCircle(x,y,bitmap.width/40f,paint);drawCircle(x,y,bitmap.width/300f,paint.apply { style=Paint.Style.FILL }) }
+            }
+            if(bitmap!=null) image.setImageBitmap(bitmap) else image.setImageDrawable(null)
+            if(bitmap==null) caption.text=caption.text.toString()+"\n(Không lưu ảnh ở bước này)"
+        }
+        nav.addView(Ui.button(this,"‹ Bước trước") { show(pos-1) },LinearLayout.LayoutParams(0,dp(46),1f))
+        nav.addView(Ui.button(this,"Bước sau ›",true) { show(pos+1) },LinearLayout.LayoutParams(0,dp(46),1f).apply { leftMargin=dp(10) })
+        content.addView(nav,LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(8) });root.addView(content,LinearLayout.LayoutParams(-1,-1))
+        show(0)
+    }
     private class ActionIcon(val kind:String,val color:Int):Drawable() {
         override fun draw(canvas:Canvas) {
             canvas.save();canvas.translate(bounds.left.toFloat(),bounds.top.toFloat());canvas.scale(bounds.width()/24f,bounds.height()/24f)
             val p=Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color=this@ActionIcon.color;style=Paint.Style.STROKE;strokeWidth=1.8f;strokeCap=Paint.Cap.ROUND;strokeJoin=Paint.Join.ROUND }
             when(kind) {
                 "access" -> { canvas.drawCircle(12f,4f,2f,p);canvas.drawLine(4f,9f,20f,9f,p);canvas.drawLine(12f,7f,12f,15f,p);canvas.drawLine(12f,15f,7f,22f,p);canvas.drawLine(12f,15f,17f,22f,p) }
+                "account" -> { canvas.drawCircle(12f,8f,4.5f,p);val path=Path().apply { moveTo(3f,22f);quadTo(3f,14f,12f,14f);quadTo(21f,14f,21f,22f) };canvas.drawPath(path,p) }
                 "import" -> { canvas.drawLine(12f,2f,12f,15f,p);canvas.drawLine(7f,10f,12f,15f,p);canvas.drawLine(17f,10f,12f,15f,p);val path=Path().apply { moveTo(3f,15f);lineTo(3f,21f);lineTo(21f,21f);lineTo(21f,15f) };canvas.drawPath(path,p) }
                 else -> { canvas.drawRoundRect(2f,3f,21f,20f,3f,3f,p);p.style=Paint.Style.FILL;canvas.drawRoundRect(11f,11f,23f,23f,3f,3f,p) }
             };canvas.restore()

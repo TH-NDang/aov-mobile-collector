@@ -52,6 +52,27 @@ class UiSmoke:Instrumentation() {
             val popup=context.assets.open("game-popup-fest.jpg").use { BitmapFactory.decodeStream(it) }
             val seen=GameScreens.read(popup.width,popup.height) { y,row -> popup.getPixels(row,0,popup.width,0,y,popup.width,1) };popup.recycle()
             check(seen.kind==GameScreens.Kind.POPUP&&Math.abs(seen.close!!.first-.913)<.01&&Math.abs(seen.close!!.second-.056)<.015) { "Popup read as ${seen.kind} ${seen.close}" }
+            // Screens known by their words, read by ML Kit on the user's screenshots: where the run would tap.
+            fun words(asset:String):GameScreens.Reading { val b=context.assets.open(asset).use { BitmapFactory.decodeStream(it) }
+                val pixels=GameScreens.read(b.width,b.height) { y,row -> b.getPixels(row,0,b.width,0,y,b.width,1) }
+                return GameScreens.refine(pixels,GameText.words(b),null).also { b.recycle() } }
+            val reward=words("game-reward-stars.jpg")
+            check(reward.kind==GameScreens.Kind.CONTINUE&&Math.abs(reward.tap!!.first-.5)<.05&&Math.abs(reward.tap!!.second-.91)<.04) { "Reward screen read as ${reward.kind} ${reward.tap}: ${reward.words}" }
+            val register=words("game-register.jpg")
+            check(register.kind==GameScreens.Kind.REGISTER&&Math.abs(register.tap!!.first-.749)<.04&&Math.abs(register.tap!!.second-.194)<.04) { "Registration form read as ${register.kind} ${register.tap}: ${register.words}" }
+            val form=words("game-garena-form.jpg")
+            check(form.kind==GameScreens.Kind.FORM) { "Garena page read as ${form.kind}: ${form.words}" }
+            // The faint UID line at the bottom of game screens, drawn as the game draws it.
+            val strip=Bitmap.createBitmap(2400,1080,Bitmap.Config.ARGB_8888)
+            Canvas(strip).apply { drawColor(Color.rgb(36,40,96));drawText("UID: 17345555466552433",1070f,1072f,Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.rgb(96,100,140);textSize=24f;typeface=android.graphics.Typeface.SERIF }) }
+            val uid=GameText.uid(strip);strip.recycle()
+            check(uid=="17345555466552433") { "UID line read as $uid" }
+            // The test account is kept encrypted by the phone's keystore, and read back.
+            Accounts.save(targetContext,"17514483308299377","test@example.com","p@ss word")
+            val account=Accounts.load(targetContext)
+            check(account!=null&&account.user=="test@example.com"&&account.password=="p@ss word"&&Accounts.uid(targetContext)=="17514483308299377") { "Test account did not survive saving" }
+            check(!targetContext.getSharedPreferences("test-account",0).all.values.joinToString().contains("p@ss")) { "The password is stored in clear" }
+            Accounts.clear(targetContext);check(Accounts.load(targetContext)==null) { "Test account was not cleared" }
             check(HeroNames.slug("Điêu Thuyền")=="dieu-thuyen")
             val m=Macro(BuiltInMacros.create(""));check(m.photoSteps.size==10)
             check(Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true)).photoSteps.size==6) { "Chỉ Chi tiết should keep overview, attributes and 4 details" }

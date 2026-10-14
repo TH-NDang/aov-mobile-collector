@@ -232,3 +232,68 @@ Bundled ML Kit reads the hero-name region from overview screenshots. A valid-loo
   - Chuỗi thao tác được thử bằng kịch bản: đóng từng popup, 5 popup liên tiếp có X cùng một chỗ, chờ popup hiện sau sảnh, popup không đóng được, màn đứng yên, màn tải kéo dài, game không hiện lên.
   - Trên máy ảo Android, ảnh popup đang mờ cũng được đọc đúng.
 - Cần thêm quyền "thấy" gói Liên Quân (`<queries>`), vì Android 11+ ẩn các app khác.
+
+## v0.4.8: đăng nhập, màn quà, tài khoản test, xem lại các bước vào game
+
+Mở rộng tùy chọn **Tự mở game** của v0.4.7 với các màn bạn gửi.
+
+- **Màn đăng nhập** (3 nút Garena/Facebook/Google): app bấm **Đăng nhập Garena**.
+  - Nhận ra nhờ 3 nút màu cam, xanh, trắng cạnh nhau, không phụ thuộc hình nền.
+  - Tối đa 2 lần mỗi lần vào game.
+- **Form "Đăng ký thông tin người dùng":** app bấm **Đ.KÝ SAU**, không bao giờ điền họ tên, ngày sinh hay số điện thoại.
+  - **Sửa lỗi của v0.4.7:** form trắng này che đúng chỗ các biểu tượng ở thanh dưới nên bị nhận nhầm là sảnh, và app sẽ bấm "Tướng" vào ô số điện thoại. Giờ một ô chỉ được tính là có biểu tượng khi phần trắng chiếm từ 15% đến 85%, không phải trắng kín cả ô.
+- **Video trailer** (tài khoản lâu không vào): app bấm nút X mảnh để bỏ qua.
+- **Ba màn quà "Ấn để tiếp tục"** (thêm 2 sao, thưởng trận đầu, trang phục miễn phí): app bấm đúng vào dòng "Ấn để tiếp tục".
+  - Chỉ dòng này ở phía dưới, giữa màn hình, mới tính. Chữ "Tiếp tục" ở chỗ khác, như hộp mua hàng, không được bấm.
+- **Màn tổng hợp quà** ("Thưởng nhiều, gánh team dễ dàng"): bấm X, không bấm "Bắt đầu ngay".
+- **Sảnh phải thông thoáng 4 giây** (trước là 2) rồi mới bấm Tướng, vì có popup hiện ra sau một lúc.
+- **Màn không có ký hiệu riêng thì app đọc chữ trên đó**, bằng hai cách:
+  - ML Kit có sẵn trong máy, đọc trên ảnh thu nhỏ một nửa;
+  - cây trợ năng của Android, đọc được trang web và form.
+
+### Tài khoản test
+
+- **Mục Tài khoản trên header của app:** nhập UID, tài khoản Garena và mật khẩu.
+  - Mật khẩu (và tên tài khoản) được mã hóa AES-GCM bằng khóa nằm trong Android Keystore của máy, không lấy ra được.
+  - Mật khẩu không nằm trong file ZIP, không ghi vào nhật ký, và không hiện lại (chỉ Lưu lại hoặc Xóa).
+  - App vẫn không có quyền Internet.
+- **Tùy chọn "Kiểm tra UID là tài khoản test"** trong tác vụ Danh sách tướng, dùng cùng Tự mở game.
+  - **Đọc UID:**
+    - Ở sảnh, app đọc dòng "UID: …" mờ ở cuối màn hình. Dòng này được cắt riêng, chuyển chữ đen nền trắng và phóng to 3 lần cho dễ đọc.
+    - Đọc không được 3 lần thì app mở **hồ sơ** (avatar) → **UID** → đọc số trong hộp "Xem UID" → bấm X → quay lại sảnh.
+  - **Khớp:** vào danh sách tướng như thường.
+  - **Khác:** app vào cài đặt (bánh răng), bấm **Đăng xuất**, rồi bấm **Xác nhận** hoặc **Đồng ý**. Ở màn đăng nhập, app bấm Đăng nhập Garena.
+  - **Trên trang Garena:** app điền tài khoản và mật khẩu đã lưu rồi bấm **Đăng Nhập Ngay**, qua cây trợ năng (`ACTION_SET_TEXT`). Sau đó app kiểm tra UID lần nữa.
+- **An toàn khi điền form:**
+  - Chỉ điền khi trang có ô mật khẩu thật (dạng dấu chấm) và có "Quên mật khẩu?" hoặc "Tạo tài khoản mới". Nhờ vậy tài khoản không bao giờ bị gõ vào chỗ khác, như ô chat.
+  - Chỉ điền khi app vừa bấm Đăng nhập Garena trong lần vào game này.
+  - Mỗi lần vào game chỉ đăng xuất và đăng nhập một lần. Nếu game tự vào lại tài khoản cũ, hoặc UID vẫn khác, app tạm dừng.
+  - Không có tài khoản test mà game mở trang Garena: app tạm dừng để bạn đăng nhập.
+  - Gặp captcha, mã xác minh hay báo lỗi đăng nhập: trang đăng nhập vẫn còn sau 15 giây nên app tạm dừng, không thử lại.
+- **Chưa có ảnh thật cho nút Đăng xuất và hộp xác nhận.** App tìm theo chữ ("Đăng xuất", "Xác nhận", "Đồng ý", thẻ "Tài khoản" hoặc "Khác"). Nếu không tìm thấy, app tạm dừng; xem lại các bước để biết nó dừng ở đâu.
+
+### Xem lại các bước vào game
+
+- **Tùy chọn "Lưu ảnh từng bước vào game"**, mặc định bật.
+  - Mỗi ảnh app chụp để quyết định được thu nhỏ còn 1200×540 (JPEG, khoảng 100 KB), lưu kèm điều app nhận ra và việc đã làm.
+  - Ảnh nằm trong thư mục `buoc-vao-game` của lượt, kèm `steps.jsonl`. Màn chờ chỉ lưu khi màn hình đổi.
+- **Trang Garena chỉ lưu dòng mô tả, không lưu ảnh**, vì ảnh sẽ có tên tài khoản vừa điền.
+- **Xem lại:** menu ⋮ của lượt → **Xem lại các bước vào game**. Từng bước hiện giờ, việc đã làm và ảnh, với **vòng tròn đỏ ở chỗ app đã bấm**.
+- **Gửi khi có lỗi:** thư mục bước nằm trong lượt nên có trong Lưu ZIP. Nhập ZIP cũng nhận ảnh `.jpg` của thư mục này.
+
+### Kiểm tra
+
+- 20 ảnh thật (UID và tên người chơi đã che) được nhận đúng loại màn và vị trí nút X: trailer, 3 màn quà, tổng hợp quà, sảnh tài khoản mới, màn đăng nhập, hồ sơ, hộp Xem UID, trang Garena.
+- Form đăng ký không còn bị nhận là sảnh.
+- Chuỗi thao tác được thử bằng kịch bản:
+  - tài khoản lâu không vào (đăng nhập → form đăng ký → trailer → 3 màn quà → tổng hợp → sảnh → danh sách);
+  - UID khớp;
+  - đổi sang tài khoản test;
+  - đọc UID trong hồ sơ;
+  - game tự vào lại tài khoản cũ;
+  - trang Garena khi không có tài khoản test.
+- **Trên máy ảo Android:**
+  - ML Kit đọc ra "Ấn để tiếp tục" và "Đ.KÝ SAU" trên ảnh thật, kèm đúng chỗ bấm, và nhận ra trang Garena.
+  - Dòng UID mờ được đọc đúng.
+  - Tài khoản lưu và đọc lại được, mật khẩu không nằm ở dạng chữ thường.
+- **Chưa thử được trên máy thật:** điền trang Garena thật, và đường đăng xuất trong cài đặt.
