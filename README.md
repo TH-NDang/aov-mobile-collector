@@ -6,7 +6,7 @@ App thử nghiệm Android 11+ để chụp dữ liệu menu Liên Quân VN bằ
 1. Bấm **Trợ năng** trên header và bật AOV Collector trong cài đặt hệ thống.
 2. Bấm **Bảng nổi**, mở game thủ công và vào màn hình tướng.
 3. Mở danh sách macro trên bảng nổi; tìm tên có dấu hoặc không dấu.
-4. Chọn **Một tướng đang mở** hoặc **Danh sách tướng**; nhập tên tùy chọn hoặc số ô cần thu thập.
+4. Chọn **Một tướng đang mở** hoặc **Danh sách tướng**; nhập tên tùy chọn hoặc số ô cần thu thập. Với Danh sách, tick **Tự mở game** để app tự mở Liên Quân, đóng popup sự kiện và vào danh sách tướng.
 5. Bấm **Chạy**. Nút đổi thành **Tạm dừng**, rồi **Tiếp tục**. **Dừng** kết thúc lượt và giữ ảnh.
 6. **Chụp** lưu ảnh thủ công. **Về app** tạm dừng và mở lịch sử. **Đóng** tạm dừng và ẩn bảng. Dấu **−** thu gọn, vẫn chạy.
 7. Trong lịch sử, mở thư mục để xem ảnh; bấm **Chọn** hoặc nhấn giữ để chọn nhiều, **Lưu ZIP** hoặc **Xóa**. Menu từng mục có đổi tên. File ZIP lưu ra chứa các ZIP nhỏ dưới 450 MB, xếp theo chữ cái.
@@ -199,3 +199,36 @@ Bundled ML Kit reads the hero-name region from overview screenshots. A valid-loo
   - Một lượt lưu giả lập phải hiện thông báo có thanh tiến độ và vào chế độ dịch vụ nền.
   - Nút Hủy của thông báo phải hủy được.
   - Khi xong phải tắt dịch vụ và để lại thông báo kết quả.
+
+## v0.4.7: tự mở game, đóng popup sự kiện và vào danh sách tướng
+
+- **Tùy chọn mới "Tự mở game và vào Danh sách tướng"** trong tác vụ Danh sách tướng, mặc định tắt. Khi bật, bấm **Chạy** ở bất kỳ đâu (màn hình chính, trong app hay trong game). App sẽ:
+  1. **Mở Liên Quân**, nếu game chưa ở phía trước.
+  2. **Chờ qua logo và màn tải.** Mỗi khoảng 1,5 giây app chụp một ảnh để xem đang ở màn nào.
+  3. **Đóng từng popup sự kiện bằng nút X.** App chỉ bấm khi thấy nút X ở cùng một chỗ trong 2 ảnh liên tiếp, để không bấm lúc popup còn đang hiện dần.
+  4. **Bấm "Tướng" ở sảnh.** App chỉ bấm khi sảnh đã thông thoáng 2 giây, vì popup thường hiện ngay sau khi sảnh hiện ra.
+  5. **Chạy tiếp như cũ** khi thấy lưới danh sách tướng: đưa danh sách về đầu, cuộn có đo và chụp từng tướng.
+- **Nếu game đang mở ở một trang khác** có mũi tên "‹" của game (trang tướng, bảng chiêu…), app bấm mũi tên đó để quay về.
+- **App không dùng phím Back của Android ở bước này.** Theo thử nghiệm, Back không đóng được popup quảng cáo, và bấm Back 2 lần ở sảnh sẽ thoát game.
+- **Cách nhận ra từng màn** (đo trên ảnh 2400×1080 của bạn):
+  - **Sảnh:** 4 biểu tượng trắng ở thanh dưới (túi, mũ, kiếm, sách) chiếm 28–64% ô của chúng. Khi popup phủ lên, chúng tối đi gần như hết; màn tải và danh sách chỉ đạt tối đa 6%. Vì vậy sảnh bị popup che không bị nhầm là sảnh trống.
+  - **Nút X của popup:** tìm trong phần trên bên phải màn hình (từ 55% chiều ngang, 45% chiều cao trở lên), nên cả nút X lùi vào trong cũng được.
+    - App nhận theo **hình dạng**: hai nét chéo sáng hơn nền xung quanh, nên không phụ thuộc màu hay độ sáng. Popup chụp lúc đang mờ vẫn nhận được.
+    - Nút X phải **đứng riêng**: chữ X nằm trong một từ (như "XỊN", "XẠ THẦN") có nét khác sát bên nên bị bỏ qua.
+    - Có nhiều chỗ giống X thì chọn chỗ gần góc trên phải nhất.
+  - **Danh sách tướng:** lưới thẻ tướng như trước, và phải có thẻ thật. Màn logo toàn đen cũng có khe trống giữa các cột, nên không thể chỉ dựa vào khe.
+- **App tạm dừng, báo lý do và lưu ảnh màn hình lúc đó trong lượt** (xem trong **Nhật ký lượt**) khi:
+  - Bấm X 3 lần mà vẫn đúng popup đó, ảnh không đổi, hoặc đã đóng 12 popup mà vẫn còn. Các popup nối tiếp nhau thường có X ở cùng một chỗ; app nhận ra popup mới vì ảnh đã khác, nên không dừng nhầm.
+  - Một màn không nhận ra đứng yên 90 giây. Màn tải vẫn thay đổi nên app chờ tiếp.
+  - Sau 45 giây vẫn chưa thấy game. Một số máy chặn mở app từ nền mà không báo.
+  - Sau 5 phút vẫn chưa vào được danh sách tướng.
+
+  Bạn xử lý bằng tay rồi bấm **Tiếp tục**: app làm lại từ màn đang thấy.
+- **Thời gian ước tính** cộng thêm khoảng 1 phút khi bật tùy chọn này.
+- **Kiểm tra:**
+  - 9 ảnh thật bạn gửi (logo, màn tải, 3 popup, 2 sảnh, danh sách) đều được nhận đúng. UID và tên người chơi đã được che trước khi đưa vào repo.
+  - Nút X được vẽ thêm ở chỗ khác với 3 cỡ khác nhau: tìm đúng chỗ.
+  - Chữ X có nét liền kề: bị bỏ qua. Sảnh bị làm tối như có popup: không bị nhận là sảnh.
+  - Chuỗi thao tác được thử bằng kịch bản: đóng từng popup, 5 popup liên tiếp có X cùng một chỗ, chờ popup hiện sau sảnh, popup không đóng được, màn đứng yên, màn tải kéo dài, game không hiện lên.
+  - Trên máy ảo Android, ảnh popup đang mờ cũng được đọc đúng.
+- Cần thêm quyền "thấy" gói Liên Quân (`<queries>`), vì Android 11+ ẩn các app khác.

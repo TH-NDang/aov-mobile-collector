@@ -1,6 +1,7 @@
 package vn.ndang.aovcollector
 
 import android.app.AlertDialog
+import android.content.Intent
 import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.res.Configuration
@@ -61,11 +62,13 @@ class CollectorService : AccessibilityService() {
     /** Progress line such as "Tướng 23/129 · 25:12 · còn ~1:30:00", with collection time excluding pauses. */
     private fun progress(m:Macro):String {
         val all=m.json.optString("collectionMode")=="all"; val heroes=m.json.optInt("heroCount",1)
-        val perHero=if(all) ((m.steps.length()-1)/heroes).coerceAtLeast(1) else m.steps.length()
+        // Steps before the first hero: the opening wait, and the way into the game when the run starts there.
+        val lead=if(m.json.optBoolean("openGame")) 2 else 1
+        val perHero=if(all) ((m.steps.length()-lead)/heroes).coerceAtLeast(1) else m.steps.length()
         val target=if(all) minOf(heroes,listTotal?:heroes) else 1
-        val total=if(all) 1+target*perHero else m.steps.length()
+        val total=if(all) lead+target*perHero else m.steps.length()
         val done=index.coerceIn(0,total)
-        val head=if(all) "Tướng ${minOf(target,(index-1).coerceAtLeast(0)/perHero+1)}/${if(listTotal==null&&heroes>=BuiltInMacros.ALL) "?" else target}"
+        val head=if(all) "Tướng ${minOf(target,(index-lead).coerceAtLeast(0)/perHero+1)}/${if(listTotal==null&&heroes>=BuiltInMacros.ALL) "?" else target}"
             else "${m.photoSteps.count { it<index }}/${m.photoSteps.size} ảnh"
         val t=elapsed(); val eta=if(done>=20&&t>60_000) " · còn ~"+clock(t*(total-done)/done) else ""
         return "$head · ${clock(t)}$eta"
@@ -91,7 +94,10 @@ class CollectorService : AccessibilityService() {
         }
         if(uiPrefs.getBoolean("panel",false)) handler.post { if(current===this && panel==null) showPanel() }
     }
-    private val awayCheck=Runnable { val p=foreground(); if(running&&p!=null&&p!=GAME&&p!=packageName) pause("Đã rời game (đang mở ${appName(p)}) — tạm dừng") }
+    private val awayCheck=Runnable { val p=foreground(); if(running&&!entering&&p!=null&&p!=GAME&&p!=packageName) pause("Đã rời game (đang mở ${appName(p)}) — tạm dừng") }
+    /** While the run opens the game itself ([GameEntry]), another app in front is expected. */
+    private var entering=false
+    private fun entryStep(m:Macro,i:Int)=i<m.steps.length()&&m.steps.getJSONObject(i).optString("type")=="enter"
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (running && event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val p = event.packageName?.toString()
@@ -322,13 +328,16 @@ class CollectorService : AccessibilityService() {
         val fast=option("Chạy nhanh: chờ ngắn hơn sau mỗi lần chạm (nên thử 2 tướng trước)","fast")
         val detailOnly=option("Chỉ chụp Chi tiết: bỏ ảnh Tóm tắt của nội tại và chiêu","detailOnly")
         val directSkills=option("Chuyển thẳng giữa các chiêu: bấm sang chiêu kế tiếp khi bảng chiêu còn mở, chỉ đóng sau chiêu cuối","directSkills")
+        // Only the list run can start from outside the game: a single hero needs its page opened by hand.
+        val openGame=if(batch) option("Tự mở game và vào Danh sách tướng: đóng popup sự kiện bằng nút X, rồi bấm Tướng ở sảnh","openGame") else null
         val shot=averageShot(); val known=uiPrefs.getInt("heroTotal",0).takeIf { it>0 }
         fun updateEstimate() {
             val asked=if(batch) field.text.toString().toIntOrNull()?.coerceIn(0,BuiltInMacros.ALL)?:0 else 1
             val heroes=if(asked>=BuiltInMacros.ALL) known?:130 else asked
             val photos=heroes*(if(detailOnly.isChecked) 6 else 10)
             val need=photos*shot; val free=filesDir.usableSpace
-            val seconds=(heroes*BuiltInMacros.secondsPerHero(batch,fast.isChecked,detailOnly.isChecked,directSkills.isChecked)).toLong()
+            // Logos, loading and popups take about a minute before the first hero.
+            val seconds=(heroes*BuiltInMacros.secondsPerHero(batch,fast.isChecked,detailOnly.isChecked,directSkills.isChecked)).toLong()+(if(openGame?.isChecked==true) 60 else 0)
             val who=when { !batch -> ""; asked>=BuiltInMacros.ALL -> if(known!=null) "Tất cả $heroes tướng · " else "Khoảng $heroes tướng · "; else -> "$heroes tướng · " }
             estimate.text="Ước tính: $who$photos ảnh · khoảng ${Format.duration(seconds)}\nCần khoảng ${Format.size(need)} · máy còn trống ${Format.size(free)}"+
                 (if(need>free-30L*1024*1024) "\nKhông đủ chỗ cho cả lượt: app sẽ dừng khi còn dưới 30 MB." else "")
@@ -339,7 +348,7 @@ class CollectorService : AccessibilityService() {
             override fun afterTextChanged(s:android.text.Editable?) { updateEstimate() }
             override fun beforeTextChanged(s:CharSequence?,a:Int,b:Int,c:Int) {}
             override fun onTextChanged(s:CharSequence?,a:Int,b:Int,c:Int) {} })
-        listOf(fast,detailOnly,directSkills).forEach { it.setOnCheckedChangeListener { _,_ -> updateEstimate() } }
+        listOfNotNull(fast,detailOnly,directSkills,openGame).forEach { it.setOnCheckedChangeListener { _,_ -> updateEstimate() } }
         body.addView(Ui.text(this,"Chọn tác vụ sẽ tạo lượt mới. Ảnh đã chụp vẫn giữ lại.",12f,Ui.muted))
         val formScroll=ScrollView(this).apply { addView(body) }
         val dialog=AlertDialog.Builder(this).setTitle(if(batch) "Danh sách tướng" else "Một tướng").setView(formScroll)
@@ -351,7 +360,8 @@ class CollectorService : AccessibilityService() {
                 require(count in 1..BuiltInMacros.ALL) { "Nhập số từ 1 đến ${BuiltInMacros.ALL}; ${BuiltInMacros.ALL} là lấy hết danh sách" }
                 if(batch) uiPrefs.edit().putInt("count",count).apply()
                 uiPrefs.edit().putBoolean("fast",fast.isChecked).putBoolean("detailOnly",detailOnly.isChecked).putBoolean("directSkills",directSkills.isChecked).apply()
-                if(selectMacro(BuiltInMacros.create(if(batch) "Danh sách tướng" else field.text.toString(),count,batch,fast.isChecked,detailOnly.isChecked,directSkills.isChecked))) dialog.dismiss()
+                if(openGame!=null) uiPrefs.edit().putBoolean("openGame",openGame.isChecked).apply()
+                if(selectMacro(BuiltInMacros.create(if(batch) "Danh sách tướng" else field.text.toString(),count,batch,fast.isChecked,detailOnly.isChecked,directSkills.isChecked,openGame?.isChecked==true))) dialog.dismiss()
             } catch(e:Exception) { field.error=e.message }
         }
     }
@@ -407,7 +417,9 @@ class CollectorService : AccessibilityService() {
         if(running || busy || manualBusy || activeDialog!=null || macroPicker!=null) return
         upgradeBuiltIn()
         try {
-            val m=readMacro(); if(!ready(m)) return
+            val m=readMacro()
+            val at=if(prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
+            if(!entryStep(m,at)&&!ready(m)) return
             macro=m
             stopped=prefs.getString("hash","")==m.hash && prefs.getBoolean("stopped",false)
             if(stopped) { status("Lượt đã kết thúc. Bấm Tạo lượt mới."); return }
@@ -434,11 +446,11 @@ class CollectorService : AccessibilityService() {
             if((mode!="single"&&mode!="all")||m.json.optInt("builtinVersion",1)==BuiltInMacros.VERSION) return
             val step=if(prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
             if(step>0&&step<m.steps.length()&&!prefs.getBoolean("stopped",false)) return
-            MacroStore.current(this).writeText(BuiltInMacros.create(m.json.optString("heroName",""),m.json.optInt("heroCount",1),mode=="all",m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills")))
+            MacroStore.current(this).writeText(BuiltInMacros.create(m.json.optString("heroName",""),m.json.optInt("heroCount",1),mode=="all",m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills"),m.json.optBoolean("openGame")))
             selectionCache=null
         } catch(e:Exception) { CrashLog.record(this,"Không nâng cấp được macro",e) }
     }
-    private fun pause(s:String) { val was=running; setRunning(false); save(); if(was) note("Tạm dừng: $s"); status(s) }
+    private fun pause(s:String) { val was=running; entering=false; setRunning(false); save(); if(was) note("Tạm dừng: $s"); status(s) }
     private fun stop() { setRunning(false); stopped=true; save(); note("Kết thúc lượt"); status("Đã kết thúc lượt · ảnh đã được giữ lại") }
     private fun save() {
         val m=macro ?: return
@@ -460,12 +472,13 @@ class CollectorService : AccessibilityService() {
         if(!running || token!=generation) return
         if(index>=m.steps.length()) { afterSaves { if(token==generation&&running) { setRunning(false); save(); note("Hoàn tất · ${clock(elapsed())}"); status("Đã chụp xong · ${m.photoSteps.size} ảnh · ${clock(elapsed())}") } }; return }
         val front=foreground()
-        if(front!=null&&front!=m.target) {
+        val opening=entryStep(m,index)
+        if(!opening&&front!=null&&front!=m.target) {
             // A notification or game booster can hold focus for a moment; only stop when another app stays in front.
             if(away<3) { handler.postDelayed({ next(token,away+1) },700); return }
             pause("Liên Quân không còn ở phía trước (đang mở ${appName(front)})"); return
         }
-        if(!ready(m)) return
+        if(!opening&&!ready(m)) return
         lastStatus=progress(m)
         refreshPanel()
         failure=null
@@ -473,7 +486,7 @@ class CollectorService : AccessibilityService() {
         var finished=false
         fun done(ok:Boolean,reason:String?=null) {
             if(finished || token!=generation) return
-            finished=true; busy=false
+            finished=true; busy=false; entering=false
             shield(false)
             if(!ok) { pause(reason?:failure?:"Không thực hiện được thao tác ${index+1}. Kiểm tra màn hình rồi tiếp tục."); return }
             index++; save()
@@ -489,11 +502,15 @@ class CollectorService : AccessibilityService() {
         try {
             val type=s.getString("type")
             // A step that never reports back must not leave the controller stuck on "Đang xử lý".
-            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; "pick" -> 300000L; else -> 10000L }
+            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; "pick" -> 300000L; "enter" -> GameEntry.LIMIT_MS+30000; else -> 10000L }
             handler.postDelayed({ if(!finished && token==generation) done(false,"Bước ${index+1} ($type) quá ${limit/1000} giây không xong. Kiểm tra màn hình rồi tiếp tục.") },limit)
             when(type) {
                 "wait" -> handler.postDelayed({ done(true) },s.getLong("ms"))
                 "back" -> done(performGlobalAction(GLOBAL_ACTION_BACK))
+                "enter" -> { entering=true; enterGame({ !finished && token==generation }) { outcome -> when(outcome) {
+                    is GameEntry.Outcome.Ready -> done(true)
+                    is GameEntry.Outcome.Failed -> done(false,outcome.reason)
+                } } }
                 // A failed screenshot is retried once; Android sometimes refuses one right after a tap.
                 "screenshot" -> { val name="%04d-%s".format(index+1,s.getString("name"))
                     capture(name,runId) { ok -> if(ok) done(true) else handler.postDelayed({ if(!finished&&token==generation) capture(name,runId) { done(it) } },1000) } }
@@ -594,6 +611,37 @@ class CollectorService : AccessibilityService() {
             catch(e:Exception) { CrashLog.record(this,"Không ghi được list.json",e) }
             finish(outcome)
         }.start()
+    }
+    /** Runs a [GameEntry] against the real screen: opens the game and goes through its popups to the hero list. */
+    private fun enterGame(alive:()->Boolean,finish:(GameEntry.Outcome)->Unit) {
+        val stamp="%04d".format(index+1)
+        val screen=object:GameEntry.Screen {
+            override val alive get()=alive()
+            override fun inFront()=foreground()==GAME
+            override fun launch():Boolean {
+                val intent=packageManager.getLaunchIntentForPackage(GAME)?:return false
+                return try { startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));true } catch(e:Exception) { CrashLog.record(this@CollectorService,"Không mở được Liên Quân",e);false }
+            }
+            override fun look(then:(GameEntry.Shot?)->Unit) {
+                grab { b ->
+                    if(b==null) return@grab then(null)
+                    try { io.execute {
+                        val reading=try { GameScreens.read(b.width,b.height) { y,row -> b.getPixels(row,0,b.width,0,y,b.width,1) } } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không đọc được màn hình game",e);null }
+                        handler.post { if(reading==null) { b.recycle();then(null) } else then(object:GameEntry.Shot {
+                            override val reading:GameScreens.Reading=reading
+                            override fun done(keep:String?) { if(keep!=null) store(b,runId,"$stamp-$keep") {} else b.recycle() }
+                        }) }
+                    } } catch(e:Exception) { b.recycle();then(null) }
+                }
+            }
+            override fun tap(x:Double,y:Double,then:(Boolean)->Unit) { touchGame(tapAt(x,y),true,then) }
+            override fun back(then:(Boolean)->Unit) { touchGame(tapAt(HeroGrid.BACK_X,HeroGrid.BACK_Y),true,then) }
+            override fun later(ms:Long,then:()->Unit) { handler.postDelayed(then,ms) }
+            override fun now()=SystemClock.elapsedRealtime()
+            override fun note(text:String) { this@CollectorService.note(text) }
+            override fun say(text:String) { lastStatus=text;refreshPanel() }
+        }
+        GameEntry(screen,finish).start()
     }
     private fun manualCapture() {
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }

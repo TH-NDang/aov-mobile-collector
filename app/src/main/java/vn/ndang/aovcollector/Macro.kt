@@ -25,6 +25,7 @@ class Macro(val raw: String) {
                 "screenshot" -> require(s.getString("name").matches(Regex("[a-zA-Z0-9_-]{1,64}"))) { "Tên ảnh không hợp lệ" }
                 "back" -> Unit
                 "pick" -> require(s.getInt("index") in 0..9999) { "pick: index từ 0 đến 9999" }
+                "enter" -> require(i==0) { "enter chỉ dùng ở bước đầu" }
                 else -> error("Bước ${i+1}: type không hỗ trợ")
             }
         }
@@ -42,10 +43,11 @@ object BuiltInMacros {
     /**
      * [fast] shortens the waits after taps (tab switches most); [detailOnly] skips the summary ("Tóm tắt")
      * shots of the passive and skills; [directSkills] taps the next skill icon while a skill panel is open,
-     * which switches the panel, and closes it only after the last skill. All stay off unless chosen, so the
-     * default steps do not change.
+     * which switches the panel, and closes it only after the last skill. [openGame], for the list only, starts with
+     * an "enter" step that opens the game and goes through its popups to the All-heroes list ([GameEntry]). All
+     * stay off unless chosen, so the default steps do not change.
      */
-    fun create(heroName:String, count:Int = 1, batch:Boolean = false, fast:Boolean = false, detailOnly:Boolean = false, directSkills:Boolean = false):String {
+    fun create(heroName:String, count:Int = 1, batch:Boolean = false, fast:Boolean = false, detailOnly:Boolean = false, directSkills:Boolean = false, openGame:Boolean = false):String {
         require(count in 1..ALL)
         val steps=org.json.JSONArray()
         val settle=if(fast) 600 else 900
@@ -67,7 +69,9 @@ object BuiltInMacros {
                 if(!directSkills||i==skillNames.lastIndex) tap(.60,.82)
             }
         }
-        waitFor(3000)
+        val entering=batch&&openGame
+        if(entering) steps.put(JSONObject().put("type","enter"))
+        waitFor(if(entering) 1000 else 3000)
         if(!batch) collect("hero") else for(i in 0 until count) {
             // "pick" scrolls the list by measured amounts and taps card i; the run ends early at the end of the list.
             steps.put(JSONObject().put("type","pick").put("index",i)); waitFor(if(fast) 2000 else 2700)
@@ -78,7 +82,7 @@ object BuiltInMacros {
         return JSONObject().put("name",if(batch) "batch-heroes" else "single-hero")
             .put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
             .put("collectionMode",if(batch) "all" else "single").put("heroName",safeName)
-            .put("heroCount",if(batch) count else 1).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills)
+            .put("heroCount",if(batch) count else 1).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills).put("openGame",entering)
             .put("builtinVersion",VERSION).put("steps",steps).toString(2)
     }
     /**

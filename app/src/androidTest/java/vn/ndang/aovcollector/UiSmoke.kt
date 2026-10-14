@@ -46,6 +46,12 @@ class UiSmoke:Instrumentation() {
             val qiLog=ArrayList<String>();val qiName=HeroNames.read(qi) { qiLog+=it };qi.recycle()
             File(targetContext.filesDir,"smoke").apply { mkdirs() }.resolve("ocr-qi.txt").writeText("$qiName\n"+qiLog.joinToString("\n"))
             check(qiName=="Qi") { "OCR read $qiName for Qi: ${qiLog.joinToString("; ")}" }
+            // The way into the game: a list run that opens the game starts with the entry step, and a popup shot on
+            // the user's phone, fading in, is read on Android as in the unit tests.
+            check(Macro(BuiltInMacros.create("",2,true,openGame=true)).steps.getJSONObject(0).getString("type")=="enter") { "Tự vào game should start with the entry step" }
+            val popup=context.assets.open("game-popup-fest.jpg").use { BitmapFactory.decodeStream(it) }
+            val seen=GameScreens.read(popup.width,popup.height) { y,row -> popup.getPixels(row,0,popup.width,0,y,popup.width,1) };popup.recycle()
+            check(seen.kind==GameScreens.Kind.POPUP&&Math.abs(seen.close!!.first-.913)<.01&&Math.abs(seen.close!!.second-.056)<.015) { "Popup read as ${seen.kind} ${seen.close}" }
             check(HeroNames.slug("Điêu Thuyền")=="dieu-thuyen")
             val m=Macro(BuiltInMacros.create(""));check(m.photoSteps.size==10)
             check(Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true)).photoSteps.size==6) { "Chỉ Chi tiết should keep overview, attributes and 4 details" }
