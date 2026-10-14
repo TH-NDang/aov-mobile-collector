@@ -458,3 +458,51 @@ Sau các popup quảng cáo, game có thể hiện thêm **popup giải đấu �
 - 19 màn vào game cũ vẫn ra đúng như trước.
 - Trên 176 ảnh khác (129 trang tướng, ảnh chiêu, sảnh, Cộng đồng, bảng xếp hạng, màn đăng nhập…), chỉ các popup thật có nút X: không nhận nhầm.
 
+## v0.5.2: thống kê không dừng sớm, chọn bảng, thời gian ước tính theo lượt trước, nút Dừng
+
+### Hai danh sách thống kê bị dừng sớm
+
+Trong ZIP bạn gửi, "Chỉ số · Đấu 5v5" dừng sau 4 trang và "Chỉ số · Đấu hạng (Tất cả)" dừng sau 5 trang, dù bảng còn nhiều tướng.
+- **Nguyên nhân:** app coi "kéo mà bảng không đổi" là hết danh sách. Trên máy bạn, có lần kéo bảng chưa đổi kịp (trang đang tải thêm dòng, hoặc ảnh chụp ra trước khi trang cuộn xong), nên app kết thúc sớm.
+- **Sửa:** khi một lần kéo không làm bảng đổi, app thử lại tới 3 lần:
+  1. chờ 1,5 giây rồi nhìn lại;
+  2. kéo lại;
+  3. kéo thêm lần nữa.
+  
+  Vẫn không đổi mới coi là hết danh sách. Mỗi lần thử được ghi vào `events.txt`. Ở cuối thật của danh sách, việc này tốn thêm khoảng 6 giây.
+
+### Chọn bảng muốn chụp
+
+Form **Thống kê tướng** giờ có ô chọn:
+- **Bảng:** Tỷ lệ thắng/pick/ban, Chỉ số mỗi trận.
+- **Chế độ:** Đấu hạng (Tất cả), Đấu 5v5, Đấu hạng (Tinh Anh trở lên).
+
+App chụp các tổ hợp đã tick, ví dụ chỉ Chỉ số × Đấu 5v5. Lựa chọn được nhớ cho lần sau. Mô tả tác vụ hiện "n/6 bảng".
+
+### Thời gian còn lại theo các lượt chạy trọn trước
+
+- **Lượt chạy từ đầu tới cuối không tạm dừng** (không bấm Tạm dừng, không lỗi, không bị tắt app) được ghi thời gian:
+  - số giây mỗi tướng (Danh sách, theo các tùy chọn Chạy nhanh / Chỉ Chi tiết / Chuyển thẳng chiêu);
+  - số giây một lượt Một tướng;
+  - số giây mỗi bảng Thống kê;
+  - thời gian vào game, ghi riêng.
+- Mỗi lượt trọn mới kéo con số đã lưu về một nửa phía nó, để một lượt bất thường không quyết định hết.
+- **Ước tính trong form chọn tác vụ** dùng các thời gian này khi có, kèm dòng "(theo lượt chạy trọn trước)".
+- **"còn ~…" trên bảng nổi:**
+  - Lúc đầu theo các lượt trước.
+  - Sau mỗi tướng, nghiêng dần về tốc độ của chính lượt đang chạy, và từ tướng thứ 10 trở đi chỉ theo lượt đang chạy.
+  - Thống kê tướng cũng hiện "còn ~…" khi đang chụp.
+
+### Nút Dừng
+
+Trước đây nút **Dừng** bấm được cả khi chưa chạy: nó đánh dấu lượt "đã kết thúc" dù chưa có gì, rồi bắt bấm Tạo lượt mới.
+- Giờ nút **mờ và không bấm được** khi chưa có lượt nào, hoặc lượt đã xong.
+- Nút chỉ bật khi lượt đang chạy, hoặc đang tạm dừng giữa chừng.
+
+### Kiểm tra
+
+- Kịch bản bảng bị kẹt 2 lần liên tiếp vẫn chụp đủ cả danh sách (6/6 trang). Trước đây sẽ dừng ở trang 3.
+- Chỉ chụp các bảng đã chọn.
+- Cách tính thời gian còn lại: theo lượt trước, pha dần, rồi theo lượt đang chạy.
+- Trên máy ảo: nút Dừng tắt khi chưa có lượt; macro thống kê giữ đúng các bảng đã chọn, macro cũ vẫn lấy đủ 6 bảng.
+

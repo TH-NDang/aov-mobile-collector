@@ -61,7 +61,8 @@ class RankingTest {
      * The game from the lobby to the table: taps move between pages, the table scrolls by [length] screens and
      * keeps its headings (and the switches above) only at the top unless [sticky].
      */
-    private class Web(var page:Page,var table:Table=Table.RATES,var mode:Mode=Mode.ALL,val length:Double=1.0,val sticky:Boolean=false,val cut:Int=Int.MAX_VALUE) : RankingReader.Screen {
+    private class Web(var page:Page,var table:Table=Table.RATES,var mode:Mode=Mode.ALL,val length:Double=1.0,val sticky:Boolean=false,val cut:Int=Int.MAX_VALUE,
+                      var stalls:Int=0) : RankingReader.Screen {
         var offset=0.0; var open=false; var looks=0
         val kept=ArrayList<String>(); val tapped=ArrayList<String>(); val finished=ArrayList<String>(); val pending=ArrayDeque<()->Unit>()
         var outcome:RankingReader.Outcome?=null
@@ -107,12 +108,13 @@ class RankingTest {
             pending.addLast { then(true) }
         }
         override fun drag(d:Double,fling:Boolean,then:(Boolean)->Unit) {
-            if(page==Page.RANKING) offset=if(d<0) maxOf(0.0,offset-3) else minOf(length,offset+d)
+            // A page loading more rows ignores [stalls] scrolls past its first screen, as on the user's phone.
+            if(page==Page.RANKING) offset=when { d<0 -> maxOf(0.0,offset-3); offset>.5&&stalls>0 -> { stalls--; offset } else -> minOf(length,offset+d) }
             pending.addLast { then(true) }
         }
         override fun later(ms:Long,then:()->Unit) { pending.addLast(then) }
         override fun finished(combo:String) { finished+=combo }
-        fun run(skip:Set<String> =emptySet()):Web { RankingReader(this,skip) { outcome=it }.start(); var guard=0
+        fun run(skip:Set<String> =emptySet(),wanted:List<RankScreens.Combo> =RankScreens.COMBOS):Web { RankingReader(this,skip,wanted) { outcome=it }.start(); var guard=0
             while(outcome==null&&looks<cut) { (pending.removeFirstOrNull()?:break).invoke(); check(++guard<100000) }; return this }
     }
 
@@ -145,5 +147,31 @@ class RankingTest {
     @Test fun stopsWhenThePauseCutsIt() {
         val web=Web(Page.RANKING,cut=6).run()
         assertNull(web.outcome); assertTrue(web.kept.size<=4)
+    }
+
+    @Test fun aScrollThatShowsNothingNewDoesNotEndTheList() {
+        // Two ignored scrolls in a row in each table, as when two lists ended a third of the way down on the phone.
+        val web=Web(Page.RANKING,length=2.0,stalls=2).run(wanted=listOf(RankScreens.Combo(Table.FIGURES,Mode.ALL)))
+        assertEquals(listOf("chi-so-dau-hang-tat-ca"),web.finished)
+        // 0, .4 … 2.0: six pages, the whole list.
+        assertEquals((1..6).map { "chi-so-dau-hang-tat-ca-%02d".format(it) },web.kept)
+    }
+    @Test fun takesOnlyTheChosenTables() {
+        val wanted=listOf(RankScreens.Combo(Table.RATES,Mode.ELITE),RankScreens.Combo(Table.FIGURES,Mode.FIVE))
+        val web=Web(Page.RANKING).run(wanted=wanted)
+        assertEquals(listOf("ty-le-dau-hang-tinh-anh","chi-so-dau-5v5"),web.finished)
+        assertEquals(8,(web.outcome as RankingReader.Outcome.Done).pages)
+    }
+    @Test fun estimatesFromEarlierCleanRunsThenFromThisOne() {
+        // Nothing done yet: the kept pace of earlier runs, 30 s a hero.
+        assertEquals(3000.0,RunTimes.remaining(100,0,0.0,30.0)!!,.001)
+        // Halfway to trusting this run after 5 heroes at 20 s.
+        assertEquals(95*25.0,RunTimes.remaining(95,5,100.0,30.0)!!,.001)
+        // After ten, this run's own pace alone; with no earlier run, its own from the first hero.
+        assertEquals(90*20.0,RunTimes.remaining(90,10,200.0,30.0)!!,.001)
+        assertEquals(99*20.0,RunTimes.remaining(99,1,20.0,null)!!,.001)
+        assertNull(RunTimes.remaining(100,0,0.0,null))
+        // A new clean run moves the kept time halfway.
+        assertEquals(25.0,RunTimes.blend(30.0,20.0),.001); assertEquals(20.0,RunTimes.blend(null,20.0),.001)
     }
 }

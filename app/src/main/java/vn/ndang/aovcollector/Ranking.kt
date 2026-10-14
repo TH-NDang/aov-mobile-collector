@@ -69,10 +69,11 @@ object RankScreens {
 /**
  * Goes from wherever it is started (lobby, "Tính năng khác", Cộng đồng, or the table itself) to "Bảng Phân Bậc
  * Tướng", then photographs both tables for each of the three kinds of match, scrolling to the end of the list each
- * time. [skip] holds the combinations an interrupted try of the same step already finished. All screen access goes
+ * time; or only the [wanted] ones. [skip] holds the combinations an interrupted try of the same step already finished. All screen access goes
  * through [Screen], so unit tests run this exact logic on scripted screens.
  */
-class RankingReader(private val screen:Screen,private val skip:Set<String> =emptySet(),private val finish:(Outcome)->Unit) {
+class RankingReader(private val screen:Screen,private val skip:Set<String> =emptySet(),private val wanted:List<RankScreens.Combo> =RankScreens.COMBOS,
+                     private val finish:(Outcome)->Unit) {
     sealed class Outcome { class Done(val pages:Int):Outcome(); class Failed(val reason:String):Outcome() }
     /** One screenshot: [words] only when asked for; call [done] once, with a name to keep it in the run or null. */
     interface Look { val words:List<GameScreens.Word>; val lobby:Boolean; val signature:IntArray; fun done(keep:String?) }
@@ -95,6 +96,8 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
         const val MAX_PAGES=80; const val MAX_FLINGS=40
         /** A scroll moves less than the visible rows, so consecutive photos overlap by a row or two. */
         const val SCROLL=.40
+        /** Looks and drags at a table that did not move before it counts as at its end. */
+        const val STILL_TRIES=3
     }
     private var ended=false; private var pages=0
     private val left=ArrayList<RankScreens.Combo>()
@@ -139,9 +142,9 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
     private fun ranking(l:Look) {
         val table=RankScreens.table(l.words); val mode=RankScreens.mode(RankScreens.modeButton(l.words))
         l.done(null)
-        val order=RankScreens.COMBOS.sortedBy { c -> (if(c.table==table) 0 else 2)+(if(c.mode==mode) 0 else 1) }
+        val order=wanted.sortedBy { c -> (if(c.table==table) 0 else 2)+(if(c.mode==mode) 0 else 1) }
         left.clear(); left.addAll(order.filter { it.slug !in skip })
-        screen.note("Bảng Phân Bậc Tướng: còn ${left.size}/${RankScreens.COMBOS.size} bảng")
+        screen.note("Bảng Phân Bậc Tướng: còn ${left.size}/${wanted.size} bảng")
         next()
     }
     private fun next() {
@@ -169,10 +172,20 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
         l.done(null)
         if(option!=null) tap(option.x,option.y,3000) { prepare(combo,tries+1) } else tap(button.x,button.y,1200) { prepare(combo,tries+1) }
     }
-    /** Photographs the table from where it is, scrolling until a scroll changes nothing: the end of the list. */
-    private fun scan(combo:RankScreens.Combo,page:Int,last:IntArray?):Unit = look(false) { l ->
+    /**
+     * Photographs the table from where it is, scrolling until scrolls change nothing: the end of the list. On the
+     * user's phone a scroll sometimes showed nothing new while the page loaded more rows, which ended two lists
+     * a third of the way down; so a still table is looked at again after a wait, then dragged twice more, before
+     * it counts as the end.
+     */
+    private fun scan(combo:RankScreens.Combo,page:Int,last:IntArray?,still:Int=0):Unit = look(false) { l ->
         if(last!=null&&RankScreens.same(l.signature,last)) {
-            l.done(null); screen.finished(combo.slug); left.remove(combo)
+            l.done(null)
+            if(still<STILL_TRIES) {
+                screen.note("${combo.label}: trang ${page-1} chưa đổi sau khi kéo, thử lại (${still+1}/$STILL_TRIES)")
+                return@look if(still==0) screen.later(1500) { scan(combo,page,last,1) } else screen.later(1500) { drag(SCROLL,false,1200) { scan(combo,page,last,still+1) } }
+            }
+            screen.finished(combo.slug); left.remove(combo)
             screen.note("${combo.label}: ${page-1} ảnh")
             return@look top(0,null) { next() }
         }

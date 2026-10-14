@@ -31,7 +31,9 @@ class Macro(val raw: String) {
                 "back" -> Unit
                 "pick" -> require(s.getInt("index") in 0..9999) { "pick: index từ 0 đến 9999" }
                 "enter" -> { require(i==0) { "enter chỉ dùng ở bước đầu" }; require(s.optString("to","list") in setOf("list","lobby")) { "enter: to là list hoặc lobby" } }
-                "ranking" -> Unit
+                "ranking" -> { val combos=s.optJSONArray("combos")
+                    if(combos!=null) { require(combos.length()>0) { "ranking: chọn ít nhất một bảng" }
+                        for(k in 0 until combos.length()) require(RankScreens.COMBOS.any { it.slug==combos.getString(k) }) { "ranking: bảng không hợp lệ" } } }
                 "skills" -> require(s.getString("prefix").matches(Regex("[a-zA-Z0-9_-]{1,40}"))) { "skills: prefix không hợp lệ" }
                 else -> error("Bước ${i+1}: type không hỗ trợ")
             }
@@ -88,18 +90,22 @@ object BuiltInMacros {
             .put("builtinVersion",VERSION).put("steps",steps).toString(2)
     }
     /**
-     * The hero statistics ([RankingReader]): with [openGame], the game is opened and left at the lobby first, as for
-     * the list ([checkAccount], [traceEntry] the same).
+     * The hero statistics ([RankingReader]) for the tables named in [combos] ([RankScreens.Combo.slug]): with
+     * [openGame], the game is opened and left at the lobby first, as for the list ([checkAccount], [traceEntry] the same).
      */
-    fun ranking(openGame:Boolean=false,checkAccount:Boolean=false,traceEntry:Boolean=true):String {
+    fun ranking(openGame:Boolean=false,checkAccount:Boolean=false,traceEntry:Boolean=true,combos:List<String> =RankScreens.COMBOS.map { it.slug }):String {
+        require(combos.isNotEmpty()) { "Chọn ít nhất một bảng" }
         val steps=org.json.JSONArray()
         if(openGame) steps.put(JSONObject().put("type","enter").put("to","lobby"))
         steps.put(JSONObject().put("type","wait").put("ms",if(openGame) 1000 else 3000))
-        steps.put(JSONObject().put("type","ranking"))
+        steps.put(JSONObject().put("type","ranking").put("combos",org.json.JSONArray(combos)))
         return JSONObject().put("name","hero-ranking").put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
             .put("collectionMode","ranking").put("heroName","").put("openGame",openGame).put("checkAccount",openGame&&checkAccount).put("traceEntry",traceEntry)
-            .put("builtinVersion",VERSION).put("steps",steps).toString(2)
+            .put("rankCombos",org.json.JSONArray(combos)).put("builtinVersion",VERSION).put("steps",steps).toString(2)
     }
+    /** The tables a ranking macro asks for, all when it names none. */
+    fun rankCombos(json:JSONObject):List<RankScreens.Combo> { val names=json.optJSONArray("rankCombos")?:json.optJSONArray("combos")?:return RankScreens.COMBOS
+        val wanted=(0 until names.length()).map { names.getString(it) }.toSet(); return RankScreens.COMBOS.filter { it.slug in wanted }.ifEmpty { RankScreens.COMBOS } }
     /**
      * Rough seconds per hero, read from the steps themselves: every wait, plus typical times measured for a tap
      * (hiding the panel first), a screenshot and finding the card in the list.

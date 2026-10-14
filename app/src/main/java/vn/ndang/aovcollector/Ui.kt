@@ -57,7 +57,7 @@ object MacroStore {
     fun saved(c:Context):List<File> = File(c.filesDir,"macros").listFiles()?.filter { it.extension=="json" }?.sortedByDescending { it.lastModified() }.orEmpty()
     fun title(m:Macro):String = when(m.json.optString("collectionMode")) { "single" -> "Một tướng"; "all" -> "Danh sách tướng"; "ranking" -> "Thống kê tướng"; else -> "Macro đã nhập" }
     fun description(m:Macro):String = when(m.json.optString("collectionMode")) {
-        "ranking" -> "Bảng xếp hạng tướng · 2 bảng × 3 chế độ"+(if(m.json.optBoolean("openGame")) " · tự vào game" else "")
+        "ranking" -> "Bảng xếp hạng tướng · ${BuiltInMacros.rankCombos(m.json).size}/${RankScreens.COMBOS.size} bảng"+(if(m.json.optBoolean("openGame")) " · tự vào game" else "")
         "single","all" -> base(m)+(if(m.json.optBoolean("fast")) " · nhanh" else "")+(if(m.json.optBoolean("detailOnly")) " · chỉ Chi tiết" else "")+(if(m.json.optBoolean("directSkills")) " · chuyển thẳng chiêu" else "")+(if(m.json.optBoolean("openGame")) " · tự vào game" else "")
         else -> m.name
     }

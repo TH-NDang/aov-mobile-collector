@@ -95,6 +95,9 @@ class UiSmoke:Instrumentation() {
             val direct=Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true,directSkills=true))
             check(direct.photoTotal==6&&(0 until direct.steps.length()).map { direct.steps.getJSONObject(it) }.single { it.getString("type")=="skills" }.getBoolean("directSkills")) { "Chuyển thẳng chiêu should reach the skills step" }
             check(Macro(BuiltInMacros.create("",11,true)).steps.toString().contains("\"pick\""))
+            // Thống kê tướng takes the chosen tables only; one saved before the choice existed takes all six.
+            check(BuiltInMacros.rankCombos(Macro(BuiltInMacros.ranking(combos=listOf("ty-le-dau-5v5","chi-so-dau-hang-tinh-anh"))).json).map { it.slug }==listOf("ty-le-dau-5v5","chi-so-dau-hang-tinh-anh"))
+            check(BuiltInMacros.rankCombos(JSONObject(BuiltInMacros.ranking()).apply { remove("rankCombos") }).size==6)
             check(BuiltInMacros.secondsPerHero(true,false,false,false) in 30.0..45.0&&BuiltInMacros.secondsPerHero(true,true,true,true) in 15.0..25.0) { "Time estimate per hero is off" }
             val run=File(targetContext.filesDir,"captures/smoke-demo").apply { mkdirs() }
             File(run,"run.json").writeText(JSONObject().put("collectionMode","all").put("label","Buổi thu thập mẫu").put("state","completed").put("updatedAt",System.currentTimeMillis()).toString())
@@ -176,6 +179,8 @@ class UiSmoke:Instrumentation() {
             click("Chọn tác vụ")
             check(Macro(MacroStore.current(targetContext).readText()).json.optString("heroName")=="Violet")
             snap("04-panel")
+            // No run yet: Dừng has nothing to end.
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Dừng") }.firstOrNull { it.text?.toString()=="Dừng" }?.isEnabled==false) { "Dừng is enabled before any run" }
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1500);snap("05-landscape")
             // v0.3.1 regression: a macro tap under the floating panel pressed its hidden buttons
             // (Đóng removed the panel mid-run) instead of reaching the game.
