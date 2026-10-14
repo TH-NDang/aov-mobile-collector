@@ -6,6 +6,7 @@ import android.app.UiAutomation
 import android.content.Intent
 import android.content.pm.ActivityInfo
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -39,6 +40,12 @@ class UiSmoke:Instrumentation() {
             canvas.drawText("Eland'orr",1770f,385f,Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.rgb(248,226,170);textSize=58f })
             val name=HeroNames.read(image)
             check(name!=null&&HeroNames.slug(name)=="elandorr") { "OCR returned $name" }
+            // Qi's name region from a real run, where ML Kit read nothing.
+            val qi=Bitmap.createBitmap(2400,1080,Bitmap.Config.ARGB_8888)
+            context.assets.open("qi-name.png").use { BitmapFactory.decodeStream(it) }.let { Canvas(qi).apply { drawColor(Color.rgb(20,30,50)) }.drawBitmap(it,1752f,318f,null);it.recycle() }
+            val qiLog=ArrayList<String>();val qiName=HeroNames.read(qi) { qiLog+=it };qi.recycle()
+            File(targetContext.filesDir,"smoke").apply { mkdirs() }.resolve("ocr-qi.txt").writeText("$qiName\n"+qiLog.joinToString("\n"))
+            check(qiName=="Qi") { "OCR read $qiName for Qi: ${qiLog.joinToString("; ")}" }
             check(HeroNames.slug("Điêu Thuyền")=="dieu-thuyen")
             val m=Macro(BuiltInMacros.create(""));check(m.photoSteps.size==10)
             check(Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true)).photoSteps.size==6) { "Chỉ Chi tiết should keep overview, attributes and 4 details" }
@@ -52,6 +59,20 @@ class UiSmoke:Instrumentation() {
             File(hero,"hero.json").writeText(JSONObject().put("name","Eland’orr").put("nameSource","ocr").toString())
             for(name in listOf("0004-hero-overview","0008-hero-attributes","0012-hero-skill-1-summary")) File(hero,"$name.png").outputStream().use { image.compress(Bitmap.CompressFormat.PNG,100,it) };image.recycle()
             MacroStore.current(targetContext).writeText(BuiltInMacros.create(""))
+            // A ZIP job left to the background: the foreground service shows its progress, Hủy cancels it, and with no
+            // screen in front its result comes as a notification.
+            val notifications=targetContext.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            fun waitFor(what:String,test:()->Boolean) { val until=SystemClock.uptimeMillis()+5000;while(!test()) { check(SystemClock.uptimeMillis()<until) { what };SystemClock.sleep(100) } }
+            FileJob.start(targetContext,"Đang lưu ZIP","Lưu ZIP")
+            FileJob.report(50,100,"File 1/2","run/hero/0001-hero-001-overview.png")
+            waitFor("No progress notification") { notifications.activeNotifications.any { it.id==FileJob.NOTIFICATION&&it.notification.extras.getInt(android.app.Notification.EXTRA_PROGRESS)==500 } }
+            var jobService:FileJobService?=null;waitFor("The ZIP job did not enter the foreground") { runOnMainSync { jobService=FileJobService.current };jobService!=null }
+            targetContext.startService(Intent(targetContext,FileJobService::class.java).setAction(FileJobService.CANCEL))
+            waitFor("Hủy in the notification did not cancel the job") { FileJob.cancelled }
+            FileJob.finish("Đã hủy lưu ZIP; file ZIP dở đã được xóa.")
+            waitFor("No result notification") { notifications.activeNotifications.let { all -> all.none { it.id==FileJob.NOTIFICATION }&&all.any { it.notification.extras.getString(android.app.Notification.EXTRA_TITLE)=="Lưu ZIP" } } }
+            runOnMainSync { jobService=FileJobService.current };check(jobService==null&&!CollectorService.libraryBusy) { "The ZIP job did not stop" }
+            notifications.cancelAll()
             val activity=startActivitySync(Intent(targetContext,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             val dest=File(targetContext.filesDir,"smoke").apply { mkdirs() }
             fun snap(n:String) { waitForIdleSync();SystemClock.sleep(700);val b=automation.takeScreenshot()?:error("No screenshot");File(dest,"$n.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG,100,it) };b.recycle() }
