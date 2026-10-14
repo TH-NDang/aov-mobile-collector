@@ -14,7 +14,7 @@ class Macro(val raw: String) {
     fun photos(i:Int):Int = steps.getJSONObject(i).let { s -> when(s.getString("type")) { "screenshot" -> 1; "skills" -> if(s.optBoolean("detailOnly")) 4 else 8; else -> 0 } }
     val photoTotal:Int by lazy { (0 until steps.length()).sumOf { photos(it) } }
     /** True when the photo count can grow at run time, as with a "skills" step. */
-    val photosVary:Boolean by lazy { (0 until steps.length()).any { steps.getJSONObject(it).getString("type") in setOf("skills","ranking") } }
+    val photosVary:Boolean by lazy { (0 until steps.length()).any { steps.getJSONObject(it).getString("type") in setOf("skills","ranking","board") } }
     val hash = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray()).joinToString("") { "%02x".format(it) }
     init {
         require(name.matches(Regex("[a-zA-Z0-9_-]{1,64}"))) { "Tên macro chỉ dùng chữ, số, _ và -" }
@@ -31,6 +31,10 @@ class Macro(val raw: String) {
                 "back" -> Unit
                 "pick" -> require(s.getInt("index") in 0..9999) { "pick: index từ 0 đến 9999" }
                 "enter" -> { require(i==0) { "enter chỉ dùng ở bước đầu" }; require(s.optString("to","list") in setOf("list","lobby")) { "enter: to là list hoặc lobby" } }
+                "board" -> { require(s.getInt("heroes") in 1..BuiltInMacros.ALL) { "board: số tướng từ 1 đến ${BuiltInMacros.ALL}" }
+                    require(s.getInt("pages") in 1..999) { "board: số trang từ 1 đến 999" }
+                    val tabs=s.getJSONArray("tabs"); require(tabs.length()>0) { "board: chọn ít nhất một bảng" }
+                    for(k in 0 until tabs.length()) require(BoardScreens.Tab.values().any { it.slug==tabs.getString(k) }) { "board: bảng không hợp lệ" } }
                 "ranking" -> { val combos=s.optJSONArray("combos")
                     if(combos!=null) { require(combos.length()>0) { "ranking: chọn ít nhất một bảng" }
                         for(k in 0 until combos.length()) require(RankScreens.COMBOS.any { it.slug==combos.getString(k) }) { "ranking: bảng không hợp lệ" } } }
@@ -103,6 +107,26 @@ object BuiltInMacros {
             .put("collectionMode","ranking").put("heroName","").put("openGame",openGame).put("checkAccount",openGame&&checkAccount).put("traceEntry",traceEntry)
             .put("rankCombos",org.json.JSONArray(combos)).put("builtinVersion",VERSION).put("steps",steps).toString(2)
     }
+    /** Pages of each ranking list asked for "to its end". */
+    const val ALL_PAGES=999
+    /**
+     * The players' ranking of each hero, "Chiến khu" ([BoardReader]): [heroes] of "Chọn tướng" in order, the
+     * [tabs] chosen ([BoardScreens.Tab.slug]), [pages] screens of each list. With [openGame], the game is opened
+     * and left at the lobby first, as for the list ([checkAccount], [traceEntry] the same).
+     */
+    fun board(openGame:Boolean=false,checkAccount:Boolean=false,traceEntry:Boolean=true,heroes:Int=ALL,tabs:List<String> =BoardScreens.Tab.values().map { it.slug },pages:Int=1):String {
+        require(heroes in 1..ALL&&pages in 1..ALL_PAGES&&tabs.isNotEmpty())
+        val steps=org.json.JSONArray()
+        if(openGame) steps.put(JSONObject().put("type","enter").put("to","lobby"))
+        steps.put(JSONObject().put("type","wait").put("ms",if(openGame) 1000 else 3000))
+        steps.put(JSONObject().put("type","board").put("heroes",heroes).put("tabs",org.json.JSONArray(tabs)).put("pages",pages))
+        return JSONObject().put("name","hero-board").put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
+            .put("collectionMode","board").put("heroName","").put("heroCount",heroes).put("boardTabs",org.json.JSONArray(tabs)).put("boardPages",pages)
+            .put("openGame",openGame).put("checkAccount",openGame&&checkAccount).put("traceEntry",traceEntry)
+            .put("builtinVersion",VERSION).put("steps",steps).toString(2)
+    }
+    fun boardTabs(json:JSONObject):List<BoardScreens.Tab> { val names=json.optJSONArray("boardTabs")?:json.optJSONArray("tabs")?:return BoardScreens.Tab.values().toList()
+        val wanted=(0 until names.length()).map { names.getString(it) }.toSet(); return BoardScreens.Tab.values().filter { it.slug in wanted }.ifEmpty { BoardScreens.Tab.values().toList() } }
     /** The tables a ranking macro asks for, all when it names none. */
     fun rankCombos(json:JSONObject):List<RankScreens.Combo> { val names=json.optJSONArray("rankCombos")?:json.optJSONArray("combos")?:return RankScreens.COMBOS
         val wanted=(0 until names.length()).map { names.getString(it) }.toSet(); return RankScreens.COMBOS.filter { it.slug in wanted }.ifEmpty { RankScreens.COMBOS } }

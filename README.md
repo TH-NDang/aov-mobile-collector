@@ -506,3 +506,72 @@ Trước đây nút **Dừng** bấm được cả khi chưa chạy: nó đánh 
 - Cách tính thời gian còn lại: theo lượt trước, pha dần, rồi theo lượt đang chạy.
 - Trên máy ảo: nút Dừng tắt khi chưa có lượt; macro thống kê giữ đúng các bảng đã chọn, macro cũ vẫn lấy đủ 6 bảng.
 
+## v0.6.0: Chiến khu – bảng xếp hạng người chơi theo tướng
+
+**Tác vụ mới trong danh sách macro: "Chiến khu (BXH người chơi theo tướng)".**
+
+### Đường đi
+
+1. Ở sảnh, bấm **Đấu hạng**, rồi bấm **Chiến khu** ở cột trái.
+2. **Lần đầu vào một mùa mới**, game hiện phần xem lại mùa. App bấm đúng các chữ trên từng màn:
+   - "Ấn mở l.sử mùa";
+   - "Bước kế" (2 màn);
+   - "Mở mùa mới";
+   - "Ấn màn hình để tiếp tục".
+   
+   Khi đang chiếu trailer (không có chữ), app chờ.
+3. **Tài khoản chưa có khu vực** sẽ gặp hộp "Vào chiến khu". App chọn từng ô:
+   - **Việt Nam → Miền Trung → Đắk Lắk.** Danh sách tỉnh dài, nên app cuộn tối đa 3 lần để tìm Đắk Lắk. Không thấy thì app chọn tỉnh đầu tiên (như bạn nói, chọn tỉnh nào cũng được).
+   - Rồi bấm **Xác nhận**. Không bao giờ bấm "Chưa chỉnh".
+
+App bắt đầu được từ bất kỳ màn nào trên đường đi này.
+
+### Mỗi tướng
+
+1. App bấm nút **↻ dưới thẻ tướng** để mở "Chọn tướng". Tướng được lấy theo thứ tự trong lưới, **bắt đầu từ tướng ở vị trí đầu**.
+   - Mỗi lần mở, app vuốt lưới lên đầu.
+   - Rồi kéo chậm xuống, mỗi lần 2 hàng. Sau mỗi lần kéo, app đo lại vị trí các hàng thẻ trên ảnh, để bấm đúng ô.
+   - Hết thẻ ở ô kế tiếp là hết danh sách tướng.
+2. **Tên tướng** được đọc trên thẻ (ví dụ "Flowborn", "Valhein") và dùng làm tên thư mục.
+3. App chụp các bảng đã chọn:
+   - 4 tab: **Tỉnh** (ví dụ Đắk Lắk), **Miền**, **Quốc gia**, **Toàn máy chủ**. Mỗi tab chụp trang đầu (top 4 và hạng của bạn), hoặc kéo hết danh sách nếu chọn.
+   - **Số 1 máy chủ:** mở trang này (nút dưới cùng bên trái), chụp người mạnh nhất mỗi miền của tướng, rồi quay lại. Nút "Đổi tướng" trên trang đó không bao giờ bị bấm.
+   - Nếu trang Số 1 máy chủ hiện tướng khác tướng đang chọn, app ghi lại trong `events.txt`.
+
+### Ảnh và tùy chọn
+
+- **Tên ảnh:** `0003-hero-001-tinh-01.png`, `…-may-chu-01`, `…-so-1-may-chu-01`, nằm trong thư mục của từng tướng. Trong app, ảnh hiện "Tỉnh · trang 1"…
+- **Tùy chọn:**
+  - số tướng (2, 11, hoặc tất cả);
+  - các bảng muốn chụp;
+  - "Kéo hết danh sách mỗi bảng";
+  - Tự mở game (dừng ở sảnh), Kiểm tra UID, Lưu ảnh từng bước.
+- **Thời gian ước tính** theo các lượt chạy trọn trước, như các tác vụ khác.
+
+### An toàn
+
+**Nút "Đấu hạng" trong trang Đấu hạng bắt đầu tìm trận, và không bao giờ bị bấm.** Nút Đấu hạng ở sảnh nằm gần đúng chỗ đó, nên app chỉ bấm khi chắc chắn đang ở sảnh:
+- các biểu tượng thanh dưới của sảnh có mặt;
+- đọc được chữ "Túi đồ" / "Trang bị" ở dưới cùng;
+- không có chữ nào của trang Đấu hạng.
+
+### Tạm dừng
+
+Tạm dừng ngắt ngay. Khi Tiếp tục, app tìm lại đường vào Chiến khu và làm tiếp từ tướng chưa xong.
+
+### Kiểm tra
+
+- **Kịch bản đi trọn đường:** từ sảnh, qua các màn mùa mới và hộp chọn khu vực (tìm Đắk Lắk sau khi cuộn), tới 10 tướng × 5 bảng.
+  - Không bao giờ chạm vào nút Đấu hạng của trang Đấu hạng, "Chưa chỉnh" hay "Đổi tướng".
+- **Lưới tướng:**
+  - Lưới 30 tướng bị để giữa chừng từ trước: chọn đúng 30 tướng theo thứ tự.
+  - Dừng đúng số tướng yêu cầu, và làm tiếp đúng từ tướng chưa xong.
+  - Kéo hết danh sách.
+  - Bị Tạm dừng giữa chừng.
+- **Trên ảnh thật:**
+  - đo đúng các hàng thẻ trong Chọn tướng (cả khi đã cuộn);
+  - trang Đấu hạng không bao giờ bị nhận là sảnh;
+  - nhận ra danh sách đã cuộn.
+- **Trên máy ảo CI:** ML Kit đọc các ảnh bạn gửi (tên và ảnh người chơi đã làm mờ, UID đã che) và nhận đúng từng màn: Đấu hạng, 7 màn mùa mới, 4 bước chọn khu vực, Chiến khu (đọc ra tên Flowborn, Valhein), Chọn tướng, Số 1 máy chủ, trailer.
+- **Chưa chạy trên máy thật.** Lần đầu nên thử 2 tướng, rồi xem `events.txt` và ảnh của lượt.
+

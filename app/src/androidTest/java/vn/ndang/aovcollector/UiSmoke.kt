@@ -75,6 +75,25 @@ class UiSmoke:Instrumentation() {
             for((list,table) in listOf(rates to RankScreens.Table.RATES,figures to RankScreens.Table.FIGURES)) {
                 check(RankScreens.page(list,false)==RankScreens.Page.RANKING&&RankScreens.table(list)==table&&RankScreens.mode(RankScreens.modeButton(list))==RankScreens.Mode.ALL) {
                     "Ranking read as ${RankScreens.page(list,false)} ${RankScreens.table(list)} ${RankScreens.mode(RankScreens.modeButton(list))}" } }
+            // Chiến khu, read by ML Kit on the user's screenshots (kept at half size, the size ML Kit reads them at).
+            val boardLog=StringBuilder()
+            fun board(name:String):List<GameScreens.Word> { val small=context.assets.open("board-$name.jpg").use { BitmapFactory.decodeStream(it) }
+                val b=Bitmap.createScaledBitmap(small,small.width*2,small.height*2,true); small.recycle()
+                return GameText.words(b).also { b.recycle();boardLog.append("$name\n").append(it.joinToString("\n") { w -> "  %.3f %.3f %s".format(w.x,w.y,w.text) }).append("\n") } }
+            val boardPages=listOf("ranked","ranked-new","season-memory","season-data","season-heroes","season-open","season-first","season-title","season-reward",
+                "region","region-country","region-area","region-province","board-province","board-country","board-valhein","picker","trailer1","top").associateWith { board(it) }
+            File(targetContext.filesDir,"smoke").resolve("ocr-board.txt").writeText(boardLog.toString())
+            fun boardPage(name:String)=BoardScreens.page(boardPages.getValue(name),false)
+            for(name in listOf("ranked","ranked-new")) check(boardPage(name)==BoardScreens.Page.RANKED&&BoardScreens.chienKhu(boardPages.getValue(name))!=null) { "$name read as ${boardPage(name)}" }
+            for(name in listOf("season-memory","season-data","season-heroes","season-open","season-first","season-title","season-reward")) check(boardPage(name)==BoardScreens.Page.SEASON) { "$name read as ${boardPage(name)}" }
+            for(name in listOf("region","region-country","region-area","region-province")) check(boardPage(name)==BoardScreens.Page.REGION) { "$name read as ${boardPage(name)}" }
+            check(BoardScreens.region(boardPages.getValue("region-area")).let { it.open==1&&it.options.any { o -> o.plain.contains("mientrung") } }) { "Area list read as ${BoardScreens.region(boardPages.getValue("region-area")).options}" }
+            for(name in listOf("board-province","board-country")) check(boardPage(name)==BoardScreens.Page.BOARD&&BoardScreens.hero(boardPages.getValue(name))?.let { HeroNames.slug(it) }=="flowborn") { "$name read as ${boardPage(name)} ${BoardScreens.hero(boardPages.getValue(name))}" }
+            check(boardPage("picker")==BoardScreens.Page.PICKER) { "Chọn tướng read as ${boardPage("picker")}" }
+            check(boardPage("board-valhein")==BoardScreens.Page.BOARD&&BoardScreens.hero(boardPages.getValue("board-valhein"))?.let { HeroNames.slug(it) }=="valhein") { "Valhein's ranking read as ${boardPage("board-valhein")} ${BoardScreens.hero(boardPages.getValue("board-valhein"))}" }
+            check(boardPage("top")==BoardScreens.Page.TOP) { "Số 1 máy chủ read as ${boardPage("top")}" }
+            check(boardPage("trailer1")==BoardScreens.Page.OTHER) { "Trailer read as ${boardPage("trailer1")}" }
+            check(BuiltInMacros.boardTabs(Macro(BuiltInMacros.board(heroes=2,tabs=listOf("tinh","may-chu"),pages=1)).json).map { it.slug }==listOf("tinh","may-chu"))
             val modeButton=RankScreens.modeButton(modes)
             check(modeButton!=null&&RankScreens.option(modes,modeButton,RankScreens.Mode.ELITE)?.let { Math.abs(it.y-.444)<.03 }==true&&RankScreens.option(modes,modeButton,RankScreens.Mode.FIVE)?.let { Math.abs(it.y-.378)<.03 }==true) { "Drop-down read as $modeButton" }
             // The faint UID line at the bottom of game screens, drawn as the game draws it.
