@@ -93,7 +93,9 @@ class UiSmoke:Instrumentation() {
             check(boardPage("board-valhein")==BoardScreens.Page.BOARD&&BoardScreens.hero(boardPages.getValue("board-valhein"))?.let { HeroNames.slug(it) }=="valhein") { "Valhein's ranking read as ${boardPage("board-valhein")} ${BoardScreens.hero(boardPages.getValue("board-valhein"))}" }
             check(boardPage("top")==BoardScreens.Page.TOP) { "Số 1 máy chủ read as ${boardPage("top")}" }
             check(boardPage("trailer1")==BoardScreens.Page.OTHER) { "Trailer read as ${boardPage("trailer1")}" }
-            check(BuiltInMacros.boardTabs(Macro(BuiltInMacros.board(heroes=2,tabs=listOf("tinh","may-chu"),pages=1)).json).map { it.slug }==listOf("tinh","may-chu"))
+            // Việt Nam's top three and "Số 1 máy chủ" by default; the whole server's top ten in four screens when chosen.
+            check(BuiltInMacros.boardWants(Macro(BuiltInMacros.board(heroes=2)).json)==BoardScreens.DEFAULT)
+            check(BuiltInMacros.boardWants(Macro(BuiltInMacros.board(heroes=2,wanted=listOf(BoardScreens.Want(BoardScreens.Tab.SERVER,10)))).json).single().pages==4)
             val modeButton=RankScreens.modeButton(modes)
             check(modeButton!=null&&RankScreens.option(modes,modeButton,RankScreens.Mode.ELITE)?.let { Math.abs(it.y-.444)<.03 }==true&&RankScreens.option(modes,modeButton,RankScreens.Mode.FIVE)?.let { Math.abs(it.y-.378)<.03 }==true) { "Drop-down read as $modeButton" }
             // The faint UID line at the bottom of game screens, drawn as the game draws it.

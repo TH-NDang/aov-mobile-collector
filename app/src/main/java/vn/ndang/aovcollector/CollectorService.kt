@@ -102,7 +102,9 @@ class CollectorService : AccessibilityService() {
         }?:return ""
         return " · còn ~"+clock(((rest+entry)*1000).toLong())
     }
-    private fun boardKey(m:Macro)="time:board:${BuiltInMacros.boardTabs(m.json).size}:${m.json.optInt("boardPages",1)}"
+    private fun boardKey(m:Macro)=boardKey(BuiltInMacros.boardWants(m.json))
+    /** Kept times of Chiến khu runs are per hero, for the same tabs and depths. */
+    private fun boardKey(wanted:List<BoardScreens.Want>)="time:board:"+wanted.joinToString(",") { "${it.tab.slug}${it.top}" }
     private fun heroKey(m:Macro)=RunTimes.hero(m.json.optString("collectionMode")=="all",m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills"))
     /** Time the way into the game took in this run, from its start; part of no hero. */
     private var entryMs=0L
@@ -483,25 +485,32 @@ class CollectorService : AccessibilityService() {
         listOf(2 to "2 tướng",11 to "11 tướng",BuiltInMacros.ALL to "Tất cả").forEach { (n,text) -> quick.addView(Ui.button(this,text) { count.setText(n.toString()) },LinearLayout.LayoutParams(0,dp(40),1f).apply { marginEnd=dp(4) }) };body.addView(quick)
         val estimate=Ui.text(this,"",13f,Ui.ink,true).also { body.addView(it) }
         fun check(text:String,on:Boolean)=CheckBox(this).apply { this.text=text;textSize=14f;isChecked=on }.also { body.addView(it) }
-        val saved=uiPrefs.getString("boardTabs",null)?.split(',')?.toSet()
-        body.addView(Ui.text(this,"Bảng (tab trên đầu Chiến khu)",13f,Ui.muted,true))
-        val tabs=BoardScreens.Tab.values().associateWith { t -> check(when(t) { BoardScreens.Tab.PROVINCE -> "Tỉnh (ví dụ Đắk Lắk)"; BoardScreens.Tab.AREA -> "Miền (ví dụ Miền Trung)"; BoardScreens.Tab.COUNTRY -> "Quốc gia"; BoardScreens.Tab.SERVER -> "Toàn máy chủ"; BoardScreens.Tab.TOP -> "Số 1 máy chủ (người mạnh nhất mỗi miền)" },saved==null||t.slug in saved) }
-        val deep=check("Kéo hết danh sách mỗi bảng (bỏ tick: chỉ chụp trang đầu, top 4 và hạng của bạn)",uiPrefs.getBoolean("boardDeep",false))
+        // Việt Nam's top three and "Số 1 máy chủ" unless chosen otherwise last time; the others when chosen.
+        val saved=uiPrefs.getString("boardWants",null)?.split(',')?.map { it.substringBefore(':') }?.toSet()?:BoardScreens.DEFAULT.map { it.tab.slug }.toSet()
+        body.addView(Ui.text(this,"Bảng cần chụp",13f,Ui.muted,true))
+        val order=listOf(BoardScreens.Tab.COUNTRY,BoardScreens.Tab.TOP,BoardScreens.Tab.SERVER,BoardScreens.Tab.PROVINCE,BoardScreens.Tab.AREA)
+        val tabs=order.associateWith { t -> check(when(t) {
+            BoardScreens.Tab.COUNTRY -> "Việt Nam (quốc gia) · top 3"
+            BoardScreens.Tab.TOP -> "Số 1 máy chủ (người mạnh nhất mỗi miền)"
+            BoardScreens.Tab.SERVER -> "Toàn máy chủ · ít nhất top 10 (kéo 4 màn)"
+            BoardScreens.Tab.PROVINCE -> "Tỉnh (ví dụ Đắk Lắk) · top 3"
+            BoardScreens.Tab.AREA -> "Miền (ví dụ Miền Trung) · top 3" },t.slug in saved) }
+        val deep=check("Kéo hết danh sách các bảng đã chọn (lâu hơn nhiều)",uiPrefs.getBoolean("boardDeep",false))
         val openGame=check("Tự mở game và vào sảnh: đóng game còn chạy, đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện",uiPrefs.getBoolean("boardOpenGame",false))
         val savedUid=Accounts.uid(this)
         val checkAccount=check(if(savedUid!=null) "Kiểm tra UID là tài khoản test ($savedUid)" else "Kiểm tra UID tài khoản test (lưu tài khoản ở mục Tài khoản trong app trước)",uiPrefs.getBoolean("checkAccount",false)).apply { if(savedUid==null) { isChecked=false;isEnabled=false } }
         val traceEntry=check("Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)",uiPrefs.getBoolean("traceEntry",true))
         fun follow() { checkAccount.isEnabled=openGame.isChecked&&savedUid!=null; traceEntry.isEnabled=openGame.isChecked }
-        fun chosen()=BoardScreens.Tab.values().filter { tabs.getValue(it).isChecked }
+        fun chosen()=order.filter { tabs.getValue(it).isChecked }.map { BoardScreens.Want(it,if(deep.isChecked&&it!=BoardScreens.Tab.TOP) BoardScreens.ALL else BoardScreens.defaultTop(it)) }
         fun updateEstimate() {
             val asked=count.text.toString().toIntOrNull()?.coerceIn(0,BuiltInMacros.ALL)?:0
             val heroes=if(asked>=BuiltInMacros.ALL) 130 else asked; val n=chosen().size
             if(n==0||asked==0) { estimate.text="Chọn ít nhất một bảng và một tướng.";estimate.setTextColor(Ui.danger);return }
             // A hero: about 8 s to choose it, then 3 s a tab and 3.5 s a screen; a whole list about 12 screens.
-            val pages=if(deep.isChecked) 12 else 1
-            val kept=RunTimes.get(uiPrefs,"time:board:$n:${if(deep.isChecked) BuiltInMacros.ALL_PAGES else 1}")
-            val seconds=heroes*(kept?:(8.0+n*(3.0+pages*3.5)))+(if(openGame.isChecked) RunTimes.get(uiPrefs,RunTimes.ENTRY)?:60.0 else 20.0)
-            val photos=heroes*n*pages
+            val pages=chosen().sumOf { if(it.pages>=BoardScreens.ALL) 12 else it.pages }
+            val kept=RunTimes.get(uiPrefs,boardKey(chosen()))
+            val seconds=heroes*(kept?:(8.0+n*3.0+pages*3.5))+(if(openGame.isChecked) RunTimes.get(uiPrefs,RunTimes.ENTRY)?:60.0 else 20.0)
+            val photos=heroes*pages
             estimate.text="Ước tính: "+(if(asked>=BuiltInMacros.ALL) "khoảng " else "")+"$heroes tướng · khoảng $photos ảnh · khoảng ${Format.duration(seconds.toLong())}"+(if(kept!=null) " (theo lượt chạy trọn trước)" else "")+
                 "\nCần khoảng ${Format.size(photos*averageShot())} · máy còn trống ${Format.size(filesDir.usableSpace)}"
             estimate.setTextColor(Ui.ink)
@@ -520,11 +529,11 @@ class CollectorService : AccessibilityService() {
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             val heroes=count.text.toString().toIntOrNull()?:0
             if(heroes !in 1..BuiltInMacros.ALL) { count.error="Nhập số từ 1 đến ${BuiltInMacros.ALL}; ${BuiltInMacros.ALL} là lấy hết";return@setOnClickListener }
-            val chosenTabs=chosen().map { it.slug }
-            if(chosenTabs.isEmpty()) { status("Chọn ít nhất một bảng");return@setOnClickListener }
-            uiPrefs.edit().putInt("boardCount",heroes).putString("boardTabs",chosenTabs.joinToString(",")).putBoolean("boardDeep",deep.isChecked)
+            val wanted=chosen()
+            if(wanted.isEmpty()) { status("Chọn ít nhất một bảng");return@setOnClickListener }
+            uiPrefs.edit().putInt("boardCount",heroes).putString("boardWants",wanted.joinToString(",") { "${it.tab.slug}:${it.top}" }).putBoolean("boardDeep",deep.isChecked)
                 .putBoolean("boardOpenGame",openGame.isChecked).putBoolean("checkAccount",checkAccount.isChecked).putBoolean("traceEntry",traceEntry.isChecked).apply()
-            if(selectMacro(BuiltInMacros.board(openGame.isChecked,checkAccount.isChecked&&checkAccount.isEnabled,traceEntry.isChecked,heroes,chosenTabs,if(deep.isChecked) BuiltInMacros.ALL_PAGES else 1))) dialog.dismiss()
+            if(selectMacro(BuiltInMacros.board(openGame.isChecked,checkAccount.isChecked&&checkAccount.isEnabled,traceEntry.isChecked,heroes,wanted))) dialog.dismiss()
         }
     }
     /** Mean size of the screenshots saved on this phone, which depends on its screen and the game's art; 1.5 MB before any. */
@@ -611,7 +620,7 @@ class CollectorService : AccessibilityService() {
             val step=if(prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
             if(step>0&&step<m.steps.length()&&!prefs.getBoolean("stopped",false)) return
             if(mode=="board") MacroStore.current(this).writeText(BuiltInMacros.board(m.json.optBoolean("openGame"),m.json.optBoolean("checkAccount"),m.json.optBoolean("traceEntry",true),
-                m.json.optInt("heroCount",BuiltInMacros.ALL),BuiltInMacros.boardTabs(m.json).map { it.slug },m.json.optInt("boardPages",1)))
+                m.json.optInt("heroCount",BuiltInMacros.ALL),BuiltInMacros.boardWants(m.json)))
             else if(mode=="ranking") MacroStore.current(this).writeText(BuiltInMacros.ranking(m.json.optBoolean("openGame"),m.json.optBoolean("checkAccount"),m.json.optBoolean("traceEntry",true),BuiltInMacros.rankCombos(m.json).map { it.slug }))
             else MacroStore.current(this).writeText(BuiltInMacros.create(m.json.optString("heroName",""),m.json.optInt("heroCount",1),mode=="all",m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills"),m.json.optBoolean("openGame"),m.json.optBoolean("checkAccount"),m.json.optBoolean("traceEntry",true)))
             selectionCache=null
@@ -918,7 +927,7 @@ class CollectorService : AccessibilityService() {
             override fun hero(index:Int,name:String?) { boardNames["hero-%03d".format(index+1)]=name }
             override fun finished(index:Int) { boardNext=key to index+1 }
         }
-        BoardReader(screen,s.getInt("heroes"),BuiltInMacros.boardTabs(JSONObject().put("tabs",s.getJSONArray("tabs"))),s.getInt("pages"),first,finish).start()
+        BoardReader(screen,s.getInt("heroes"),BuiltInMacros.boardWants(s),first,finish).start()
     }
     /** The next hero of the board step last started, by run and step, for a try of it after a pause. */
     private var boardNext:Pair<String,Int>?=null

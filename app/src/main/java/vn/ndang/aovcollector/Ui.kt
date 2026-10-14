@@ -58,7 +58,7 @@ object MacroStore {
     fun title(m:Macro):String = when(m.json.optString("collectionMode")) { "single" -> "Một tướng"; "all" -> "Danh sách tướng"; "ranking" -> "Thống kê tướng"; "board" -> "Chiến khu"; else -> "Macro đã nhập" }
     fun description(m:Macro):String = when(m.json.optString("collectionMode")) {
         "board" -> "BXH người chơi · "+(if(m.json.optInt("heroCount",1)>=BuiltInMacros.ALL) "tất cả tướng" else "${m.json.optInt("heroCount",1)} tướng")+
-            " · ${BuiltInMacros.boardTabs(m.json).size} bảng · "+(if(m.json.optInt("boardPages",1)>=BuiltInMacros.ALL_PAGES) "kéo hết" else "${m.json.optInt("boardPages",1)} trang")+(if(m.json.optBoolean("openGame")) " · tự vào game" else "")
+            " · "+BuiltInMacros.boardWants(m.json).joinToString(", ") { w -> w.tab.label+when { w.tab==BoardScreens.Tab.TOP -> ""; w.top>=BoardScreens.ALL -> " (hết)"; else -> " top ${w.top}" } }+(if(m.json.optBoolean("openGame")) " · tự vào game" else "")
         "ranking" -> "Bảng xếp hạng tướng · ${BuiltInMacros.rankCombos(m.json).size}/${RankScreens.COMBOS.size} bảng"+(if(m.json.optBoolean("openGame")) " · tự vào game" else "")
         "single","all" -> base(m)+(if(m.json.optBoolean("fast")) " · nhanh" else "")+(if(m.json.optBoolean("detailOnly")) " · chỉ Chi tiết" else "")+(if(m.json.optBoolean("directSkills")) " · chuyển thẳng chiêu" else "")+(if(m.json.optBoolean("openGame")) " · tự vào game" else "")
         else -> m.name

@@ -158,14 +158,15 @@ class BoardTest {
         override fun later(ms:Long,then:()->Unit) { if(page==Page.SEASON&&season[seasonAt].first.isEmpty()) seasonAt++; pending.addLast(then) }
         override fun hero(index:Int,name:String?) { names[index]=name }
         override fun finished(index:Int) { finished+=index }
-        fun run(heroesWanted:Int=300,tabs:List<Tab> =Tab.values().toList(),pages:Int=1,first:Int=0):Game {
-            BoardReader(this,heroesWanted,tabs,pages,first) { outcome=it }.start(); var guard=0
+        fun run(heroesWanted:Int=300,wanted:List<BoardScreens.Want> =Tab.values().map { BoardScreens.Want(it,3) },first:Int=0):Game {
+            BoardReader(this,heroesWanted,wanted,first) { outcome=it }.start(); var guard=0
             while(outcome==null&&looks<cut) { (pending.removeFirstOrNull()?:break).invoke(); check(++guard<200000) }; return this
         }
     }
 
     @Test fun goesFromTheLobbyThroughTheSeasonAndTheRegionToEveryHerosRanking() {
-        val game=Game(seasons=true,regionSet=false,heroes=10).run(pages=2)
+        // Top five: two screens a tab.
+        val game=Game(seasons=true,regionSet=false,heroes=10).run(wanted=Tab.values().map { BoardScreens.Want(it,5) })
         assertEquals(10,(game.outcome as BoardReader.Outcome.Done).heroes)
         assertEquals((0 until 10).toList(),game.chosen); assertEquals((0 until 10).toList(),game.finished)
         // Every tab of every hero, two screens each, and its "Số 1 máy chủ".
@@ -179,22 +180,31 @@ class BoardTest {
     }
     @Test fun scrollsTheGridToEachHeroInTurn() {
         // 30 heroes in four rows, the grid left scrolled part way by an earlier visit.
-        val game=Game(page=Page.BOARD,heroes=30,gridScroll=.2).run(tabs=listOf(Tab.SERVER))
+        val game=Game(page=Page.BOARD,heroes=30,gridScroll=.2).run(wanted=listOf(BoardScreens.Want(Tab.SERVER,3)))
         assertEquals((0 until 30).toList(),game.chosen)
         assertEquals(30,game.kept.size); assertEquals("hero-030-may-chu-01",game.kept.last())
     }
     @Test fun stopsAtTheHeroCountAskedAndResumesAfterTheLastDone() {
-        assertEquals(listOf(0,1),Game(page=Page.BOARD,heroes=30).run(heroesWanted=2,tabs=listOf(Tab.PROVINCE)).chosen)
-        val resumed=Game(page=Page.RANKED,heroes=30).run(heroesWanted=12,tabs=listOf(Tab.PROVINCE),first=9)
+        assertEquals(listOf(0,1),Game(page=Page.BOARD,heroes=30).run(heroesWanted=2,wanted=listOf(BoardScreens.Want(Tab.PROVINCE,3))).chosen)
+        val resumed=Game(page=Page.RANKED,heroes=30).run(heroesWanted=12,wanted=listOf(BoardScreens.Want(Tab.PROVINCE,3)),first=9)
         assertEquals(listOf(9,10,11),resumed.chosen)
     }
     @Test fun scrollsEachListToItsEnd() {
         // 999 pages asked: down to the end, 1.0 screen below the first at .36 a scroll.
-        val game=Game(page=Page.BOARD,heroes=1,length=1.0).run(tabs=listOf(Tab.COUNTRY),pages=999)
+        val game=Game(page=Page.BOARD,heroes=1,length=1.0).run(wanted=listOf(BoardScreens.Want(Tab.COUNTRY,BoardScreens.ALL)))
         assertEquals(listOf("hero-001-quoc-gia-01","hero-001-quoc-gia-02","hero-001-quoc-gia-03","hero-001-quoc-gia-04"),game.kept)
     }
     @Test fun stopsWhenThePauseCutsIt() {
         val game=Game(page=Page.BOARD,heroes=30,cut=12).run()
         assertNull(game.outcome); assertTrue(game.chosen.size<=2)
+    }
+    @Test fun takesVietNamsTopThreeAndTheServersTopTenWhenAsked() {
+        // By default: Việt Nam's first screen (four players) and "Số 1 máy chủ".
+        val game=Game(page=Page.BOARD,heroes=2,length=3.0).run(wanted=BoardScreens.DEFAULT)
+        assertEquals(listOf("hero-001-quoc-gia-01","hero-001-so-1-may-chu-01","hero-002-quoc-gia-01","hero-002-so-1-may-chu-01"),game.kept)
+        // The whole server's top ten: four screens, the list scrolled three times.
+        val server=Game(page=Page.BOARD,heroes=1,length=3.0).run(wanted=listOf(BoardScreens.Want(Tab.SERVER,10)))
+        assertEquals((1..4).map { "hero-001-may-chu-%02d".format(it) },server.kept)
+        assertEquals(listOf(1,1,2,4),listOf(3,4,5,10).map { BoardScreens.Want(Tab.SERVER,it).pages })
     }
 }

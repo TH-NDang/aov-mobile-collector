@@ -533,18 +533,21 @@ App bắt đầu được từ bất kỳ màn nào trên đường đi này.
    - Rồi kéo chậm xuống, mỗi lần 2 hàng. Sau mỗi lần kéo, app đo lại vị trí các hàng thẻ trên ảnh, để bấm đúng ô.
    - Hết thẻ ở ô kế tiếp là hết danh sách tướng.
 2. **Tên tướng** được đọc trên thẻ (ví dụ "Flowborn", "Valhein") và dùng làm tên thư mục.
-3. App chụp các bảng đã chọn:
-   - 4 tab: **Tỉnh** (ví dụ Đắk Lắk), **Miền**, **Quốc gia**, **Toàn máy chủ**. Mỗi tab chụp trang đầu (top 4 và hạng của bạn), hoặc kéo hết danh sách nếu chọn.
-   - **Số 1 máy chủ:** mở trang này (nút dưới cùng bên trái), chụp người mạnh nhất mỗi miền của tướng, rồi quay lại. Nút "Đổi tướng" trên trang đó không bao giờ bị bấm.
-   - Nếu trang Số 1 máy chủ hiện tướng khác tướng đang chọn, app ghi lại trong `events.txt`.
+3. App chụp các bảng đã chọn. **Mặc định, theo yêu cầu của bạn:**
+   - **Việt Nam · top 3:** màn đầu của tab Việt Nam, đã hiện 4 người đầu và hạng của bạn.
+   - **Số 1 máy chủ:** mở trang này (nút dưới cùng bên trái), chụp người mạnh nhất mỗi miền của tướng, rồi quay lại. Nút "Đổi tướng" trên trang đó không bao giờ bị bấm. Nếu trang này hiện tướng khác tướng đang chọn, app ghi lại trong `events.txt`.
+   
+   **Tùy chọn, mặc định tắt:**
+   - **Toàn máy chủ · ít nhất top 10:** chụp 4 màn, kéo danh sách 3 lần. Màn đầu có 4 người, mỗi lần kéo thêm hơn 2 người, nên 4 màn được khoảng 11–12 người.
+   - **Tỉnh · top 3**, **Miền · top 3**.
+   - **Kéo hết danh sách** các bảng đã chọn.
 
 ### Ảnh và tùy chọn
 
 - **Tên ảnh:** `0003-hero-001-tinh-01.png`, `…-may-chu-01`, `…-so-1-may-chu-01`, nằm trong thư mục của từng tướng. Trong app, ảnh hiện "Tỉnh · trang 1"…
 - **Tùy chọn:**
   - số tướng (2, 11, hoặc tất cả);
-  - các bảng muốn chụp;
-  - "Kéo hết danh sách mỗi bảng";
+  - các bảng muốn chụp (như trên);
   - Tự mở game (dừng ở sảnh), Kiểm tra UID, Lưu ảnh từng bước.
 - **Thời gian ước tính** theo các lượt chạy trọn trước, như các tác vụ khác.
 
@@ -562,6 +565,8 @@ Tạm dừng ngắt ngay. Khi Tiếp tục, app tìm lại đường vào Chiế
 ### Kiểm tra
 
 - **Kịch bản đi trọn đường:** từ sảnh, qua các màn mùa mới và hộp chọn khu vực (tìm Đắk Lắk sau khi cuộn), tới 10 tướng × 5 bảng.
+  - Mặc định chỉ chụp Việt Nam (1 màn) và Số 1 máy chủ.
+  - Toàn máy chủ top 10 là 4 màn.
   - Không bao giờ chạm vào nút Đấu hạng của trang Đấu hạng, "Chưa chỉnh" hay "Đổi tướng".
 - **Lưới tướng:**
   - Lưới 30 tướng bị để giữa chừng từ trước: chọn đúng 30 tướng theo thứ tự.

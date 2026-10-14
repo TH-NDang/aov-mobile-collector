@@ -21,6 +21,15 @@ object BoardScreens {
         TOP("so-1-may-chu","Số 1 máy chủ",.215,.911)
     }
     const val TAB_Y=.1456
+    /**
+     * A tab to photograph down to its [top] players ([ALL] for the whole list). The first screen shows four; each
+     * scroll brings a little over two more, so ten take four screens.
+     */
+    data class Want(val tab:Tab,val top:Int) { val pages get()=if(top>=ALL) ALL else 1+maxOf(0,top-4).let { (it+1)/2 } }
+    const val ALL=999
+    /** As the user asked: Việt Nam's top three and "Số 1 máy chủ"; the whole server's top ten when chosen. */
+    val DEFAULT=listOf(Want(Tab.COUNTRY,3),Want(Tab.TOP,1))
+    fun defaultTop(tab:Tab)=if(tab==Tab.SERVER) 10 else if(tab==Tab.TOP) 1 else 3
     /** The back arrow of "Số 1 máy chủ", top left. */
     const val TOP_BACK_X=.095; const val TOP_BACK_Y=.058
     /** The lobby's big "Đấu hạng" button, used when its stylised letters are not read. */
@@ -117,12 +126,13 @@ object BoardScreens {
 /**
  * Goes from wherever it is started on the way (lobby, the season's review, the ranked page, the region dialog)
  * to "Chiến khu", then photographs the ranking of each hero of "Chọn tướng" in order, from hero [first], for the
- * [tabs] chosen, [pages] screens of each (scrolling down the list; at most to its end). Taps only what it means
+ * tabs [wanted], each down to its top players (scrolling down the list; at most to its end). Taps only what it means
  * to: never the ranked page's own "Đấu hạng", which would start a match. All screen access goes through
  * [Screen], so unit tests run this exact logic on scripted screens.
  */
-class BoardReader(private val screen:Screen,private val heroes:Int,private val tabs:List<BoardScreens.Tab>,private val pages:Int,
+class BoardReader(private val screen:Screen,private val heroes:Int,private val wanted:List<BoardScreens.Want>,
                   private val first:Int=0,private val finish:(Outcome)->Unit) {
+    private val tabs=wanted.map { it.tab }
     sealed class Outcome { class Done(val heroes:Int):Outcome(); class Failed(val reason:String):Outcome() }
     /**
      * One screenshot: [words] only when asked for; [rows] the bands of the "Chọn tướng" grid and [card] whether a
@@ -315,7 +325,7 @@ class BoardReader(private val screen:Screen,private val heroes:Int,private val t
             else -> { l.done(null); if(tries<3) screen.later(1500) { back(t,name,tries+1) } else { steps=0; navigate() } }
         }
     }
-    /** Photographs the list from its top, [pages] screens at most, scrolling until a scroll changes nothing. */
+    /** Photographs the list from its top, the screens its top players take, scrolling until a scroll changes nothing. */
     private fun scan(t:Int,name:String?,page:Int,last:IntArray?,still:Int):Unit = look(false) { l ->
         val tab=tabs[t]
         if(last!=null&&BoardScreens.same(l.signature,last)) {
@@ -324,7 +334,7 @@ class BoardReader(private val screen:Screen,private val heroes:Int,private val t
             return@look tab(t+1,name)
         }
         l.done("hero-%03d-%s-%02d".format(index+1,tab.slug,page))
-        if(page>=pages) return@look tab(t+1,name)
+        if(page>=wanted[t].pages) return@look tab(t+1,name)
         drag(LIST_X,LIST_FROM,LIST_TO,false,1200) { scan(t,name,page+1,l.signature,0) }
     }
 }
