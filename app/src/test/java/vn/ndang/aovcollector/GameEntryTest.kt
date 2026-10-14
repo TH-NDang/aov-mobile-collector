@@ -124,14 +124,16 @@ class GameEntryTest {
 
     /** A scripted game: each look returns the next reading; time moves with every wait. */
     /** A scripted game: each look returns the next reading (the last one again at the end); time moves with every wait. */
-    private class Script(val readings:List<GameScreens.Reading?>,val front:Boolean=false,val canLaunch:Boolean=true,val uid:String?=null,val signs:Boolean=true):GameEntry.Screen {
-        var time=0L; var next=0; var launches=0; var backs=0; var signIns=0
+    private class Script(val readings:List<GameScreens.Reading?>,val canLaunch:Boolean=true,val uid:String?=null,val signs:Boolean=true,
+                         val quitting:GameCloser.Result=GameCloser.Result.NOT_RUNNING):GameEntry.Screen {
+        var time=0L; var next=0; var launches=0; var backs=0; var signIns=0; var quits=0
+        val notes=ArrayList<String>()
         val taps=ArrayList<Pair<Double,Double>>(); val kept=ArrayList<String>(); val pending=ArrayDeque<()->Unit>()
         /** What the run recorded at each step, with "+" when the screenshot was kept with it. */
         val recorded=ArrayList<String>()
         var outcome:GameEntry.Outcome?=null
         override val alive get()=outcome==null
-        override fun inFront()=front
+        override fun quit(then:(GameCloser.Result)->Unit) { check(launches==0) { "quit after launch" }; quits++; then(quitting) }
         override fun launch():Boolean { launches++; return canLaunch }
         override fun look(words:Boolean,uid:Boolean,then:(GameEntry.Shot?)->Unit) {
             val r=readings[minOf(next++,readings.size-1)]
@@ -145,7 +147,7 @@ class GameEntryTest {
         override fun signIn():Boolean { signIns++; return signs }
         override fun later(ms:Long,then:()->Unit) { time+=ms; pending.addLast(then) }
         override fun now()=time
-        override fun note(text:String) {}
+        override fun note(text:String) { notes.add(text) }
         override fun say(text:String) {}
         fun run():GameEntry.Outcome { GameEntry(this,uid) { outcome=it }.start(); var guard=0
             while(outcome==null) { pending.removeFirstOrNull()?.invoke()?:error("stuck"); check(++guard<10000) }; return outcome!! }
@@ -169,15 +171,20 @@ class GameEntryTest {
         assertEquals(0,game.backs)
     }
 
-    @Test fun doesNotOpenTheGameAgainWhenItIsInFront() {
-        val game=Script(listOf(at(GameScreens.Kind.LIST)),front=true)
+    @Test fun endsTheGameLeftRunningBeforeOpeningIt() {
+        // Still in the recent apps, the game would come back wherever it was left: it is ended first, then opened.
+        val game=Script(listOf(at(GameScreens.Kind.LIST)),quitting=GameCloser.Result.CLOSED)
         assertTrue(game.run() is GameEntry.Outcome.Ready)
-        assertEquals(0,game.launches)
+        assertEquals(1,game.quits); assertEquals(1,game.launches)
+        assertTrue(game.notes.first().startsWith("Đã buộc dừng"))
+        // Settings may not show the button: the game is opened as before.
+        val anyway=Script(listOf(at(GameScreens.Kind.LIST)),quitting=GameCloser.Result.NO_BUTTON)
+        assertTrue(anyway.run() is GameEntry.Outcome.Ready); assertEquals(1,anyway.launches)
     }
 
     @Test fun waitsForAPopupThatAppearsAfterTheLobby() {
         val popup=GameScreens.Kind.POPUP; val lobby=GameScreens.Kind.LOBBY
-        val game=Script(listOf(at(lobby),at(popup,x1),at(popup,x1),at(lobby),at(lobby),at(GameScreens.Kind.LIST)),front=true)
+        val game=Script(listOf(at(lobby),at(popup,x1),at(popup,x1),at(lobby),at(lobby),at(GameScreens.Kind.LIST)))
         assertTrue(game.run() is GameEntry.Outcome.Ready)
         assertEquals(listOf(x1,heroes),game.taps)
     }
@@ -186,13 +193,13 @@ class GameEntryTest {
         // As on the user's phone: every popup puts its X at (.913, .056), and the next one shows as soon as one closes.
         val popups=(1..5).flatMap { listOf(at(GameScreens.Kind.POPUP,x1,look=it*20),at(GameScreens.Kind.POPUP,x1,look=it*20)) }
         val lobby=at(GameScreens.Kind.LOBBY)
-        val game=Script(popups+listOf(lobby,lobby,at(GameScreens.Kind.LIST)),front=true)
+        val game=Script(popups+listOf(lobby,lobby,at(GameScreens.Kind.LIST)))
         assertTrue(game.run() is GameEntry.Outcome.Ready)
         assertEquals(List(5) { x1 }+listOf(heroes),game.taps)
     }
 
     @Test fun stopsAtAPopupThatDoesNotClose() {
-        val game=Script(listOf(at(GameScreens.Kind.POPUP,x1)),front=true)
+        val game=Script(listOf(at(GameScreens.Kind.POPUP,x1)))
         val outcome=game.run()
         assertTrue(outcome is GameEntry.Outcome.Failed)
         assertEquals(GameEntry.MAX_SAME_CLOSE,game.taps.size)
@@ -200,7 +207,7 @@ class GameEntryTest {
     }
 
     @Test fun stopsOnAScreenItDoesNotKnowThatStandsStill() {
-        val game=Script(listOf(at(other,look=20)),front=true)
+        val game=Script(listOf(at(other,look=20)))
         val outcome=game.run()
         assertTrue(outcome is GameEntry.Outcome.Failed)
         assertTrue(game.time in GameEntry.STILL_MS..GameEntry.STILL_MS+10_000)
@@ -210,7 +217,7 @@ class GameEntryTest {
 
     @Test fun keepsWaitingWhileTheLoadingScreenChanges() {
         val loading=(0 until 200).map { at(other,look=it%2*10) }
-        val game=Script(loading+at(GameScreens.Kind.LIST),front=true)
+        val game=Script(loading+at(GameScreens.Kind.LIST))
         assertTrue(game.run() is GameEntry.Outcome.Failed)
         // Waited the whole limit, past the still-screen limit, without touching anything.
         assertTrue(game.time>GameEntry.LIMIT_MS)
@@ -218,7 +225,7 @@ class GameEntryTest {
     }
 
     @Test fun leavesAnotherGamePageByItsBackArrow() {
-        val game=Script(listOf(at(GameScreens.Kind.HERO_PAGE),at(GameScreens.Kind.LIST)),front=true)
+        val game=Script(listOf(at(GameScreens.Kind.HERO_PAGE),at(GameScreens.Kind.LIST)))
         assertTrue(game.run() is GameEntry.Outcome.Ready)
         assertEquals(1,game.backs)
     }
@@ -254,7 +261,7 @@ class GameEntryTest {
     }
 
     @Test fun goesOnWhenTheAccountIsTheTestAccount() {
-        val game=Script(listOf(at(lobby,uid="17514483308299377"),at(lobby,uid="17514483308299377"),at(listed)),front=true,uid="17514483308299377")
+        val game=Script(listOf(at(lobby,uid="17514483308299377"),at(lobby,uid="17514483308299377"),at(listed)),uid="17514483308299377")
         assertTrue(game.run() is GameEntry.Outcome.Ready)
         assertEquals(listOf(heroes),game.taps)
     }
@@ -265,7 +272,7 @@ class GameEntryTest {
         val confirm=at(GameScreens.Kind.POPUP,.8 to .2,words=listOf(word("Bạn có chắc muốn đăng xuất?",.5,.45),word("Hủy",.4,.7),word("Xác nhận",.6,.7)))
         val form=at(GameScreens.Kind.FORM,words=listOf(word("Mật khẩu",.1,.5),word("Quên mật khẩu?",.87,.62)))
         val game=Script(listOf(at(lobby,uid=other),at(lobby,uid=other),settings,confirm,at(GameScreens.Kind.OTHER,look=5),
-            at(GameScreens.Kind.LOGIN,tap=garena),form,at(GameScreens.Kind.OTHER,look=60),at(lobby,uid=test),at(lobby,uid=test),at(listed)),front=true,uid=test)
+            at(GameScreens.Kind.LOGIN,tap=garena),form,at(GameScreens.Kind.OTHER,look=60),at(lobby,uid=test),at(lobby,uid=test),at(listed)),uid=test)
         assertTrue(game.run() is GameEntry.Outcome.Ready)
         assertEquals(listOf(GameScreens.SETTINGS_X to GameScreens.SETTINGS_Y,.12 to .86,.6 to .7,garena,heroes),game.taps)
         assertEquals(1,game.signIns)
@@ -277,7 +284,7 @@ class GameEntryTest {
         val test="17514483308299377"
         val profile=at(GameScreens.Kind.PROFILE,words=listOf(word("Thông tin kiện tướng",.21,.056),word("UID",.35,.45)))
         val box=at(GameScreens.Kind.UID_DIALOG,.72 to .266,words=listOf(word("UID của bạn là",.5,.43),word(test,.5,.5)))
-        val game=Script(listOf(at(lobby),at(lobby),at(lobby),at(lobby),profile,box,profile,at(lobby),at(lobby),at(listed)),front=true,uid=test)
+        val game=Script(listOf(at(lobby),at(lobby),at(lobby),at(lobby),profile,box,profile,at(lobby),at(lobby),at(listed)),uid=test)
         assertTrue(game.run() is GameEntry.Outcome.Ready)
         assertEquals(listOf(GameScreens.AVATAR_X to GameScreens.AVATAR_Y,.35 to .45,.72 to .266,heroes),game.taps)
         assertEquals(1,game.backs)
@@ -289,7 +296,7 @@ class GameEntryTest {
         val settings=at(GameScreens.Kind.POPUP,.9 to .1,words=listOf(word("Đăng xuất",.12,.86)))
         val confirm=at(GameScreens.Kind.POPUP,.8 to .2,words=listOf(word("Xác nhận",.6,.7)))
         val game=Script(listOf(at(lobby,uid=other),at(lobby,uid=other),settings,confirm,at(GameScreens.Kind.LOGIN,tap=garena),
-            at(lobby,uid=other),at(lobby,uid=other)),front=true,uid="17514483308299377")
+            at(lobby,uid=other),at(lobby,uid=other)),uid="17514483308299377")
         assertTrue(game.run() is GameEntry.Outcome.Failed)
         assertEquals(listOf("entry-uid"),game.kept)
     }
@@ -297,7 +304,7 @@ class GameEntryTest {
     @Test fun doesNotTypeIntoAGarenaPageItDidNotAskFor() {
         // Without a test account to check, the Garena page means the player has to log in by hand.
         val form=at(GameScreens.Kind.FORM,words=listOf(word("Mật khẩu",.1,.5),word("Quên mật khẩu?",.87,.62)))
-        val game=Script(listOf(at(GameScreens.Kind.LOGIN,tap=garena),form),front=true)
+        val game=Script(listOf(at(GameScreens.Kind.LOGIN,tap=garena),form))
         assertTrue(game.run() is GameEntry.Outcome.Failed)
         assertEquals(0,game.signIns)
     }

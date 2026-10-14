@@ -363,3 +363,36 @@ Giờ app **đọc hàng chiêu trên ảnh chụp ngay lúc chạy**, rồi m�
   - làm lại khi Qi đang ở dạng 2 thì bấm ↻ trước, rồi chụp đủ như lần đầu.
 - 56 test đều qua.
 
+## v0.4.11: đóng hẳn game còn chạy trước khi vào
+
+Game còn trong đa nhiệm sẽ quay lại đúng chỗ đã bỏ dở, có thể là một màn app chưa biết. Vì vậy trước khi mở, **bước Tự mở game giờ đóng hẳn Liên Quân nếu còn chạy**, để game luôn khởi động lại từ đầu (logo, đăng nhập, popup).
+
+- **Cách đóng:** Android không cho app này tắt tiến trình của app khác (từ Android 14 chặn hẳn), nên app đi qua Cài đặt bằng Trợ năng:
+  1. Mở **Cài đặt → Thông tin ứng dụng của Liên Quân**.
+  2. Bấm **Buộc dừng**.
+  3. Bấm **OK** (hoặc **Buộc dừng**) trong hộp hỏi của Android.
+  4. Mở game.
+  - Nút Buộc dừng bị mờ nghĩa là game không chạy: app mở game luôn.
+- **An toàn:**
+  - Chỉ bấm trên trang có tên Liên Quân.
+  - Chỉ bấm nút có đúng nhãn "Buộc dừng" / "Force stop" (khớp cả chữ, không khớp một phần). Không bao giờ bấm Gỡ cài đặt hay Tắt.
+  - Chỉ trả lời hộp hỏi có nhắc tới Buộc dừng và có nút Hủy.
+  - Trang Cài đặt tự đóng khi game mở lên trên nó, không nằm lại trong đa nhiệm.
+- **Không thấy trang hoặc nút** (máy có giao diện Cài đặt lạ): app ghi lại rồi mở game như cũ, không dừng lượt.
+- **Kết quả được ghi** vào nhật ký lượt và vào "Xem lại các bước vào game", dạng dòng chữ không ảnh, ví dụ "Đã buộc dừng Liên Quân để mở lại từ đầu".
+- Bấm Tiếp tục sau khi Tạm dừng giữa bước vào game cũng đóng và mở lại game từ đầu.
+
+### Kiểm tra
+
+- **Kịch bản:**
+  - trang kiểu Android gốc (OK) và kiểu Samsung (nút "Buộc dừng" trong hộp hỏi);
+  - tiếng Anh;
+  - game không chạy;
+  - máy không hỏi;
+  - trang của app khác (không bấm gì);
+  - không có nút;
+  - hộp hỏi khác (không trả lời);
+  - bị Tạm dừng giữa chừng.
+- **Trên máy ảo CI:** app Buộc dừng thật một app có sẵn qua trang Cài đặt của Android 11. Sau đó tiến trình của app đó không còn, và lần đóng thứ hai nhận ra là app không chạy.
+- **Chưa thử trên máy thật của bạn:** nhãn nút trong Cài đặt của hãng điện thoại có thể khác. Nếu app ghi "Không thấy nút Buộc dừng", gửi tôi ảnh trang Thông tin ứng dụng của Liên Quân.
+

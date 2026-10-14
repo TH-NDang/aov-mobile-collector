@@ -181,7 +181,21 @@ class UiSmoke:Instrumentation() {
             snap("06-after-macro-tap")
             check(delivered.get()) { "Macro tap was not delivered past the panel (swallowed=$swallowed)" }
             check(panelKept&&closeButton()!=null) { "Macro tap closed or hid the floating panel" }
-            result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, overlay, rotation and tap-through passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
+            // Before a run opens the game, a game left running is ended on its App info page: Buộc dừng, then OK.
+            // Checked against the emulator's real Settings, on one of its own apps (English labels there).
+            fun output(command:String)=android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).use { String(it.readBytes()) }.trim()
+            val installed=output("pm list packages")
+            val (app,label)=listOf("com.android.deskclock" to "Clock","com.android.calculator2" to "Calculator","com.android.contacts" to "Contacts","com.android.camera2" to "Camera")
+                .firstOrNull { installed.contains("package:${it.first}\n")||installed.endsWith("package:${it.first}") }?:error("No emulator app to close: $installed")
+            shell("monkey -p $app -c android.intent.category.LAUNCHER 1");SystemClock.sleep(3000)
+            check(output("pidof $app").isNotEmpty()) { "$app did not start" }
+            fun close():GameCloser.Result? { val latch=java.util.concurrent.CountDownLatch(1);var r:GameCloser.Result?=null
+                runOnMainSync { service!!.closeApp(app,{ true },label) { r=it;latch.countDown() } };latch.await(30,java.util.concurrent.TimeUnit.SECONDS);return r }
+            val closed=close();snap("07-force-stop")
+            check(closed==GameCloser.Result.CLOSED&&output("pidof $app").isEmpty()) { "Force stop of $app: $closed, pid ${output("pidof $app")}" }
+            val again=close()
+            check(again==GameCloser.Result.NOT_RUNNING) { "A stopped $app read as $again" }
+            result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, overlay, rotation, tap-through and force stop passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
             finish(Activity.RESULT_OK,result)
         } catch(t:Throwable) { result.putString("stream","SMOKE_FAILED: ${t.stackTraceToString()}\n");finish(Activity.RESULT_CANCELED,result) }
     }

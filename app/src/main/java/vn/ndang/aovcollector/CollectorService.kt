@@ -678,9 +678,20 @@ class CollectorService : AccessibilityService() {
         val expected=if(m?.json?.optBoolean("checkAccount")==true) Accounts.uid(this) else null
         val trace=if(m?.json?.optBoolean("traceEntry",true)!=false) File(filesDir,"captures/$runId/${GameEntry.TRACE_DIR}") else null
         var traced=trace?.listFiles()?.count { it.extension=="jpg" }?:0
+        /** One line of the trace, with the screenshot [small] scaled down when there is one; it is recycled here. */
+        fun write(what:String,kind:String,tap:Pair<Double,Double>?,small:Bitmap?) {
+            val dir=trace?:run { small?.recycle(); return }
+            val n=++traced
+            val line=JSONObject().put("n",n).put("time",System.currentTimeMillis()).put("what",what).put("kind",kind)
+                .put("x",tap?.first?:JSONObject.NULL).put("y",tap?.second?:JSONObject.NULL).put("image",if(small!=null) "%04d.jpg".format(n) else JSONObject.NULL)
+            io.execute { try { dir.mkdirs()
+                small?.let { bmp -> File(dir,"%04d.jpg".format(n)).outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG,80,it) };bmp.recycle() }
+                File(dir,"steps.jsonl").appendText(line.toString()+"\n")
+            } catch(e:Exception) { CrashLog.record(this@CollectorService,"Không lưu được bước vào game",e) } }
+        }
         val screen=object:GameEntry.Screen {
             override val alive get()=alive()
-            override fun inFront()=foreground()==GAME
+            override fun quit(then:(GameCloser.Result)->Unit) { closeApp(GAME,alive=alive) { result -> if(alive()) write(result.text,"SETTINGS",null,null); then(result) } }
             override fun launch():Boolean {
                 val intent=packageManager.getLaunchIntentForPackage(GAME)?:return false
                 return try { startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));true } catch(e:Exception) { CrashLog.record(this@CollectorService,"Không mở được Liên Quân",e);false }
@@ -702,15 +713,7 @@ class CollectorService : AccessibilityService() {
                         handler.post { if(reading==null) { b.recycle();then(null) } else then(object:GameEntry.Shot {
                             override val reading:GameScreens.Reading=reading
                             override fun record(what:String,tap:Pair<Double,Double>?,image:Boolean) {
-                                val dir=trace?:return
-                                val n=++traced
-                                val small=if(image) Bitmap.createScaledBitmap(b,1200,1200*b.height/b.width,true) else null
-                                val line=JSONObject().put("n",n).put("time",System.currentTimeMillis()).put("what",what).put("kind",reading.kind.name)
-                                    .put("x",tap?.first?:JSONObject.NULL).put("y",tap?.second?:JSONObject.NULL).put("image",if(small!=null) "%04d.jpg".format(n) else JSONObject.NULL)
-                                io.execute { try { dir.mkdirs()
-                                    small?.let { bmp -> File(dir,"%04d.jpg".format(n)).outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG,80,it) };bmp.recycle() }
-                                    File(dir,"steps.jsonl").appendText(line.toString()+"\n")
-                                } catch(e:Exception) { CrashLog.record(this@CollectorService,"Không lưu được bước vào game",e) } }
+                                if(trace!=null) write(what,reading.kind.name,tap,if(image) Bitmap.createScaledBitmap(b,1200,1200*b.height/b.width,true) else null)
                             }
                             override fun done(keep:String?) { if(keep!=null) store(b,runId,"$stamp-$keep") {} else b.recycle() }
                         }) }
@@ -726,6 +729,44 @@ class CollectorService : AccessibilityService() {
             override fun say(text:String) { if(alive()) { lastStatus=text;refreshPanel() } }
         }
         GameEntry(screen,expected,finish).start()
+    }
+    /**
+     * Ends app [pkg] through its App info page in Settings ([GameCloser]). The UI smoke check runs it on an app of
+     * the emulator, which this app cannot see by name, with its [known] label.
+     */
+    internal fun closeApp(pkg:String,alive:()->Boolean,known:String?=null,then:(GameCloser.Result)->Unit) {
+        val label=known?:try { packageManager.getApplicationLabel(packageManager.getApplicationInfo(pkg,0)).toString() } catch(_:Exception) { "" }
+        if(label.isBlank()) return then(GameCloser.Result.NO_PAGE)
+        val page=object:GameCloser.Page {
+            override val alive get()=alive()
+            override fun open():Boolean = try {
+                // Gone from the back stack once the game opens over it.
+                startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,android.net.Uri.fromParts("package",pkg,null))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_HISTORY or Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS));true
+            } catch(e:Exception) { CrashLog.record(this@CollectorService,"Không mở được trang thông tin của $label",e);false }
+            override fun read()=frontWindow(pkg)
+            override fun later(ms:Long,then:()->Unit) { handler.postDelayed(then,ms) }
+        }
+        GameCloser(label,page,then).start()
+    }
+    /**
+     * The window in front for [GameCloser]: its words, and those that can be pressed (the word's node or a
+     * clickable parent close above it). Never this app's window or that of [pkg], the app being closed.
+     */
+    private fun frontWindow(pkg:String):GameCloser.Window? {
+        val root=try { rootInActiveWindow } catch(_:Exception) { null }?:return null
+        if(root.packageName==packageName||root.packageName==pkg) return null
+        val words=ArrayList<String>(); val buttons=ArrayList<GameCloser.Button>()
+        for(n in nodes(root)) {
+            val text=(n.text?:n.contentDescription)?.toString()?.trim().orEmpty()
+            if(text.isEmpty()) continue
+            words.add(text)
+            var target:android.view.accessibility.AccessibilityNodeInfo?=n; var up=0
+            while(target!=null&&!target.isClickable&&up<3) { target=target.parent; up++ }
+            val button=target?.takeIf { it.isClickable }?:continue
+            buttons.add(GameCloser.Button(text,button.isEnabled&&n.isEnabled) { button.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK) })
+        }
+        return GameCloser.Window(words,buttons)
     }
     /** Text of the window in front from its accessibility tree: forms and web pages have one, the game does not. */
     private fun screenWords():List<GameScreens.Word> {

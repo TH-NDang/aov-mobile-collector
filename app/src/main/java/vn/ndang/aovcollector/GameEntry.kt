@@ -244,7 +244,8 @@ class GameEntry(private val screen:Screen,private val expectedUid:String?=null,p
     interface Shot { val reading:GameScreens.Reading; fun record(what:String,tap:Pair<Double,Double>?=null,image:Boolean=true) {}; fun done(keep:String?) }
     interface Screen {
         val alive:Boolean
-        fun inFront():Boolean
+        /** Ends the game if it is still running, through Settings ([GameCloser]); [then] gets what happened. */
+        fun quit(then:(GameCloser.Result)->Unit)
         /** Starts the game or brings it to the front; false when it is not installed or Android refused. */
         fun launch():Boolean
         /**
@@ -316,12 +317,20 @@ class GameEntry(private val screen:Screen,private val expectedUid:String?=null,p
     private var switched=false
     private var leftOnce=false
 
+    /**
+     * A game left in the recent apps resumes wherever it was, which may be a screen the run does not know: it is
+     * ended first, so it always comes up through its splash, login and popups.
+     */
     fun start() {
         started=screen.now()
-        if(screen.inFront()) return step()
-        screen.note("Mở Liên Quân"); screen.say("Đang mở Liên Quân…")
-        if(!screen.launch()) return fail("Không mở được Liên Quân. Kiểm tra game đã cài, mở game bằng tay rồi bấm Tiếp tục.")
-        screen.later(4000) { step() }
+        screen.say("Đang đóng Liên Quân nếu còn chạy…")
+        screen.quit { result ->
+            if(!screen.alive) return@quit
+            screen.note(result.text)
+            screen.note("Mở Liên Quân"); screen.say("Đang mở Liên Quân…")
+            if(!screen.launch()) return@quit fail("Không mở được Liên Quân. Kiểm tra game đã cài, mở game bằng tay rồi bấm Tiếp tục.")
+            screen.later(4000) { step() }
+        }
     }
     private fun fail(reason:String) { finish(Outcome.Failed(reason)) }
     private fun again(ms:Long) { screen.later(ms) { step() } }
