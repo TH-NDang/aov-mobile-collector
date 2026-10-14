@@ -29,6 +29,8 @@ class CollectorService : AccessibilityService() {
         const val SHIELD_MS=150L
         const val GESTURE_RETRIES=2
         const val GAME="com.garena.game.kgvn"
+        /** Runs that take heroes one after another from the list: its first cards, or heroes by name. */
+        val LISTED=setOf("all","pick")
         /** Android accepts one accessibility screenshot per second; a little margin avoids a refused one. */
         const val SHOT_INTERVAL_MS=1050L
         /** Screenshots saved in the background at once before the macro waits for the disk. */
@@ -61,11 +63,12 @@ class CollectorService : AccessibilityService() {
     private fun clock(ms:Long):String { val t=ms/1000; return if(t>=3600) "%d:%02d:%02d".format(t/3600,t/60%60,t%60) else "%d:%02d".format(t/60,t%60) }
     /** Progress line such as "Tướng 23/129 · 25:12 · còn ~1:30:00", with collection time excluding pauses. */
     private fun progress(m:Macro):String {
-        val all=m.json.optString("collectionMode")=="all"; val heroes=m.json.optInt("heroCount",1)
+        // Heroes by name go as the list does, one block of steps a hero.
+        val all=m.json.optString("collectionMode") in LISTED; val heroes=m.json.optInt("heroCount",1)
         // Steps before the first hero: the opening wait, and the way into the game when the run starts there.
         val lead=if(m.json.optBoolean("openGame")) 2 else 1
         val perHero=if(all) ((m.steps.length()-lead)/heroes).coerceAtLeast(1) else m.steps.length()
-        val target=if(all) minOf(heroes,listTotal?:heroes) else 1
+        val target=if(!all) 1 else if(m.json.optString("collectionMode")=="pick") heroes else minOf(heroes,listTotal?:heroes)
         val total=if(all) lead+target*perHero else m.steps.length()
         val done=index.coerceIn(0,total)
         if(m.json.optString("collectionMode")=="ranking") return "Thống kê tướng · ${clock(elapsed())}"+left(m)
@@ -87,8 +90,9 @@ class CollectorService : AccessibilityService() {
         // The way into the game, while it is still to come or going on.
         val entry=if(entered) 0.0 else maxOf(0.0,(RunTimes.get(uiPrefs,RunTimes.ENTRY)?:60.0)-elapsed()/1000.0)
         val rest=when(mode) {
-            "all" -> { val heroes=m.json.optInt("heroCount",1); val lead=if(opening) 2 else 1
-                val perHero=((m.steps.length()-lead)/heroes).coerceAtLeast(1); val target=minOf(heroes,listTotal?:if(heroes>=BuiltInMacros.ALL) 130 else heroes)
+            "all","pick" -> { val heroes=m.json.optInt("heroCount",1); val lead=if(opening) 2 else 1
+                val perHero=((m.steps.length()-lead)/heroes).coerceAtLeast(1)
+                val target=if(mode=="pick") heroes else minOf(heroes,listTotal?:if(heroes>=BuiltInMacros.ALL) 130 else heroes)
                 val doneHeroes=((index-lead).coerceAtLeast(0)/perHero).coerceAtMost(target)
                 RunTimes.remaining(target-doneHeroes,doneHeroes,spent,RunTimes.get(uiPrefs,heroKey(m))) }
             "single" -> RunTimes.get(uiPrefs,heroKey(m))?.let { maxOf(0.0,it-elapsed()/1000.0) }
@@ -105,7 +109,7 @@ class CollectorService : AccessibilityService() {
     private fun boardKey(m:Macro)=boardKey(BuiltInMacros.boardWants(m.json))
     /** Kept times of Chiến khu runs are per hero, for the same tabs and depths. */
     private fun boardKey(wanted:List<BoardScreens.Want>)="time:board:"+wanted.joinToString(",") { "${it.tab.slug}${it.top}" }
-    private fun heroKey(m:Macro)=RunTimes.hero(m.json.optString("collectionMode")=="all",m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills"))
+    private fun heroKey(m:Macro)=RunTimes.hero(m.json.optString("collectionMode") in LISTED,m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills"))
     /** Time the way into the game took in this run, from its start; part of no hero. */
     private var entryMs=0L
     /**
@@ -116,7 +120,7 @@ class CollectorService : AccessibilityService() {
         if(!prefs.getBoolean("clean",false)) return
         val spent=(elapsed()-entryMs)/1000.0
         when(m.json.optString("collectionMode")) {
-            "all" -> if(heroes>0) RunTimes.record(uiPrefs,heroKey(m),spent/heroes)
+            "all","pick" -> if(heroes>0) RunTimes.record(uiPrefs,heroKey(m),spent/heroes)
             "single" -> RunTimes.record(uiPrefs,heroKey(m),spent)
             "ranking" -> RunTimes.record(uiPrefs,RunTimes.TABLE,spent/BuiltInMacros.rankCombos(m.json).size)
             "board" -> boardNext?.takeIf { it.first.startsWith("$runId/")&&it.second>0 }?.let { RunTimes.record(uiPrefs,boardKey(m),spent/it.second) }
@@ -290,7 +294,7 @@ class CollectorService : AccessibilityService() {
         val m=selected()
         val step=if(m!=null && prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
         taskLabel?.text=m?.let { MacroStore.title(it) }?:"Chọn tác vụ"
-        taskDetail?.text=m?.let { MacroStore.description(it) }?:"Một tướng hoặc danh sách tướng"
+        taskDetail?.text=m?.let { MacroStore.description(it) }?:"Thông tin tướng, thống kê tướng hoặc Chiến khu"
         choose?.text=(m?.let { MacroStore.title(it) }?:"Chọn macro")+"  ▾"
         choose?.isEnabled=!isWorking;choose?.alpha=if(isWorking) .45f else 1f
         progress?.progress=if(m!=null) step*100/maxOf(1,m.steps.length()) else 0
@@ -314,7 +318,7 @@ class CollectorService : AccessibilityService() {
         if(macroPicker!=null) { dismissMacroPicker();return }
         val host=panel?:return
         val saved=MacroStore.saved(this).mapNotNull { try { Macro(it.readText()) } catch(_:Exception) { null } }
-        val choices=listOf("Một tướng đang mở","Danh sách tướng","Thống kê tướng (bảng xếp hạng)","Chiến khu (BXH người chơi theo tướng)")+saved.map { it.name }
+        val choices=listOf("Lấy thông tin tướng (theo tên, đầu danh sách hoặc tướng đang mở)","Thống kê tướng (bảng xếp hạng)","Chiến khu (BXH người chơi theo tướng)")+saved.map { it.name }
         var visible=choices.indices.toList()
         val body=Ui.stack(this).apply { setPadding(dp(10),dp(10),dp(10),dp(6));background=Ui.shape(Color.argb(248,248,248,254),dp(14),Ui.border) }
         val search=Ui.field(this,"Tìm macro…");body.addView(search,LinearLayout.LayoutParams(-1,dp(46)))
@@ -334,7 +338,7 @@ class CollectorService : AccessibilityService() {
         })
         list.setOnItemClickListener { _,_,position,_ ->
             val i=visible.getOrNull(position)?:return@setOnItemClickListener;dismissMacroPicker()
-            handler.post { when(i) { 0 -> taskForm(false);1 -> taskForm(true);2 -> rankingForm();3 -> boardForm();else -> selectMacro(saved[i-4].raw) } }
+            handler.post { when(i) { 0 -> heroForm();1 -> rankingForm();2 -> boardForm();else -> selectMacro(saved[i-3].raw) } }
         }
         body.addView(Ui.button(this,"Đóng danh sách") { dismissMacroPicker() },LinearLayout.LayoutParams(-1,dp(38)))
         filter("")
@@ -367,67 +371,127 @@ class CollectorService : AccessibilityService() {
             if(host.isAttachedToWindow) wm.updateViewLayout(host,params)
         }
     }
-    private fun taskForm(batch:Boolean) {
+    /**
+     * "Lấy thông tin tướng": heroes by name, found on the All-heroes list ([HeroSearch]) among the names kept from
+     * earlier runs ([HeroIndex]) or typed; the first cards of the list; or the hero page open now.
+     */
+    private fun heroForm() {
         val body=Ui.stack(this).apply { setPadding(dp(20),dp(6),dp(20),dp(6)) }
-        body.addView(Ui.text(this,if(batch) "Mở danh sách Tất cả tướng. App tự đưa danh sách về đầu, đo từng lần cuộn và dừng khi hết danh sách." else "Mở trang chi tiết tướng. App chụp tổng quan, thuộc tính và 4 chiêu.",14f))
-        body.addView(Ui.text(this,if(batch) "Số ô tướng cần lấy" else "Tên tướng (không bắt buộc)",13f,Ui.muted,true))
-        val field=Ui.field(this,if(batch) "1–${BuiltInMacros.ALL}" else "Để trống để tự đọc tên",if(batch) uiPrefs.getInt("count",2).toString() else "",batch);body.addView(field)
-        if(batch) {
-            body.addView(Ui.text(this,"Chọn Tất cả để lấy đến cuối danh sách.",12f,Ui.muted))
-            val quick=LinearLayout(this)
-            listOf(2 to "2 ô",11 to "11 ô",BuiltInMacros.ALL to "Tất cả").forEach { (n,text) -> quick.addView(Ui.button(this,text) { field.setText(n.toString()) },LinearLayout.LayoutParams(0,dp(40),1f).apply { marginEnd=dp(4) }) };body.addView(quick)
-        } else body.addView(Ui.text(this,"Tên được đọc từ ảnh. Nếu không rõ, app dùng thư mục đánh số; có thể đổi tên trong Ảnh đã lưu.",12f,Ui.muted))
-        // Time and space for the whole run, near the top so it shows without scrolling; it follows the count and options.
+        body.addView(Ui.text(this,"Lấy tổng quan, thuộc tính và chiêu của tướng.",14f))
+        val modes=listOf("Theo tên tướng","Các ô đầu danh sách","Tướng đang mở")
+        val group=RadioGroup(this).apply { orientation=RadioGroup.VERTICAL }
+        val radios=modes.map { text -> RadioButton(this).apply { this.text=text;textSize=14f;id=View.generateViewId() }.also { group.addView(it) } }
+        body.addView(group)
+        // By name: a search over the names kept, a check box each, and the typed name when it is a new one.
+        val byName=Ui.stack(this).also { body.addView(it) }
+        byName.addView(Ui.text(this,"Tìm và tick các tướng cần lấy (tên đã lưu từ các lượt trước), hoặc gõ tên mới rồi bấm Thêm.",13f,Ui.muted,true))
+        val query=Ui.field(this,"Gõ tên tướng, ví dụ Violet").also { byName.addView(it) }
+        val chosenLine=Ui.text(this,"",13f,Ui.ink,true).also { byName.addView(it) }
+        val add=Ui.button(this,"Thêm") {}.also { byName.addView(it) }
+        val names=Ui.stack(this).also { byName.addView(it) }
+        val more=Ui.text(this,"",12f,Ui.muted).also { byName.addView(it) }
+        byName.addView(Ui.text(this,"App tới ô tướng ở lần trước, đọc lại tên trên thẻ; sai thì dò danh sách. Tướng không có trong danh sách được bỏ qua.",12f,Ui.muted))
+        // The first cards of the list.
+        val byCount=Ui.stack(this).also { body.addView(it) }
+        byCount.addView(Ui.text(this,"Số ô tướng cần lấy (từ đầu danh sách Tất cả tướng)",13f,Ui.muted,true))
+        val count=Ui.field(this,"1–${BuiltInMacros.ALL}",uiPrefs.getInt("count",2).toString(),true).also { byCount.addView(it) }
+        val quick=LinearLayout(this)
+        listOf(2 to "2 ô",11 to "11 ô",BuiltInMacros.ALL to "Tất cả").forEach { (n,text) -> quick.addView(Ui.button(this,text) { count.setText(n.toString()) },LinearLayout.LayoutParams(0,dp(40),1f).apply { marginEnd=dp(4) }) }
+        byCount.addView(quick)
+        byCount.addView(Ui.text(this,"App tự đưa danh sách về đầu, đo từng lần cuộn và dừng khi hết danh sách. Chọn Tất cả để lấy đến cuối.",12f,Ui.muted))
+        // The hero page open now.
+        val open=Ui.stack(this).also { body.addView(it) }
+        open.addView(Ui.text(this,"Mở trang chi tiết tướng trước. Tên tướng (không bắt buộc)",13f,Ui.muted,true))
+        val single=Ui.field(this,"Để trống để tự đọc tên").also { open.addView(it) }
+        open.addView(Ui.text(this,"Tên được đọc từ ảnh. Nếu không rõ, app dùng thư mục đánh số; có thể đổi tên trong Ảnh đã lưu.",12f,Ui.muted))
+        // Time and space for the whole run; it follows the mode, the heroes and the options.
         val estimate=Ui.text(this,"",13f,Ui.ink,true).also { body.addView(it) }
         fun option(text:String,key:String)=CheckBox(this).apply { this.text=text;textSize=14f;isChecked=uiPrefs.getBoolean(key,false) }.also { body.addView(it) }
         val fast=option("Chạy nhanh: chờ ngắn hơn sau mỗi lần chạm (nên thử 2 tướng trước)","fast")
         val detailOnly=option("Chỉ chụp Chi tiết: bỏ ảnh Tóm tắt của nội tại và chiêu","detailOnly")
         val directSkills=option("Chuyển thẳng giữa các chiêu: bấm sang chiêu kế tiếp khi bảng chiêu còn mở, chỉ đóng sau chiêu cuối","directSkills")
-        // Only the list run can start from outside the game: a single hero needs its page opened by hand.
-        val openGame=if(batch) option("Tự mở game và vào Danh sách tướng: đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện, rồi bấm Tướng ở sảnh","openGame") else null
+        val openGame=option("Tự mở game và vào Danh sách tướng: đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện, rồi bấm Tướng ở sảnh","openGame")
         val savedUid=Accounts.uid(this)
-        val checkAccount=if(batch) option(if(savedUid!=null) "Kiểm tra UID là tài khoản test ($savedUid); khác thì đăng xuất và đăng nhập tài khoản test" else "Kiểm tra UID tài khoản test (lưu tài khoản ở mục Tài khoản trong app trước)","checkAccount").apply { if(savedUid==null) { isChecked=false;isEnabled=false } } else null
-        val traceEntry=if(batch) CheckBox(this).apply { text="Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)";textSize=14f;isChecked=uiPrefs.getBoolean("traceEntry",true) }.also { body.addView(it) } else null
-        // The account check and the trace belong to the way into the game.
-        fun follow() { val on=openGame?.isChecked==true; checkAccount?.isEnabled=on&&savedUid!=null; traceEntry?.isEnabled=on }
-        follow()
-        val shot=averageShot(); val known=uiPrefs.getInt("heroTotal",0).takeIf { it>0 }
+        val checkAccount=option(if(savedUid!=null) "Kiểm tra UID là tài khoản test ($savedUid); khác thì đăng xuất và đăng nhập tài khoản test" else "Kiểm tra UID tài khoản test (lưu tài khoản ở mục Tài khoản trong app trước)","checkAccount").apply { if(savedUid==null) { isChecked=false;isEnabled=false } }
+        val traceEntry=CheckBox(this).apply { text="Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)";textSize=14f;isChecked=uiPrefs.getBoolean("traceEntry",true) }.also { body.addView(it) }
+        var known=emptyList<HeroIndex.Entry>()
+        val chosen=LinkedHashSet(uiPrefs.getString("pickNames","").orEmpty().split('\n').map { it.trim() }.filter { it.isNotEmpty() })
+        fun mode()=radios.indexOfFirst { it.isChecked }.coerceAtLeast(0)
+        fun typed()=query.text.toString().trim().take(40)
+        /** The heroes a by-name run would take: those ticked, else the name typed. */
+        fun picked()=chosen.toList().ifEmpty { listOfNotNull(typed().takeIf { it.count { c -> c.isLetter() }>=2 }) }
+        // The way into the game, the account check and the trace: only for runs that start on the list.
+        fun follow() { val list=mode()<2; openGame.isEnabled=list; val on=list&&openGame.isChecked; checkAccount.isEnabled=on&&savedUid!=null; traceEntry.isEnabled=on }
+        val shot=averageShot(); val total=uiPrefs.getInt("heroTotal",0).takeIf { it>0 }
         fun updateEstimate() {
-            val asked=if(batch) field.text.toString().toIntOrNull()?.coerceIn(0,BuiltInMacros.ALL)?:0 else 1
-            val heroes=if(asked>=BuiltInMacros.ALL) known?:130 else asked
+            val m=mode(); val batch=m<2
+            val asked=when(m) { 0 -> picked().size; 1 -> count.text.toString().toIntOrNull()?.coerceIn(0,BuiltInMacros.ALL)?:0; else -> 1 }
+            if(asked==0) { estimate.text=if(m==0) "Chọn hoặc gõ ít nhất một tướng." else "Nhập số ô tướng.";estimate.setTextColor(Ui.danger);return }
+            val heroes=if(asked>=BuiltInMacros.ALL) total?:130 else asked
             val photos=heroes*(if(detailOnly.isChecked) 6 else 10)
             val need=photos*shot; val free=filesDir.usableSpace
             // Times of earlier runs that went through without a pause, else the steps' own; the way in about a minute.
             val kept=RunTimes.get(uiPrefs,RunTimes.hero(batch,fast.isChecked,detailOnly.isChecked,directSkills.isChecked))
-            val entry=if(openGame?.isChecked==true) RunTimes.get(uiPrefs,RunTimes.ENTRY)?:60.0 else 0.0
-            val seconds=(heroes*(kept?:BuiltInMacros.secondsPerHero(batch,fast.isChecked,detailOnly.isChecked,directSkills.isChecked))+entry).toLong()
-            val who=when { !batch -> ""; asked>=BuiltInMacros.ALL -> if(known!=null) "Tất cả $heroes tướng · " else "Khoảng $heroes tướng · "; else -> "$heroes tướng · " }
-            estimate.text="Ước tính: $who$photos ảnh · khoảng ${Format.duration(seconds)}"+(if(kept!=null) " (theo lượt chạy trọn trước)" else "")+"\nCần khoảng ${Format.size(need)} · máy còn trống ${Format.size(free)}"+
+            val entry=if(batch&&openGame.isChecked) RunTimes.get(uiPrefs,RunTimes.ENTRY)?:60.0 else 0.0
+            // Finding a hero by name reads the cards' names: a few seconds more than tapping a card.
+            val each=kept?:(BuiltInMacros.secondsPerHero(batch,fast.isChecked,detailOnly.isChecked,directSkills.isChecked)+if(m==0) 1.5 else 0.0)
+            val who=when { !batch -> ""; asked>=BuiltInMacros.ALL -> if(total!=null) "Tất cả $heroes tướng · " else "Khoảng $heroes tướng · "; else -> "$heroes tướng · " }
+            estimate.text="Ước tính: $who$photos ảnh · khoảng ${Format.duration((heroes*each+entry).toLong())}"+(if(kept!=null) " (theo lượt chạy trọn trước)" else "")+"\nCần khoảng ${Format.size(need)} · máy còn trống ${Format.size(free)}"+
                 (if(need>free-30L*1024*1024) "\nKhông đủ chỗ cho cả lượt: app sẽ dừng khi còn dưới 30 MB." else "")
             estimate.setTextColor(if(need>free-30L*1024*1024) Ui.danger else Ui.ink)
         }
-        updateEstimate()
-        field.addTextChangedListener(object:android.text.TextWatcher {
-            override fun afterTextChanged(s:android.text.Editable?) { updateEstimate() }
+        fun render() {
+            val q=typed(); val slug=HeroNames.slug(q).takeIf { q.isNotEmpty() }
+            chosenLine.text=if(chosen.isEmpty()) (if(known.isEmpty()) "Chưa có tên tướng đã lưu: gõ tên rồi bấm Thêm." else "Chưa chọn tướng nào (${known.distinctBy { it.slug }.size} tên đã lưu).") else "Đã chọn ${chosen.size}: ${chosen.joinToString(", ")}"
+            val all=(HeroIndex.names(known)+chosen).distinctBy { HeroNames.slug(it) }
+            val shown=all.filter { slug==null||HeroNames.slug(it).contains(slug)||HeroFinder.same(HeroNames.slug(it),slug) }
+            // A typed name that is none of the names kept can be added as it is.
+            val fresh=slug!=null&&q.count { it.isLetter() }>=2&&all.none { HeroNames.slug(it)==slug }
+            add.text="Thêm tướng: $q"; add.visibility=if(fresh) View.VISIBLE else View.GONE
+            names.removeAllViews()
+            // Ticked names first, then the others, at most 40 at once: typing narrows them.
+            val ordered=shown.sortedBy { if(it in chosen) 0 else 1 }
+            for(n in ordered.take(40)) names.addView(CheckBox(this).apply { text=n;textSize=14f;isChecked=n in chosen
+                setOnCheckedChangeListener { _,on -> if(on) chosen.add(n) else chosen.remove(n); handler.post { render() } } })
+            more.text=if(ordered.size>40) "… và ${ordered.size-40} tên khác: gõ để lọc" else ""; more.visibility=if(ordered.size>40) View.VISIBLE else View.GONE
+            updateEstimate()
+        }
+        add.setOnClickListener { val q=typed(); if(q.isNotEmpty()) { chosen.add(q); query.setText("") } }
+        fun show() { val m=mode(); byName.visibility=if(m==0) View.VISIBLE else View.GONE; byCount.visibility=if(m==1) View.VISIBLE else View.GONE; open.visibility=if(m==2) View.VISIBLE else View.GONE; follow(); updateEstimate() }
+        radios[uiPrefs.getInt("heroMode",0).coerceIn(0,2)].isChecked=true
+        group.setOnCheckedChangeListener { _,_ -> show() }
+        val watch=object:android.text.TextWatcher {
+            override fun afterTextChanged(s:android.text.Editable?) { render() }
             override fun beforeTextChanged(s:CharSequence?,a:Int,b:Int,c:Int) {}
-            override fun onTextChanged(s:CharSequence?,a:Int,b:Int,c:Int) {} })
-        listOfNotNull(fast,detailOnly,directSkills).forEach { it.setOnCheckedChangeListener { _,_ -> updateEstimate() } }
-        openGame?.setOnCheckedChangeListener { _,_ -> follow();updateEstimate() }
+            override fun onTextChanged(s:CharSequence?,a:Int,b:Int,c:Int) {} }
+        query.addTextChangedListener(watch); count.addTextChangedListener(watch)
+        listOf(fast,detailOnly,directSkills).forEach { it.setOnCheckedChangeListener { _,_ -> updateEstimate() } }
+        openGame.setOnCheckedChangeListener { _,_ -> follow();updateEstimate() }
+        show(); render()
+        // The names kept, rebuilt from the saved runs the first time.
+        io.execute { val entries=HeroIndex.loadOrRebuild(filesDir,File(filesDir,"captures")); handler.post { known=entries; render() } }
         body.addView(Ui.text(this,"Chọn tác vụ sẽ tạo lượt mới. Ảnh đã chụp vẫn giữ lại.",12f,Ui.muted))
-        val formScroll=ScrollView(this).apply { addView(body) }
-        val dialog=AlertDialog.Builder(this).setTitle(if(batch) "Danh sách tướng" else "Một tướng").setView(formScroll)
+        val dialog=AlertDialog.Builder(this).setTitle("Lấy thông tin tướng").setView(ScrollView(this).apply { addView(body) })
             .setPositiveButton("Chọn tác vụ",null).setNegativeButton("Hủy",null).create()
         display(dialog)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             try {
-                val count=if(batch) field.text.toString().toIntOrNull()?:0 else 1
-                require(count in 1..BuiltInMacros.ALL) { "Nhập số từ 1 đến ${BuiltInMacros.ALL}; ${BuiltInMacros.ALL} là lấy hết danh sách" }
-                if(batch) uiPrefs.edit().putInt("count",count).apply()
-                uiPrefs.edit().putBoolean("fast",fast.isChecked).putBoolean("detailOnly",detailOnly.isChecked).putBoolean("directSkills",directSkills.isChecked).apply()
-                if(openGame!=null) uiPrefs.edit().putBoolean("openGame",openGame.isChecked).putBoolean("checkAccount",checkAccount?.isChecked==true).putBoolean("traceEntry",traceEntry?.isChecked!=false).apply()
-                if(selectMacro(BuiltInMacros.create(if(batch) "Danh sách tướng" else field.text.toString(),count,batch,fast.isChecked,detailOnly.isChecked,directSkills.isChecked,
-                        openGame?.isChecked==true,checkAccount?.isChecked==true&&checkAccount.isEnabled,traceEntry?.isChecked!=false))) dialog.dismiss()
-            } catch(e:Exception) { field.error=e.message }
+                val m=mode(); val list=m<2
+                uiPrefs.edit().putInt("heroMode",m).putBoolean("fast",fast.isChecked).putBoolean("detailOnly",detailOnly.isChecked).putBoolean("directSkills",directSkills.isChecked).apply()
+                if(list) uiPrefs.edit().putBoolean("openGame",openGame.isChecked).putBoolean("checkAccount",checkAccount.isChecked).putBoolean("traceEntry",traceEntry.isChecked).apply()
+                val entering=list&&openGame.isChecked; val checking=entering&&checkAccount.isChecked&&checkAccount.isEnabled
+                val raw=when(m) {
+                    0 -> { val heroes=picked(); if(heroes.isEmpty()) { query.error="Chọn hoặc gõ ít nhất một tướng";return@setOnClickListener }
+                        uiPrefs.edit().putString("pickNames",chosen.joinToString("\n")).apply()
+                        BuiltInMacros.named(heroes,heroes.map { n -> HeroIndex.find(known,n).firstOrNull()?.index?:-1 },fast.isChecked,detailOnly.isChecked,directSkills.isChecked,entering,checking,traceEntry.isChecked) }
+                    1 -> { val n=count.text.toString().toIntOrNull()?:0
+                        if(n !in 1..BuiltInMacros.ALL) { count.error="Nhập số từ 1 đến ${BuiltInMacros.ALL}; ${BuiltInMacros.ALL} là lấy hết danh sách";return@setOnClickListener }
+                        uiPrefs.edit().putInt("count",n).apply()
+                        BuiltInMacros.create("Danh sách tướng",n,true,fast.isChecked,detailOnly.isChecked,directSkills.isChecked,entering,checking,traceEntry.isChecked) }
+                    else -> BuiltInMacros.create(single.text.toString(),1,false,fast.isChecked,detailOnly.isChecked,directSkills.isChecked)
+                }
+                if(selectMacro(raw)) dialog.dismiss()
+            } catch(e:Exception) { status(e.message?:"Không tạo được tác vụ") }
         }
     }
     /** The hero statistics: the chosen tables of "Bảng Phân Bậc Tướng", for the chosen kinds of match ([RankingReader]). */
@@ -616,11 +680,13 @@ class CollectorService : AccessibilityService() {
         if(!MacroStore.current(this).exists()) return   // nothing selected yet on a fresh install
         try {
             val m=readMacro(); val mode=m.json.optString("collectionMode")
-            if((mode!="single"&&mode!="all"&&mode!="ranking"&&mode!="board")||m.json.optInt("builtinVersion",1)==BuiltInMacros.VERSION) return
+            if(mode !in setOf("single","all","pick","ranking","board")||m.json.optInt("builtinVersion",1)==BuiltInMacros.VERSION) return
             val step=if(prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
             if(step>0&&step<m.steps.length()&&!prefs.getBoolean("stopped",false)) return
             if(mode=="board") MacroStore.current(this).writeText(BuiltInMacros.board(m.json.optBoolean("openGame"),m.json.optBoolean("checkAccount"),m.json.optBoolean("traceEntry",true),
                 m.json.optInt("heroCount",BuiltInMacros.ALL),BuiltInMacros.boardWants(m.json)))
+            else if(mode=="pick") MacroStore.current(this).writeText(BuiltInMacros.named(BuiltInMacros.heroNames(m.json),fast=m.json.optBoolean("fast"),detailOnly=m.json.optBoolean("detailOnly"),directSkills=m.json.optBoolean("directSkills"),
+                openGame=m.json.optBoolean("openGame"),checkAccount=m.json.optBoolean("checkAccount"),traceEntry=m.json.optBoolean("traceEntry",true)))
             else if(mode=="ranking") MacroStore.current(this).writeText(BuiltInMacros.ranking(m.json.optBoolean("openGame"),m.json.optBoolean("checkAccount"),m.json.optBoolean("traceEntry",true),BuiltInMacros.rankCombos(m.json).map { it.slug }))
             else MacroStore.current(this).writeText(BuiltInMacros.create(m.json.optString("heroName",""),m.json.optInt("heroCount",1),mode=="all",m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills"),m.json.optBoolean("openGame"),m.json.optBoolean("checkAccount"),m.json.optBoolean("traceEntry",true)))
             selectionCache=null
@@ -693,10 +759,10 @@ class CollectorService : AccessibilityService() {
         try {
             val type=s.getString("type")
             // A step that never reports back must not leave the controller stuck on "Đang xử lý".
-            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; "pick" -> 300000L; "enter" -> GameEntry.LIMIT_MS+30000; "skills" -> 300000L; "ranking" -> 2_700_000L; "board" -> 43_200_000L; else -> 10000L }
+            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; "pick" -> 300000L; "find" -> 900_000L; "enter" -> GameEntry.LIMIT_MS+30000; "skills" -> 300000L; "ranking" -> 2_700_000L; "board" -> 43_200_000L; else -> 10000L }
             handler.postDelayed({ if(!finished && token==generation) done(false,"Bước ${index+1} ($type) quá ${limit/1000} giây không xong. Kiểm tra màn hình rồi tiếp tục.") },limit)
             // Its callbacks see the step finished and stop; a tap already sent still lands.
-            if(type=="enter"||type=="skills"||type=="ranking"||type=="board") cancelStep={ if(!finished) { finished=true; busy=false; entering=false; shield(false); note("Ngắt bước ${index+1} ($type) giữa chừng") } }
+            if(type in setOf("enter","skills","ranking","board","find")) cancelStep={ if(!finished) { finished=true; busy=false; entering=false; shield(false); note("Ngắt bước ${index+1} ($type) giữa chừng") } }
             when(type) {
                 "wait" -> handler.postDelayed({ done(true) },s.getLong("ms"))
                 "back" -> done(performGlobalAction(GLOBAL_ACTION_BACK))
@@ -724,8 +790,16 @@ class CollectorService : AccessibilityService() {
                 "pick" -> { val card=s.getInt("index"); pick(card,"%04d".format(index+1),{ !finished && token==generation }) { outcome -> when(outcome) {
                     is ListNavigator.Outcome.Tapped -> done(true)
                     is ListNavigator.Outcome.End -> listEnded(card)
+                    is ListNavigator.Outcome.Missing -> done(false,"Không chạm được ô tướng ${card+1}")
                     is ListNavigator.Outcome.Failed -> done(false,outcome.reason)
                 } } }
+                // A hero by name: where it was last seen, its name on the card checked, else looked for down the list.
+                "find" -> find(s,{ !finished && token==generation }) { outcome -> when(outcome) {
+                    is ListNavigator.Outcome.Tapped -> done(true)
+                    is ListNavigator.Outcome.Failed -> done(false,outcome.reason)
+                    else -> { note("Không tìm thấy tướng ${s.getString("name")} trong danh sách; bỏ qua tướng này")
+                        index=s.getInt("skipTo")-1; done(true) }
+                } }
                 else -> {
                     val bounds=wm.currentWindowMetrics.bounds
                     val p=Path().apply { moveTo((s.getDouble("x")*(bounds.width()-1)).toFloat(),(s.getDouble("y")*(bounds.height()-1)).toFloat()) }
@@ -778,8 +852,23 @@ class CollectorService : AccessibilityService() {
         return listOf(GestureDescription.Builder().addStroke(move).build(),GestureDescription.Builder().addStroke(hold).build())
     }
     private var listRef:FloatArray?=null
+    /**
+     * Finds the hero named in step [s] on the All-heroes list and taps it ([HeroFinder]): first the place it was
+     * last seen ([HeroIndex]), its name read on the card; else down the list from the top, two rows a screen,
+     * reading every card's name. The names read are kept in the index for the next time.
+     */
+    private fun find(s:JSONObject,alive:()->Boolean,finish:(ListNavigator.Outcome)->Unit) {
+        val name=s.getString("name"); val stamp="%04d".format(index+1); val asked=s.optInt("hint",-1)
+        val hint=HeroIndex.find(HeroIndex.load(filesDir),name).minByOrNull { kotlin.math.abs(it.index-asked) }?.index?:asked
+        HeroSearch(name,hint,{ card,approve,then -> pick(card,stamp,alive,approve,then) },
+            seen={ cards -> io.execute { HeroIndex.seen(filesDir,cards.map { it.first to it.second.text }) } },
+            note={ note(it) }) { outcome,card ->
+            if(outcome is ListNavigator.Outcome.Tapped&&card!=null) io.execute { HeroIndex.record(filesDir,card,name) }
+            finish(outcome)
+        }.start()
+    }
     /** Runs a [ListNavigator] for card [card] against the real screen; its state survives in list.json. */
-    private fun pick(card:Int,stamp:String,alive:()->Boolean,finish:(ListNavigator.Outcome)->Unit) {
+    private fun pick(card:Int,stamp:String,alive:()->Boolean,approve:ListNavigator.Approve?=null,finish:(ListNavigator.Outcome)->Unit) {
         val file=File(filesDir,"captures/$runId/list.json")
         val saved=try { JSONObject(file.readText()) } catch(_:Exception) { JSONObject() }
         val state=ListNavigator.State(saved.optDouble("offset",0.0),saved.optInt("page",1),saved.optBoolean("synced",false),saved.optDouble("step",1.0),listRef)
@@ -799,6 +888,9 @@ class CollectorService : AccessibilityService() {
                             override val backArrow=arrow
                             override fun hasCard(x:Double,y:Double)=HeroGrid.hasCard(b,x,y)
                             override fun done(keep:String?) { if(keep!=null) store(b,runId,"$stamp-$keep") {} else b.recycle() }
+                            override fun words(then:(List<GameScreens.Word>)->Unit) {
+                                try { io.execute { val w=try { GameText.words(b) } catch(e:Throwable) { emptyList() }; handler.post { then(w) } } } catch(e:Exception) { then(emptyList()) }
+                            }
                         }) }
                     } } catch(e:Exception) { b.recycle(); then(null) }
                 }
@@ -812,7 +904,7 @@ class CollectorService : AccessibilityService() {
             override fun later(ms:Long,then:()->Unit) { handler.postDelayed(then,ms) }
             override fun note(text:String) { this@CollectorService.note(text) }
         }
-        ListNavigator(card,state,screen) { outcome ->
+        ListNavigator(card,state,screen,approve) { outcome ->
             listRef=state.ref
             try { file.parentFile?.mkdirs(); file.writeText(JSONObject().put("offset",state.offset).put("page",state.page).put("synced",state.synced).put("step",state.step).put("total",listTotal?:0).toString()) }
             catch(e:Exception) { CrashLog.record(this,"Không ghi được list.json",e) }
@@ -1099,7 +1191,7 @@ class CollectorService : AccessibilityService() {
         // Each table of the hero statistics in a folder of its own.
         if(folder!="manual"&&m.json.optString("collectionMode")=="ranking")
             return RankScreens.COMBOS.firstOrNull { name.contains("-${it.slug}-") }?.let { File(base,it.slug).apply { mkdirs() } }?:base
-        if(folder=="manual" || m.json.optString("collectionMode") !in listOf("single","all","board")) return base
+        if(folder=="manual" || m.json.optString("collectionMode") !in listOf("single","all","pick","board")) return base
         val key=Regex("(hero(?:-\\d{3})?)-").find(name)?.groupValues?.get(1) ?: return base
         val mapFile=File(base,"hero-folders.json")
         val mapping=try { JSONObject(mapFile.readText()) } catch(_:Exception) { JSONObject() }
@@ -1110,9 +1202,14 @@ class CollectorService : AccessibilityService() {
             "single" -> m.json.optString("heroName","").trim().takeUnless { it.isBlank()||it=="Chưa đặt tên" }
             // The name read on the "Chiến khu" card.
             "board" -> boardNames[key]?.takeIf { it.isNotBlank() }
+            // The name asked for, which was read on its card; as read on its page when the two agree.
+            "pick" -> BuiltInMacros.heroNames(m.json).getOrNull((key.removePrefix("hero-").toIntOrNull()?:1)-1)
+                ?.let { asked -> ocr?.takeIf { HeroFinder.same(HeroNames.slug(it),HeroNames.slug(asked)) }?:asked }
             else -> null
         }
         val displayName=manual?:ocr
+        // Names for "Lấy thông tin tướng" to offer, and for a whole-list run the card each hero is on.
+        displayName?.let { HeroIndex.record(filesDir,if(m.json.optString("collectionMode")=="all"&&ocr!=null) (key.removePrefix("hero-").toIntOrNull()?:0)-1 else -1,it) }
         val slug=displayName?.let { HeroNames.slug(it) } ?: "tuong-${key.removePrefix("hero-").takeUnless { it=="hero" }?:"001"}"
         var actual=slug;var suffix=2
         while(File(base,actual).exists()) { actual="$slug-${suffix++}" }

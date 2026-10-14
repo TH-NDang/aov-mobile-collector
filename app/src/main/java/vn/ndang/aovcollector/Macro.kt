@@ -30,6 +30,9 @@ class Macro(val raw: String) {
                 "screenshot" -> require(s.getString("name").matches(Regex("[a-zA-Z0-9_-]{1,64}"))) { "Tên ảnh không hợp lệ" }
                 "back" -> Unit
                 "pick" -> require(s.getInt("index") in 0..9999) { "pick: index từ 0 đến 9999" }
+                "find" -> { require(s.getString("name").trim().length in 1..40) { "find: cần tên tướng (tối đa 40 ký tự)" }
+                    require(s.optInt("hint",-1) in -1..9999) { "find: hint từ -1 đến 9999" }
+                    require(s.getInt("skipTo") in i+1..steps.length()) { "find: skipTo phải là một bước sau nó" } }
                 "enter" -> { require(i==0) { "enter chỉ dùng ở bước đầu" }; require(s.optString("to","list") in setOf("list","lobby")) { "enter: to là list hoặc lobby" } }
                 "board" -> { require(s.getInt("heroes") in 1..BuiltInMacros.ALL) { "board: số tướng từ 1 đến ${BuiltInMacros.ALL}" }
                     val tabs=s.getJSONArray("tabs"); require(tabs.length()>0) { "board: chọn ít nhất một bảng" }
@@ -66,6 +69,24 @@ object BuiltInMacros {
                openGame:Boolean = false, checkAccount:Boolean = false, traceEntry:Boolean = true):String {
         require(count in 1..ALL)
         val steps=org.json.JSONArray()
+        val hero=Hero(steps,fast,detailOnly,directSkills)
+        val entering=batch&&openGame
+        if(entering) steps.put(JSONObject().put("type","enter"))
+        hero.waitFor(if(entering) 1000 else 3000)
+        if(!batch) hero.collect("hero") else for(i in 0 until count) {
+            // "pick" scrolls the list by measured amounts and taps card i; the run ends early at the end of the list.
+            steps.put(JSONObject().put("type","pick").put("index",i)); hero.waitFor(if(fast) 2000 else 2700)
+            hero.collect("hero-%03d".format(i+1)); hero.back()
+        }
+        val safeName=heroName.trim().take(80)
+        return JSONObject().put("name",if(batch) "batch-heroes" else "single-hero")
+            .put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
+            .put("collectionMode",if(batch) "all" else "single").put("heroName",safeName)
+            .put("heroCount",if(batch) count else 1).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills).put("openGame",entering).put("checkAccount",entering&&checkAccount).put("traceEntry",traceEntry)
+            .put("builtinVersion",VERSION).put("steps",steps).toString(2)
+    }
+    /** The steps that photograph the hero page open: overview, attributes, then the skills read at run time. */
+    private class Hero(val steps:org.json.JSONArray,val fast:Boolean,val detailOnly:Boolean,val directSkills:Boolean) {
         val settle=if(fast) 600 else 900
         fun waitFor(ms:Int=settle) { steps.put(JSONObject().put("type","wait").put("ms",ms)) }
         fun tap(x:Double,y:Double,ms:Int=settle) { steps.put(JSONObject().put("type","tap").put("x",x).put("y",y)); waitFor(ms) }
@@ -77,22 +98,38 @@ object BuiltInMacros {
             // The skill row is read on the phone: four or five icons, and the other forms behind a ↻ button ([SkillReader]).
             steps.put(JSONObject().put("type","skills").put("prefix",prefix).put("detailOnly",detailOnly).put("directSkills",directSkills).put("fast",fast))
         }
-        val entering=batch&&openGame
-        if(entering) steps.put(JSONObject().put("type","enter"))
-        waitFor(if(entering) 1000 else 3000)
-        if(!batch) collect("hero") else for(i in 0 until count) {
-            // "pick" scrolls the list by measured amounts and taps card i; the run ends early at the end of the list.
-            steps.put(JSONObject().put("type","pick").put("index",i)); waitFor(if(fast) 2000 else 2700)
-            collect("hero-%03d".format(i+1))
-            tap(HeroGrid.BACK_X,HeroGrid.BACK_Y); waitFor(if(fast) 1000 else 1400)
+        /** Back from the hero page to the list. */
+        fun back() { tap(HeroGrid.BACK_X,HeroGrid.BACK_Y); waitFor(if(fast) 1000 else 1400) }
+    }
+    /**
+     * Heroes by name ([names]), found on the All-heroes list ([HeroSearch]): first at the card [hints] gives (from
+     * [HeroIndex], -1 when unknown), each name checked on the card. A hero not on the list is skipped: its "find"
+     * step jumps to the next hero's ("skipTo"). Options as for the list ([create]).
+     */
+    fun named(names:List<String>,hints:List<Int> =names.map { -1 },fast:Boolean=false,detailOnly:Boolean=false,directSkills:Boolean=false,
+              openGame:Boolean=false,checkAccount:Boolean=false,traceEntry:Boolean=true):String {
+        val chosen=names.mapIndexed { i,n -> n.trim() to (hints.getOrNull(i)?.takeIf { it>=0 }?:-1) }.filter { it.first.isNotEmpty() }.distinctBy { HeroNames.slug(it.first) }
+        val heroes=chosen.map { it.first }
+        require(heroes.size in 1..ALL) { "Chọn ít nhất một tướng" }
+        require(heroes.all { it.length<=40 }) { "Tên tướng tối đa 40 ký tự" }
+        val steps=org.json.JSONArray()
+        val hero=Hero(steps,fast,detailOnly,directSkills)
+        if(openGame) steps.put(JSONObject().put("type","enter"))
+        hero.waitFor(if(openGame) 1000 else 3000)
+        for((i,pair) in chosen.withIndex()) {
+            val find=JSONObject().put("type","find").put("name",pair.first).put("hint",pair.second)
+            steps.put(find); hero.waitFor(if(fast) 2000 else 2700)
+            hero.collect("hero-%03d".format(i+1)); hero.back()
+            find.put("skipTo",steps.length())
         }
-        val safeName=heroName.trim().take(80)
-        return JSONObject().put("name",if(batch) "batch-heroes" else "single-hero")
+        return JSONObject().put("name","named-heroes")
             .put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
-            .put("collectionMode",if(batch) "all" else "single").put("heroName",safeName)
-            .put("heroCount",if(batch) count else 1).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills).put("openGame",entering).put("checkAccount",entering&&checkAccount).put("traceEntry",traceEntry)
+            .put("collectionMode","pick").put("heroName",heroes.joinToString(", ").take(80)).put("heroNames",org.json.JSONArray(heroes))
+            .put("heroCount",heroes.size).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills).put("openGame",openGame).put("checkAccount",openGame&&checkAccount).put("traceEntry",traceEntry)
             .put("builtinVersion",VERSION).put("steps",steps).toString(2)
     }
+    /** The names a macro of heroes by name asks for, in order. */
+    fun heroNames(json:JSONObject):List<String> { val a=json.optJSONArray("heroNames")?:return emptyList(); return (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() } }
     /**
      * The hero statistics ([RankingReader]) for the tables named in [combos] ([RankScreens.Combo.slug]): with
      * [openGame], the game is opened and left at the lobby first, as for the list ([checkAccount], [traceEntry] the same).
@@ -141,7 +178,7 @@ object BuiltInMacros {
         val steps=JSONObject(create("",1,batch,fast,detailOnly,directSkills)).getJSONArray("steps")
         // Step 0 is the wait before the run starts, once per run.
         return (1 until steps.length()).sumOf { i -> val s=steps.getJSONObject(i)
-            when(s.getString("type")) { "wait" -> s.getLong("ms")/1000.0; "tap" -> .28; "screenshot" -> .45; "pick" -> 1.5
+            when(s.getString("type")) { "wait" -> s.getLong("ms")/1000.0; "tap" -> .28; "screenshot" -> .45; "pick" -> 1.5; "find" -> 3.0
                 // Four icons; heroes with five icons or other forms take longer.
                 "skills" -> SkillReader.seconds(SkillReader.Options(detailOnly,directSkills,fast)); else -> 0.0 } }
     }

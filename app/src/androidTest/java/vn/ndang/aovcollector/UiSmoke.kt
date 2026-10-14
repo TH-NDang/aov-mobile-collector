@@ -96,6 +96,18 @@ class UiSmoke:Instrumentation() {
             // Việt Nam's top three and "Số 1 máy chủ" by default; the whole server's top ten in four screens when chosen.
             check(BuiltInMacros.boardWants(Macro(BuiltInMacros.board(heroes=2)).json)==BoardScreens.DEFAULT)
             check(BuiltInMacros.boardWants(Macro(BuiltInMacros.board(heroes=2,wanted=listOf(BoardScreens.Want(BoardScreens.Tab.SERVER,10)))).json).single().pages==4)
+            // Names on the All-heroes cards, read by ML Kit on the user's screenshot: the card each is on, and where to tap for one.
+            val listSmall=context.assets.open("list-all.jpg").use { BitmapFactory.decodeStream(it) }
+            val listShot=Bitmap.createScaledBitmap(listSmall,listSmall.width*2,listSmall.height*2,true); listSmall.recycle()
+            val listWords=GameText.words(listShot).also { listShot.recycle() }
+            File(targetContext.filesDir,"smoke").resolve("ocr-list.txt").writeText(listWords.joinToString("\n") { w -> "%.3f %.3f %s".format(w.x,w.y,w.text) })
+            val cards=HeroFinder.cards(listWords,0.0)
+            for((card,slug) in listOf(0 to "flowborn",1 to "tamyn",2 to "dyadia",3 to "flowborn",5 to "heino",6 to "biron",7 to "bolt-baron",8 to "billow",9 to "charlotte"))
+                check(cards.any { it.first==card&&HeroNames.slug(it.second.text)==slug }) { "Card ${card+1} is not $slug: ${cards.map { "${it.first}=${it.second.text}" }}" }
+            val bolt=HeroFinder.spot(listWords,0.0,"bolt-baron",-1)
+            check(bolt!=null&&bolt.first==7&&Math.abs(bolt.second.first-.58)<.03&&Math.abs(bolt.second.second-.82)<.05) { "Bolt Baron found at $bolt" }
+            // Two cards named Flowborn: the one nearer the card last seen.
+            check(HeroFinder.spot(listWords,0.0,"flowborn",3)?.first==3&&HeroFinder.spot(listWords,0.0,"flowborn",0)?.first==0) { "Flowborn cards mixed up" }
             val modeButton=RankScreens.modeButton(modes)
             check(modeButton!=null&&RankScreens.option(modes,modeButton,RankScreens.Mode.ELITE)?.let { Math.abs(it.y-.444)<.03 }==true&&RankScreens.option(modes,modeButton,RankScreens.Mode.FIVE)?.let { Math.abs(it.y-.378)<.03 }==true) { "Drop-down read as $modeButton" }
             // The faint UID line at the bottom of game screens, drawn as the game draws it.
@@ -116,6 +128,11 @@ class UiSmoke:Instrumentation() {
             val direct=Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true,directSkills=true))
             check(direct.photoTotal==6&&(0 until direct.steps.length()).map { direct.steps.getJSONObject(it) }.single { it.getString("type")=="skills" }.getBoolean("directSkills")) { "Chuyển thẳng chiêu should reach the skills step" }
             check(Macro(BuiltInMacros.create("",11,true)).steps.toString().contains("\"pick\""))
+            // Heroes by name: a "find" step a hero, which skips to the next hero's when the list has no such hero.
+            val named=Macro(BuiltInMacros.named(listOf("Bolt Baron"," violet ","Bolt Baron"),listOf(7,-1,7)))
+            val finds=(0 until named.steps.length()).filter { named.steps.getJSONObject(it).getString("type")=="find" }
+            check(finds.size==2&&named.steps.getJSONObject(finds[0]).getInt("skipTo")==finds[1]&&named.steps.getJSONObject(finds[1]).getInt("skipTo")==named.steps.length()
+                &&named.steps.getJSONObject(finds[0]).getInt("hint")==7&&named.steps.getJSONObject(finds[1]).getString("name")=="violet"&&BuiltInMacros.heroNames(named.json)==listOf("Bolt Baron","violet")) { "Heroes by name: ${named.raw}" }
             // Thống kê tướng takes the chosen tables only; one saved before the choice existed takes all six.
             check(BuiltInMacros.rankCombos(Macro(BuiltInMacros.ranking(combos=listOf("ty-le-dau-5v5","chi-so-dau-hang-tinh-anh"))).json).map { it.slug }==listOf("ty-le-dau-5v5","chi-so-dau-hang-tinh-anh"))
             check(BuiltInMacros.rankCombos(JSONObject(BuiltInMacros.ranking()).apply { remove("rankCombos") }).size==6)
@@ -180,7 +197,7 @@ class UiSmoke:Instrumentation() {
             // Exercise the actual chooser button, repeatedly, then after rotation.
             fun chooserClick() {
                 waitForIdleSync();SystemClock.sleep(500)
-                val node=automation.windows.mapNotNull { it.root }.flatMap { it.findAccessibilityNodeInfosByText("Một tướng") }.firstOrNull { it.contentDescription?.toString()=="Chọn macro, có tìm kiếm" }?:error("Missing chooser button")
+                val node=automation.windows.mapNotNull { it.root }.flatMap { it.findAccessibilityNodeInfosByText("Lấy thông tin tướng") }.firstOrNull { it.contentDescription?.toString()=="Chọn macro, có tìm kiếm" }?:error("Missing chooser button")
                 check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK));waitForIdleSync();SystemClock.sleep(250)
             }
             repeat(3) { chooserClick();chooserClick() }
@@ -191,14 +208,30 @@ class UiSmoke:Instrumentation() {
             // Search the actual floating dropdown before selecting.
             fun findEdit(n:AccessibilityNodeInfo):AccessibilityNodeInfo? { if(n.className?.toString()=="android.widget.EditText") return n;for(i in 0 until n.childCount) { val child=n.getChild(i)?:continue;val e=findEdit(child);if(e!=null) return e };return null }
             val search=nodes().firstNotNullOfOrNull { findEdit(it) }?:error("Missing macro search")
-            check(search.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"mot tuong") }))
+            check(search.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"lay thong tin") }))
             waitForIdleSync();SystemClock.sleep(400);snap("02b-search")
-            click("Một tướng đang mở");snap("03-single-form")
-            fun edit(n:AccessibilityNodeInfo):AccessibilityNodeInfo? { if(n.className?.toString()=="android.widget.EditText") return n;for(i in 0 until n.childCount) { val child=n.getChild(i)?:continue;val e=edit(child);if(e!=null) return e };return null }
-            val field=nodes().firstNotNullOfOrNull { edit(it) }?:error("No name input")
-            check(field.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"Violet") }))
+            // Heroes by name: one kept from an earlier run, ticked from the search, and a new name typed and added.
+            File(targetContext.filesDir,HeroIndex.FILE).writeText("3\tFlowborn\n7\tBolt Baron\n-1\tViolet\n")
+            targetContext.getSharedPreferences("ui",0).edit().putInt("heroMode",0).remove("pickNames").commit()
+            click("Lấy thông tin tướng (theo tên, đầu danh sách hoặc tướng đang mở)");SystemClock.sleep(800);snap("03-hero-form")
+            click("Theo tên tướng")
+            fun edits(n:AccessibilityNodeInfo,out:MutableList<AccessibilityNodeInfo> =ArrayList()):List<AccessibilityNodeInfo> { if(n.className?.toString()=="android.widget.EditText") out+=n;for(i in 0 until n.childCount) n.getChild(i)?.let { edits(it,out) };return out }
+            fun nameField()=nodes().flatMap { edits(it) }.firstOrNull { it.hintText?.toString()?.startsWith("Gõ tên tướng")==true }?:error("No hero name search")
+            fun type(text:String) { check(nameField().performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,text) }));waitForIdleSync();SystemClock.sleep(500) }
+            type("bolt");click("Bolt Baron")
+            type("Qi");click("Thêm tướng: Qi");snap("03b-hero-names")
             click("Chọn tác vụ")
-            check(Macro(MacroStore.current(targetContext).readText()).json.optString("heroName")=="Violet")
+            val picked=Macro(MacroStore.current(targetContext).readText())
+            val firstFind=(0 until picked.steps.length()).map { picked.steps.getJSONObject(it) }.first { it.getString("type")=="find" }
+            check(picked.json.optString("collectionMode")=="pick"&&BuiltInMacros.heroNames(picked.json)==listOf("Bolt Baron","Qi")&&firstFind.getInt("hint")==7) { "Heroes by name chose ${picked.raw.take(400)}" }
+            // The hero page open now, with its name typed.
+            chooserClick();check(nodes().firstNotNullOfOrNull { findEdit(it) }!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"lay thong tin") }))
+            waitForIdleSync();SystemClock.sleep(400)
+            click("Lấy thông tin tướng (theo tên, đầu danh sách hoặc tướng đang mở)");SystemClock.sleep(800);click("Tướng đang mở")
+            val single=nodes().flatMap { edits(it) }.firstOrNull { it.hintText?.toString()=="Để trống để tự đọc tên" }?:error("No name input")
+            check(single.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"Violet") }))
+            click("Chọn tác vụ")
+            check(Macro(MacroStore.current(targetContext).readText()).json.let { it.optString("heroName")=="Violet"&&it.optString("collectionMode")=="single" })
             snap("04-panel")
             // No run yet: Dừng has nothing to end.
             check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Dừng") }.firstOrNull { it.text?.toString()=="Dừng" }?.isEnabled==false) { "Dừng is enabled before any run" }

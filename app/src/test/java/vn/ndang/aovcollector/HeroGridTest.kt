@@ -61,7 +61,7 @@ class HeroGridTest {
         }
     }
 
-    private class Run(heroes:Int,seed:Int,slide:ClosedFloatingPointRange<Double>,startAt:Double=0.0) {
+    private class Run(heroes:Int,seed:Int,slide:ClosedFloatingPointRange<Double>,startAt:Double=0.0,val names:List<String> =List(heroes) { "Hero $it" }) {
         val list=FakeList(heroes,seed,slide).apply { offset=maxOffset*startAt }
         val state=ListNavigator.State()
         val tapped=ArrayList<Int?>()
@@ -83,6 +83,10 @@ class HeroGridTest {
                     override val backArrow=arrow
                     override fun hasCard(x:Double,y:Double)=HeroGrid.hasCard(list.w,list.h,x,y,list::readRow)
                     override fun done(keep:String?) { if(keep!=null) kept+=keep }
+                    // Each card's name across its bottom, as ML Kit reads it, for the cards on screen.
+                    override fun words(then:(List<GameScreens.Word>)->Unit) = then(if(list.page!=FakeList.Page.LIST) emptyList() else names.indices.mapNotNull { i ->
+                        val y=(HeroGrid.ROW0+(i/5)*HeroGrid.PITCH)+HeroFinder.NAME_BELOW-list.offset/list.h; val x=HeroGrid.columns[i%5]
+                        if(y<.15||y>.98) null else GameScreens.Word(names[i],x-.04,y-.015,x+.04,y+.015) })
                 })
             }
             override fun drag(d:Double,fling:Boolean,then:(Boolean)->Unit) { swipes++; if(list.page==FakeList.Page.LIST) list.drag(d,fling); then(true) }
@@ -104,12 +108,54 @@ class HeroGridTest {
                 when(val o=outcome) {
                     is ListNavigator.Outcome.Tapped -> if(card !in ignoredBack) list.page=FakeList.Page.LIST
                     is ListNavigator.Outcome.End -> return tapped to "end at $card"
+                    is ListNavigator.Outcome.Missing -> return tapped to "missing at $card"
                     is ListNavigator.Outcome.Failed -> return tapped to "failed at $card: ${o.reason}"
                     null -> return tapped to "no outcome at $card"
                 }
             }
             return tapped to "limit"
         }
+        /** Finds [name] with [HeroSearch] from card [hint]: the card tapped and how it ended. */
+        fun search(name:String,hint:Int):Pair<Int?,String> {
+            var result:Pair<ListNavigator.Outcome,Int?>?=null
+            HeroSearch(name,hint,{ card,approve,then -> ListNavigator(card,state,screen,approve,then).start() }) { o,card -> result=o to card }.start()
+            val (o,card)=result?:return null to "no outcome"
+            return tapped.lastOrNull() to (if(o is ListNavigator.Outcome.Tapped) "tapped $card" else o.toString())
+        }
+    }
+
+    @Test fun keepsHeroNamesWithTheirPlacesOnTheList() {
+        val e=HeroIndex.parse("0\tFlowborn\n3\tFlowborn\n7\tBolt Baron\n-1\tViolet\nx\tQi\n5\t12/100\n9\tChưa rõ tên\n")
+        assertEquals(listOf("0 Flowborn","3 Flowborn","7 Bolt Baron","-1 Qi","-1 Violet"),e.map { "${it.index} ${it.name}" })
+        assertEquals(listOf(7),HeroIndex.find(e,"Bolt Barom").map { it.index })
+        assertEquals(listOf(0,3),HeroIndex.find(e,"flowborn").map { it.index })
+        assertEquals(listOf<Int>(),HeroIndex.find(e,"Violet").map { it.index })
+        assertEquals(listOf("Bolt Baron","Flowborn","Qi","Violet"),HeroIndex.names(e))
+        // Seen on the list: placed, no longer a name alone; a card read again takes the name read.
+        val placed=HeroIndex.put(HeroIndex.put(e,8,"Violet"),7,"Tamyn")
+        assertEquals(listOf("0 Flowborn","3 Flowborn","7 Tamyn","8 Violet","-1 Qi"),placed.map { "${it.index} ${it.name}" })
+        assertEquals(placed.map { "${it.index} ${it.name}" },HeroIndex.parse(HeroIndex.format(placed)).map { "${it.index} ${it.name}" })
+        // A name alone adds nothing for a hero already placed.
+        assertEquals(5,HeroIndex.put(placed,-1,"Flowborn").size)
+    }
+
+    @Test fun findsAHeroByNameWhereverTheListPutsIt() {
+        val names=List(61) { "Hero $it" }.toMutableList().also { it[47]="Bolt Baron"; it[3]="Flowborn"; it[0]="Flowborn" }
+        // Where it was last seen.
+        assertEquals(47 to "tapped 47",Run(61,2,1.0..1.3,names=names).search("Bolt Baron",47))
+        // A new hero pushed it one card on: the card at the old place is another, and the list is searched.
+        assertEquals(47 to "tapped 47",Run(61,2,1.0..1.3,names=names).search("Bolt Baron",46))
+        // Never seen: down the list from the top, read as ML Kit may, a letter off.
+        assertEquals(47 to "tapped 47",Run(61,2,1.0..1.3,names=names).search("Bolt Barom",-1))
+        // Pushed a row on, off the screen of the old place: found on the next screens.
+        assertEquals(47 to "tapped 47",Run(61,2,1.0..1.3,names=names).search("Bolt Baron",43))
+        // Moved back towards the top: past the end of the list, then back up.
+        assertEquals(47 to "tapped 47",Run(61,2,1.0..1.3,names=names).search("Bolt Baron",56))
+        // Two cards of one name: the one remembered.
+        assertEquals(3 to "tapped 3",Run(61,2,1.0..1.3,names=names).search("Flowborn",3))
+        // Not on the list: to its end.
+        val run=Run(61,2,1.0..1.3,names=names); val (card,end)=run.search("Tamyn",10)
+        assertEquals(null to "End",card to end.substringAfterLast('$').substringBefore('@'))
     }
 
     private fun assertCollectsAll(heroes:Int,seed:Int,slide:ClosedFloatingPointRange<Double>,startAt:Double=0.0) {

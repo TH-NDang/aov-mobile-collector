@@ -70,6 +70,7 @@ class MainActivity : Activity() {
         return when(m.optString("collectionMode")) {
             "single" -> m.optString("heroName").takeIf { it.isNotBlank()&&it!="Chưa đặt tên" }?:"Một tướng"
             "all" -> "Danh sách tướng"
+            "pick" -> m.optString("heroName").takeIf { it.isNotBlank() }?:"Lấy thông tin tướng"
             "ranking" -> "Thống kê tướng"
             "board" -> "Chiến khu"
             else -> if(file.name=="manual") "Chụp nhanh" else "Lượt thu thập"
@@ -355,7 +356,7 @@ class MainActivity : Activity() {
         }
     }
     private fun importMenu() { AlertDialog.Builder(this).setTitle("Nhập file").setItems(arrayOf("Ảnh và thư mục từ ZIP","Macro từ JSON")) { _,i -> if(editable()) startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type=if(i==0) "application/zip" else "application/json";addCategory(Intent.CATEGORY_OPENABLE) },if(i==0) 12 else 10) }.show() }
-    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Một tướng hoặc Danh sách → Chạy. Với Danh sách, tick Tự mở game thì app đóng hẳn Liên Quân nếu còn chạy (Cài đặt → Buộc dừng), mở lại, đóng popup sự kiện và vào danh sách tướng. Thống kê tướng chụp hết Bảng Phân Bậc Tướng (2 bảng × 3 chế độ) từ mục Cộng đồng. Chiến khu chụp bảng xếp hạng người chơi của từng tướng (Đấu hạng → Chiến khu).\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080. Hàng chiêu được đọc khi chạy: 4 hoặc 5 biểu tượng, và tướng có nút ↻ được chụp thêm các chiêu đổi ở dạng khác. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nAOV Collector 0.6.0").setPositiveButton("Đã hiểu",null)
+    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Lấy thông tin tướng → chọn Theo tên tướng, Các ô đầu danh sách hoặc Tướng đang mở → Chạy. Theo tên: tick các tướng đã lưu từ lượt trước hoặc gõ tên; app tới ô đã biết, đọc lại tên trên thẻ, sai thì dò danh sách. Với hai cách đầu, tick Tự mở game thì app đóng hẳn Liên Quân nếu còn chạy (Cài đặt → Buộc dừng), mở lại, đóng popup sự kiện và vào danh sách tướng. Thống kê tướng chụp hết Bảng Phân Bậc Tướng (2 bảng × 3 chế độ) từ mục Cộng đồng. Chiến khu chụp bảng xếp hạng người chơi của từng tướng (Đấu hạng → Chiến khu).\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080. Hàng chiêu được đọc khi chạy: 4 hoặc 5 biểu tượng, và tướng có nút ↻ được chụp thêm các chiêu đổi ở dạng khác. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nAOV Collector 0.7.0").setPositiveButton("Đã hiểu",null)
         if(CrashLog.file(this).exists()) dialog.setNeutralButton("Nhật ký lỗi") { _,_ -> showLog("Nhật ký lỗi") };dialog.show() }
     private fun requestExport(files:List<File>) {
         if(files.isEmpty()||!editable()) return
@@ -435,7 +436,7 @@ class MainActivity : Activity() {
         val saved=Accounts.uid(this)
         val body=Ui.stack(this).apply { setPadding(dp(22),dp(6),dp(22),0) }
         body.addView(Ui.text(this,if(saved!=null) "Đã lưu: UID $saved · tài khoản ${Accounts.user(this)?:"?"}" else "Chưa lưu tài khoản test.",13f,Ui.muted))
-        body.addView(Ui.text(this,"Khi chạy Danh sách tướng có Tự mở game và Kiểm tra UID, app đọc UID trong game. Khác UID này thì app đăng xuất và đăng nhập tài khoản dưới đây trên trang Garena, mỗi lượt một lần. Mật khẩu được mã hóa trong máy, không nằm trong file ZIP và không hiện lại.",12f,Ui.muted).apply { setPadding(0,dp(6),0,dp(6)) })
+        body.addView(Ui.text(this,"Khi Lấy thông tin tướng từ danh sách có Tự mở game và Kiểm tra UID, app đọc UID trong game. Khác UID này thì app đăng xuất và đăng nhập tài khoản dưới đây trên trang Garena, mỗi lượt một lần. Mật khẩu được mã hóa trong máy, không nằm trong file ZIP và không hiện lại.",12f,Ui.muted).apply { setPadding(0,dp(6),0,dp(6)) })
         val uid=Ui.field(this,"UID (xem trong game: hồ sơ → UID)",saved?:"",true)
         val user=Ui.field(this,"Tài khoản Garena, email hoặc số điện thoại",Accounts.user(this)?:"")
         val password=Ui.field(this,"Mật khẩu","").apply { inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD }

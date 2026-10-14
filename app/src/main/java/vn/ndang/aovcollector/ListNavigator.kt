@@ -8,15 +8,24 @@ import kotlin.math.abs
  * All screen access goes through [Screen], so unit tests run this exact logic on a drawn list.
  * When a hero page is still open (the game ignored the macro's back tap), it taps the game's back arrow.
  */
-class ListNavigator(private val card:Int,private val state:State,private val screen:Screen,private val finish:(Outcome)->Unit) {
+class ListNavigator(private val card:Int,private val state:State,private val screen:Screen,private val approve:Approve?=null,private val finish:(Outcome)->Unit) {
+    /**
+     * Asked before card [card] is tapped, at (x, y) on shot s, which [has] a card there, with the list [offset]
+     * screens down: answers the place to tap (another card of the same screen), or null when the hero sought is
+     * not on it. Picks by place alone have none and tap where they are.
+     */
+    fun interface Approve { fun check(s:Shot,x:Double,y:Double,has:Boolean,offset:Double,then:(Pair<Double,Double>?)->Unit) }
     /** Kept between the picks of one run. [step] shrinks when swipes slide further than can be measured. */
     class State(var offset:Double=0.0,var page:Int=1,var synced:Boolean=false,var step:Double=1.0,var ref:FloatArray?=null)
-    sealed class Outcome { object Tapped:Outcome(); object End:Outcome(); class Failed(val reason:String):Outcome() }
+    /** [Missing]: the [Approve] did not find the hero sought where the card was. */
+    sealed class Outcome { object Tapped:Outcome(); object End:Outcome(); object Missing:Outcome(); class Failed(val reason:String):Outcome() }
     /**
      * One screenshot; call [done] exactly once, with a name to store it in the run (pages of the list, and
      * screens the navigator left with the back arrow) or null to drop it. [backArrow] matters off the list only.
      */
-    interface Shot { val profile:FloatArray; val height:Int; val backArrow:Boolean; fun hasCard(x:Double,y:Double):Boolean; fun done(keep:String?) }
+    interface Shot { val profile:FloatArray; val height:Int; val backArrow:Boolean; fun hasCard(x:Double,y:Double):Boolean; fun done(keep:String?)
+        /** The words on the screenshot, read on demand ([HeroFinder]). */
+        fun words(then:(List<GameScreens.Word>)->Unit) { then(emptyList()) } }
     interface Screen {
         val alive:Boolean
         /** null when no screenshot could be read; an empty profile when the screen is not the hero list. */
@@ -74,8 +83,15 @@ class ListNavigator(private val card:Int,private val state:State,private val scr
     private fun aim(s:Shot,keep:Boolean) {
         when(val plan=HeroGrid.plan(card,state.offset)) {
             is HeroGrid.Plan.Move -> { s.done(if(keep) page() else null); move(plan.d*state.step) }
-            is HeroGrid.Plan.Tap -> { val has=s.hasCard(plan.x,plan.y); s.done(if(keep) page() else null); if(has) tap(plan.x,plan.y) else finish(Outcome.End) }
+            is HeroGrid.Plan.Tap -> { val has=s.hasCard(plan.x,plan.y); decide(s,plan.x,plan.y,has,if(keep) page() else null,true) }
         }
+    }
+    /** Taps the card at ([x], [y]) if there is one and the [approve] agrees; [end]: a missing card is the end of the list. */
+    private fun decide(s:Shot,x:Double,y:Double,has:Boolean,keep:String?,end:Boolean) {
+        val a=approve
+        if(a==null) { s.done(keep); return if(has) tap(x,y) else if(end) finish(Outcome.End) else fail("Danh sách không cuộn được") }
+        a.check(s,x,y,has,state.offset) { at -> s.done(keep)
+            when { !screen.alive -> Unit; at!=null -> tap(at.first,at.second); has -> finish(Outcome.Missing); end -> finish(Outcome.End); else -> fail("Danh sách không cuộn được") } }
     }
     private fun tap(x:Double,y:Double) { if(screen.alive) screen.tap(x,y) { ok -> if(ok) finish(Outcome.Tapped) else fail("Không chạm được thẻ tướng") } }
     private fun move(d:Double) {
@@ -97,8 +113,8 @@ class ListNavigator(private val card:Int,private val state:State,private val scr
         if(interrupted||++stalls<2) return aim(s,false)
         // The list stopped moving: past its end there is nothing more to collect.
         val (x,y)=HeroGrid.centre(card,state.offset)
-        val has=d>0&&y<HeroGrid.LAST_ROW_LIMIT&&s.hasCard(x,y); s.done(null)
-        if(has) tap(x,y) else if(d>0) finish(Outcome.End) else fail("Danh sách không cuộn được")
+        val has=d>0&&y<HeroGrid.LAST_ROW_LIMIT&&s.hasCard(x,y)
+        decide(s,x,y,has,null,d>0)
     }
     /** The list slid further than one screenshot can follow: drag back, measure against [before], and use smaller steps from now on. */
     private fun undo(d:Double,before:FloatArray,offsetBefore:Double) {

@@ -6,7 +6,7 @@ App thử nghiệm Android 11+ để chụp dữ liệu menu Liên Quân VN bằ
 1. Bấm **Trợ năng** trên header và bật AOV Collector trong cài đặt hệ thống.
 2. Bấm **Bảng nổi**, mở game thủ công và vào màn hình tướng.
 3. Mở danh sách macro trên bảng nổi; tìm tên có dấu hoặc không dấu.
-4. Chọn **Một tướng đang mở** hoặc **Danh sách tướng**; nhập tên tùy chọn hoặc số ô cần thu thập. Với Danh sách, tick **Tự mở game** để app tự mở Liên Quân, đóng popup sự kiện và vào danh sách tướng.
+4. Chọn **Lấy thông tin tướng**, rồi chọn cách lấy: **Theo tên tướng** (tick các tướng đã lưu hoặc gõ tên), **Các ô đầu danh sách** (số ô cần thu thập) hoặc **Tướng đang mở**. Với hai cách đầu, tick **Tự mở game** để app tự mở Liên Quân, đóng popup sự kiện và vào danh sách tướng.
 5. Bấm **Chạy**. Nút đổi thành **Tạm dừng**, rồi **Tiếp tục**. **Dừng** kết thúc lượt và giữ ảnh.
 6. **Chụp** lưu ảnh thủ công. **Về app** tạm dừng và mở lịch sử. **Đóng** tạm dừng và ẩn bảng. Dấu **−** thu gọn, vẫn chạy.
 7. Trong lịch sử, mở thư mục để xem ảnh; bấm **Chọn** hoặc nhấn giữ để chọn nhiều, **Lưu ZIP** hoặc **Xóa**. Menu từng mục có đổi tên. File ZIP lưu ra chứa các ZIP nhỏ dưới 450 MB, xếp theo chữ cái.
@@ -580,3 +580,53 @@ Tạm dừng ngắt ngay. Khi Tiếp tục, app tìm lại đường vào Chiế
 - **Trên máy ảo CI:** ML Kit đọc các ảnh bạn gửi (tên và ảnh người chơi đã làm mờ, UID đã che) và nhận đúng từng màn: Đấu hạng, 7 màn mùa mới, 4 bước chọn khu vực, Chiến khu (đọc ra tên Flowborn, Valhein), Chọn tướng, Số 1 máy chủ, trailer.
 - **Chưa chạy trên máy thật.** Lần đầu nên thử 2 tướng, rồi xem `events.txt` và ảnh của lượt.
 
+
+## v0.7.0: Lấy thông tin tướng – tìm tướng theo tên
+
+**"Một tướng đang mở" và "Danh sách tướng" được gộp thành một tác vụ: "Lấy thông tin tướng".** Trong form có 3 cách lấy:
+
+1. **Theo tên tướng** (mới):
+   - Gõ để tìm trong các tên đã lưu từ những lượt trước, rồi tick các tướng cần lấy (chọn được nhiều tướng).
+   - Tên chưa có thì gõ đủ tên rồi bấm **Thêm tướng: …**.
+   - Không tick tướng nào thì app lấy đúng tên đang gõ.
+   - Các tướng đã tick được nhớ cho lần sau.
+2. **Các ô đầu danh sách:** như "Danh sách tướng" cũ (2 ô, 11 ô hoặc tất cả).
+3. **Tướng đang mở:** như "Một tướng" cũ. Tên tướng không bắt buộc.
+
+Các tùy chọn chạy nhanh, chỉ chụp Chi tiết, chuyển thẳng giữa các chiêu vẫn như cũ. Tự mở game, Kiểm tra UID và Lưu ảnh từng bước chỉ dùng cho hai cách bắt đầu từ danh sách.
+
+### Tên đã lưu và vị trí tướng
+
+- **Mỗi lượt lấy cả danh sách** lưu tên tướng (đọc trên trang tướng) cùng ô của nó trong danh sách. Thứ tự là thứ tự đang chọn trong game, mặc định **"Theo ngày"**: tướng mới nhất ở đầu.
+- **Tướng chụp ở các tác vụ khác** (tướng đang mở, Chiến khu) được lưu tên, chưa có vị trí.
+- **Lần đầu mở form,** app dựng danh sách này từ các lượt đã lưu trong máy. Sau đó app tự cập nhật sau mỗi lượt.
+- Danh sách nằm trong `hero-index.tsv` của app, không nằm trong file ZIP.
+
+### Cách tìm một tướng
+
+1. **Đã biết vị trí:** app cuộn tới ô đó (cuộn có đo như lấy danh sách) và **đọc lại tên trên thẻ** trước khi bấm.
+   - Nếu tướng nằm ở ô khác trên cùng màn (ví dụ game vừa thêm tướng mới nên các tướng lùi 1 ô), app bấm vào đúng thẻ có tên đó.
+   - Nếu tên không có trên màn, app **dò tiếp**: cuộn xuống mỗi lần 2 hàng tới cuối danh sách, rồi quay lên các hàng phía trên.
+2. **Chưa biết vị trí:** app dò từ đầu danh sách.
+3. **Tên trên thẻ được đọc bằng ML Kit.** Tên dài từ 5 chữ cái cho phép sai 1 chữ.
+   - Có 2 thẻ cùng tên (ví dụ 2 thẻ Flowborn): app chọn thẻ gần vị trí đã lưu.
+4. **Tướng không có trong danh sách** thì bị bỏ qua. App ghi lại trong `events.txt` và làm tiếp tướng sau.
+5. Mọi tên đọc được trên đường dò đều được lưu vị trí mới, nên lần sau app tới thẳng.
+
+**Ảnh của từng tướng** nằm trong thư mục mang tên tướng: tên đọc trên trang tướng nếu khớp với tên đã chọn, nếu không thì dùng tên đã chọn.
+
+### Kiểm tra
+
+- **Danh sách giả 61 tướng** (cuộn trượt ngẫu nhiên như game), tìm "Bolt Baron":
+  - đúng vị trí cũ;
+  - lệch 1 ô;
+  - lệch xuống 1 hàng, ra khỏi màn cũ;
+  - lệch lên phía trên (dò tới cuối rồi quay lên);
+  - chưa biết vị trí, gõ sai 1 chữ ("Bolt Barom");
+  - 2 thẻ Flowborn;
+  - tên không có trong danh sách: chạy tới cuối rồi bỏ qua.
+- **Tên đã lưu:** đọc, ghi, thay tên ở một ô, bỏ các dòng không phải tên.
+- **Trên máy ảo CI:**
+  - ML Kit đọc tên trên ảnh danh sách bạn gửi (UID đã che): đúng ô của Flowborn, Tamyn, Dyadia, Heino, Biron, Bolt Baron, Billow, Charlotte, và đúng chỗ bấm cho Bolt Baron.
+  - Form mới: tìm "bolt" rồi tick Bolt Baron (vị trí đã lưu là ô 8), thêm tên mới "Qi", ra macro 2 tướng theo tên. Cách "Tướng đang mở" vẫn nhận tên gõ vào.
+- **Chưa chạy trên máy thật.** Lần đầu nên thử 2 tướng, rồi xem `events.txt`.
