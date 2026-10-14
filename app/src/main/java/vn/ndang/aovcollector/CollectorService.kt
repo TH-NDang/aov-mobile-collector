@@ -399,7 +399,7 @@ class CollectorService : AccessibilityService() {
         display(AlertDialog.Builder(this).setTitle("Tùy chọn")
             .setItems(arrayOf("Tạo lượt mới với tác vụ này","Bỏ một thao tác…","Cách dùng các nút","Đóng bảng nổi")) { _,which -> handler.post {
                 when(which) { 0 -> reset();1 -> skipDialog();2 -> display(AlertDialog.Builder(this).setTitle("Điều khiển")
-                    .setMessage("Tạm dừng: nghỉ sau thao tác hiện tại; Tiếp tục sẽ chạy tiếp đúng chỗ.\n\nKết thúc: giữ ảnh và đóng lượt. Chọn Tạo lượt mới để chạy lại.\n\nDấu −: thu gọn bảng, tác vụ vẫn chạy. Chạm nút AOV để mở lại.\n\nBỏ một thao tác là tùy chọn nâng cao, không phải bỏ cả tướng.").setPositiveButton("Đã hiểu",null).create());3 -> { pause("Đã đóng bảng");hidePanel() } }
+                    .setMessage("Tạm dừng: nghỉ ngay. Bước vào game hay lấy chiêu đang dở sẽ làm lại từ đầu bước đó khi Tiếp tục; thao tác ngắn khác chạy nốt rồi nghỉ.\n\nKết thúc: giữ ảnh và đóng lượt. Chọn Tạo lượt mới để chạy lại.\n\nDấu −: thu gọn bảng, tác vụ vẫn chạy. Chạm nút AOV để mở lại.\n\nBỏ một thao tác là tùy chọn nâng cao, không phải bỏ cả tướng.").setPositiveButton("Đã hiểu",null).create());3 -> { pause("Đã đóng bảng");hidePanel() } }
             } }.setNegativeButton("Đóng",null).create())
     }
     private fun skipDialog() {
@@ -458,8 +458,14 @@ class CollectorService : AccessibilityService() {
             selectionCache=null
         } catch(e:Exception) { CrashLog.record(this,"Không nâng cấp được macro",e) }
     }
-    private fun pause(s:String) { val was=running; entering=false; setRunning(false); save(); if(was) note("Tạm dừng: $s"); status(s) }
-    private fun stop() { setRunning(false); stopped=true; save(); note("Kết thúc lượt"); status("Đã kết thúc lượt · ảnh đã được giữ lại") }
+    /**
+     * Ends the step in progress at once when it can run for minutes: the way into the game and a hero's skills.
+     * Other steps take a second or two and finish. A cut step starts over on Tiếp tục.
+     */
+    private var cancelStep:(()->Unit)?=null
+    private fun interrupt() { cancelStep?.invoke(); cancelStep=null }
+    private fun pause(s:String) { val was=running; interrupt(); entering=false; setRunning(false); save(); if(was) note("Tạm dừng: $s"); status(s) }
+    private fun stop() { interrupt(); setRunning(false); stopped=true; save(); note("Kết thúc lượt"); status("Đã kết thúc lượt · ảnh đã được giữ lại") }
     private fun save() {
         val m=macro ?: return
         prefs.edit().putString("hash",m.hash).putInt("step",index).putString("run",runId).putBoolean("stopped",stopped).putBoolean("running",running).putLong("activeMs",elapsed()).commit()
@@ -494,7 +500,7 @@ class CollectorService : AccessibilityService() {
         var finished=false
         fun done(ok:Boolean,reason:String?=null) {
             if(finished || token!=generation) return
-            finished=true; busy=false; entering=false
+            finished=true; busy=false; entering=false; cancelStep=null
             shield(false)
             if(!ok) { pause(reason?:failure?:"Không thực hiện được thao tác ${index+1}. Kiểm tra màn hình rồi tiếp tục."); return }
             index++; save()
@@ -504,7 +510,7 @@ class CollectorService : AccessibilityService() {
         }
         fun listEnded(collected:Int) {
             if(finished || token!=generation) return
-            finished=true; busy=false; shield(false)
+            finished=true; busy=false; cancelStep=null; shield(false)
             index=m.steps.length(); setRunning(false); save(); note("Hết danh sách · $collected tướng · ${clock(elapsed())}"); status("Đã hết danh sách · lấy xong $collected tướng · ${clock(elapsed())}")
         }
         try {
@@ -512,6 +518,8 @@ class CollectorService : AccessibilityService() {
             // A step that never reports back must not leave the controller stuck on "Đang xử lý".
             val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; "pick" -> 300000L; "enter" -> GameEntry.LIMIT_MS+30000; "skills" -> 300000L; else -> 10000L }
             handler.postDelayed({ if(!finished && token==generation) done(false,"Bước ${index+1} ($type) quá ${limit/1000} giây không xong. Kiểm tra màn hình rồi tiếp tục.") },limit)
+            // Its callbacks see the step finished and stop; a tap already sent still lands.
+            if(type=="enter"||type=="skills") cancelStep={ if(!finished) { finished=true; busy=false; entering=false; shield(false); note("Ngắt bước ${index+1} ($type) giữa chừng") } }
             when(type) {
                 "wait" -> handler.postDelayed({ done(true) },s.getLong("ms"))
                 "back" -> done(performGlobalAction(GLOBAL_ACTION_BACK))
@@ -540,7 +548,7 @@ class CollectorService : AccessibilityService() {
                     touchGame(gesture,!swipe) { done(it) }
                 }
             }
-        } catch(e:Exception) { CrashLog.record(this,"Lỗi bước ${index+1}",e); finished=true; busy=false; shield(false); pause("Lỗi: ${e.message}") }
+        } catch(e:Exception) { CrashLog.record(this,"Lỗi bước ${index+1}",e); finished=true; busy=false; cancelStep=null; shield(false); pause("Lỗi: ${e.message}") }
     }
     /**
      * Sends a gesture to the game with the panel out of the way. If the touch still lands on the
@@ -629,7 +637,7 @@ class CollectorService : AccessibilityService() {
      * order, as 0012-03-hero-001-skill-2-detail, so a hero's folder lists them as they were taken.
      */
     private fun skills(s:JSONObject,alive:()->Boolean,finish:(SkillReader.Outcome)->Unit) {
-        val stamp="%04d".format(index+1); var order=0
+        val stamp="%04d".format(index+1); var order=0; val key="$runId/$stamp"
         fun photo(n:String)="$stamp-%02d-$n".format(++order)
         val screen=object:SkillReader.Screen {
             override val alive get()=alive()
@@ -649,9 +657,13 @@ class CollectorService : AccessibilityService() {
             override fun shot(name:String,then:(Boolean)->Unit) { capture(photo(name),runId,done=then) }
             override fun later(ms:Long,then:()->Unit) { handler.postDelayed(then,ms) }
             override fun note(text:String) { this@CollectorService.note(text) }
+            override fun firstForm(row:SkillRow.Row) { skillForm=key to row }
         }
-        SkillReader(s.getString("prefix"),SkillReader.Options(s.optBoolean("detailOnly"),s.optBoolean("directSkills"),s.optBoolean("fast")),screen,finish).start()
+        val known=skillForm?.takeIf { it.first==key }?.second
+        SkillReader(s.getString("prefix"),SkillReader.Options(s.optBoolean("detailOnly"),s.optBoolean("directSkills"),s.optBoolean("fast")),screen,known,finish).start()
     }
+    /** The first form of the skills step last started, by run and step, for a try of it after a pause. */
+    private var skillForm:Pair<String,SkillRow.Row>?=null
     /** Photos of the run on disk: with skill rows read at run time, the macro alone cannot tell. */
     private fun photosTaken(m:Macro):Int = if(!m.photosVary||runId.isEmpty()) m.photoSteps.size
         else File(filesDir,"captures/$runId").walk().count { it.extension=="png"&&it.name.contains("hero") }
@@ -711,7 +723,7 @@ class CollectorService : AccessibilityService() {
             override fun later(ms:Long,then:()->Unit) { handler.postDelayed(then,ms) }
             override fun now()=SystemClock.elapsedRealtime()
             override fun note(text:String) { this@CollectorService.note(text) }
-            override fun say(text:String) { lastStatus=text;refreshPanel() }
+            override fun say(text:String) { if(alive()) { lastStatus=text;refreshPanel() } }
         }
         GameEntry(screen,expected,finish).start()
     }

@@ -23,7 +23,7 @@ gradle assembleDebug lintDebug
 Mở thư mục bằng Android Studio hoặc chạy workflow; Gradle wrapper chưa được đóng gói.
 
 ## Giới hạn
-Screenshot cần API 30+, có thể thất bại nếu game chặn chụp. Nút Dừng hủy các bước tiếp theo; một gesture/screenshot đã gửi Android có thể vẫn hoàn thành. Tạm dừng khi bước đang chạy sẽ chờ hoàn tất bước đó rồi lưu checkpoint. Nếu app bị kill giữa một bước, bước đó có thể chạy lại khi tiếp tục. Thay đổi UI/độ phân giải/tỉ lệ màn hình có thể làm tọa độ lệch; chuẩn hóa tỉ lệ không thay thế hiệu chỉnh. Một popup hệ thống hoặc rời game sẽ tạm dừng. Không có bảo đảm phát hiện mọi popup Unity.
+Screenshot cần API 30+, có thể thất bại nếu game chặn chụp. Nút Dừng hủy các bước tiếp theo; một gesture/screenshot đã gửi Android có thể vẫn hoàn thành. Tạm dừng khi bước đang chạy sẽ chờ hoàn tất bước đó rồi lưu checkpoint; riêng bước vào game và bước lấy chiêu bị ngắt ngay và làm lại từ đầu khi Tiếp tục. Nếu app bị kill giữa một bước, bước đó có thể chạy lại khi tiếp tục. Thay đổi UI/độ phân giải/tỉ lệ màn hình có thể làm tọa độ lệch; chuẩn hóa tỉ lệ không thay thế hiệu chỉnh. Một popup hệ thống hoặc rời game sẽ tạm dừng. Không có bảo đảm phát hiện mọi popup Unity.
 
 
 ## v0.2: collections and file management
@@ -340,3 +340,26 @@ Giờ app **đọc hàng chiêu trên ảnh chụp ngay lúc chạy**, rồi m�
   - nút ↻ không phản hồi;
   - bảng chiêu còn mở.
 - **Phần trích xuất chữ** (`extraction/merge.py` ở nhánh `claude/vlm-text-extraction`) chưa biết chiêu 4 và ảnh dạng 2: cần cập nhật riêng.
+
+## v0.4.10: Tạm dừng và Dừng ngắt ngay bước vào game
+
+**Lỗi:** bấm Tạm dừng hoặc Dừng khi app đang tự vào game thì bảng nổi vẫn hiện tiến trình vào game, và app vẫn tiếp tục bấm trong game.
+- **Nguyên nhân:** hai nút này chỉ đánh dấu "nghỉ sau thao tác hiện tại". Bước vào game là một thao tác dài tới 8 phút nên vẫn chạy tiếp tới khi xong, và vẫn ghi tiến trình lên bảng.
+
+**Sửa:**
+- **Bước vào game và bước lấy chiêu bị ngắt ngay** khi bấm Tạm dừng, Dừng, Về app hoặc Đóng.
+  - Một cú chạm đã gửi cho Android thì vẫn tới game; sau đó app không chạm, không chụp nữa.
+  - Bảng nổi giữ dòng "Đã tạm dừng" thay vì tiến trình vào game.
+  - Nhật ký lượt (`events.txt`) ghi "Ngắt bước … giữa chừng".
+- **Khi bấm Tiếp tục, bước bị ngắt làm lại từ đầu:**
+  - Vào game: app nhìn màn hình hiện tại rồi đi tiếp.
+  - Lấy chiêu: ảnh trùng tên được ghi đè. Nếu lúc ngắt hàng chiêu đang ở dạng 2, app bấm ↻ cho về dạng đầu trước khi chụp lại, nên ảnh dạng 2 không bị lưu nhầm thành dạng đầu.
+- **Các thao tác ngắn khác** (chạm, chờ, chụp, chọn tướng trong danh sách) vẫn chạy nốt rồi nghỉ, như trước. Chọn tướng chạy nốt để không mất vị trí đã đo của danh sách.
+
+### Kiểm tra
+
+- Kịch bản cho bước lấy chiêu:
+  - bị ngắt sau ảnh thứ hai thì không chạm và không chụp thêm;
+  - làm lại khi Qi đang ở dạng 2 thì bấm ↻ trước, rồi chụp đủ như lần đầu.
+- 56 test đều qua.
+

@@ -57,11 +57,11 @@ class SkillsTest {
     private fun row(vararg icons:Int,swap:Boolean=false)=SkillRow.Row(if(icons.size==5) SkillRow.FIVE else SkillRow.FOUR,swap,icons.map { intArrayOf(40*it,40*it,40*it) })
     private val none=SkillRow.Row(null,false,emptyList())
     /** A hero page whose ↻ button steps through [forms]; a skill or attribute panel hides the row until closed. */
-    private class Page(val forms:List<SkillRow.Row>,var panel:Boolean=false,var deaf:Int=0) : SkillReader.Screen {
-        var form=0
+    private class Page(val forms:List<SkillRow.Row>,var panel:Boolean=false,var deaf:Int=0,var form:Int=0,val stopAfter:Int=Int.MAX_VALUE) : SkillReader.Screen {
+        var stopped=false
         val taps=ArrayList<String>(); val shots=ArrayList<String>(); val kept=ArrayList<String>(); val notes=ArrayList<String>()
         var outcome:SkillReader.Outcome?=null
-        override val alive get()=outcome==null
+        override val alive get()=outcome==null&&!stopped
         override fun look(then:(SkillReader.Look?)->Unit) { val shown=if(panel) SkillRow.Row(null,false,emptyList()) else forms[form]
             then(object:SkillReader.Look { override val row=shown; override fun done(keep:String?) { if(keep!=null) kept+=keep } }) }
         override fun tap(x:Double,y:Double,then:(Boolean)->Unit) {
@@ -73,10 +73,10 @@ class SkillsTest {
             }
             taps+=what; then(true)
         }
-        override fun shot(name:String,then:(Boolean)->Unit) { shots+=name; then(true) }
+        override fun shot(name:String,then:(Boolean)->Unit) { shots+=name; if(shots.size>=stopAfter) stopped=true; then(true) }
         override fun later(ms:Long,then:()->Unit) = then()
         override fun note(text:String) { notes+=text }
-        fun run(options:SkillReader.Options=SkillReader.Options()):Page { SkillReader("hero-007",options,this) { outcome=it }.start(); return this }
+        fun run(options:SkillReader.Options=SkillReader.Options(),known:SkillRow.Row?=null):Page { SkillReader("hero-007",options,this,known) { outcome=it }.start(); return this }
     }
 
     @Test fun fourIconsWithoutForms() {
@@ -119,5 +119,19 @@ class SkillsTest {
         // No row even then: the four places of earlier versions, with the screen kept to look at later.
         val lost=Page(listOf(none),panel=true).run(SkillReader.Options(detailOnly=true))
         assertEquals(listOf("skill-row-unknown"),lost.kept); assertEquals(4,lost.shots.size)
+    }
+
+    @Test fun stopsWhenThePauseCutsTheStep() {
+        // Tạm dừng after the second photo: nothing more is tapped or shot, and the step does not report back.
+        val page=Page(listOf(row(1,2,3,4,swap=true),row(1,2,3,9,swap=true)),stopAfter=2).run(SkillReader.Options(detailOnly=true))
+        assertEquals(2,page.shots.size); assertEquals("detail",page.taps.last()); assertNull(page.outcome)
+    }
+    @Test fun aRetryAfterAPauseGoesBackToTheFirstForm() {
+        // The pause left Qi on her second form: ↻ first, then the step runs as if new.
+        val first=row(1,2,3,4,swap=true)
+        val page=Page(listOf(first,row(1,2,3,9,swap=true)),form=1).run(SkillReader.Options(detailOnly=true),known=first)
+        assertEquals("swap",page.taps.first())
+        assertEquals(listOf("passive","skill-1","skill-2","skill-3","form-2-skill-3").map { "hero-007-$it-detail" },page.shots)
+        assertEquals(0,page.form)
     }
 }

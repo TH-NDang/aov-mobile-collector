@@ -8,8 +8,11 @@ package vn.ndang.aovcollector
  *
  * Shots are named after the slot: passive, skill-1… for the first form; form-2-passive, form-2-skill-3… for an
  * icon a later form changed, with the skill row of that form kept as form-2-icons.
+ *
+ * [known] is the first form an earlier, interrupted try of the same step saw: the page may have been left on
+ * another form, which would otherwise be taken for the first.
  */
-class SkillReader(private val prefix:String,private val options:Options,private val screen:Screen,private val finish:(Outcome)->Unit) {
+class SkillReader(private val prefix:String,private val options:Options,private val screen:Screen,private val known:SkillRow.Row?=null,private val finish:(Outcome)->Unit) {
     /** As in [BuiltInMacros.create]: the summary tab is skipped with [detailOnly]; [directSkills] keeps the panel open between icons. */
     class Options(val detailOnly:Boolean=false,val directSkills:Boolean=false,val fast:Boolean=false)
     sealed class Outcome { class Done(val summary:String):Outcome(); class Failed(val reason:String):Outcome() }
@@ -24,6 +27,8 @@ class SkillReader(private val prefix:String,private val options:Options,private 
         fun shot(name:String,then:(Boolean)->Unit)
         fun later(ms:Long,then:()->Unit)
         fun note(text:String) {}
+        /** The first form, once read: kept for a try of the step after a pause. */
+        fun firstForm(row:SkillRow.Row) {}
     }
     companion object {
         /** Most heroes have two forms; a few cycle through three. */
@@ -47,7 +52,7 @@ class SkillReader(private val prefix:String,private val options:Options,private 
     private val changes=ArrayList<String>()
     private var ended=false
 
-    fun start() { first(false) }
+    fun start() { first(false,0) }
 
     private fun end(outcome:Outcome) { if(!ended) { ended=true; finish(outcome) } }
     private fun fail(reason:String) = end(Outcome.Failed(reason))
@@ -65,14 +70,19 @@ class SkillReader(private val prefix:String,private val options:Options,private 
         screen.shot("$prefix-$name") { ok -> if(ok) then() else screen.later(1000) { if(screen.alive) screen.shot("$prefix-$name") { again -> if(again) then() else fail("Không chụp được ảnh $name") } } }
     }
 
-    private fun first(closed:Boolean):Unit = look { l ->
+    private fun first(closed:Boolean,returns:Int):Unit = look { l ->
         val row=l.row
         when {
-            row.centres!=null -> { l.done(null); forms.add(row)
+            // Left on another form by a pause: ↻ until the first form is back.
+            row.centres!=null&&known!=null&&!row.sameAs(known)&&row.swap&&returns<MAX_FORMS-1 -> { l.done(null)
+                if(returns==0) screen.note("Hàng chiêu không ở dạng đầu như lần trước; bấm ↻ để về dạng đầu")
+                tap(SkillRow.SWAP_X,SkillRow.Y,settle+300) { first(true,returns+1) } }
+            row.centres!=null -> { l.done(null); forms.add(row); screen.firstForm(row)
+                if(known!=null&&!row.sameAs(known)) screen.note("Không về được dạng đầu như lần trước; lấy dạng đang hiện làm dạng đầu")
                 screen.note("Hàng chiêu: ${row.centres.size} ô"+if(row.swap) ", có nút đổi dạng ↻" else "")
                 capture(1,row.centres,row.centres.indices.toList()) { if(row.swap) swap(2,0) else done() } }
             // A panel may still be open over the page: tap empty space once and read again.
-            !closed -> { l.done(null); tap(CLOSE_X,CLOSE_Y,settle) { first(true) } }
+            !closed -> { l.done(null); tap(CLOSE_X,CLOSE_Y,settle) { first(true,returns) } }
             else -> { l.done("skill-row-unknown")
                 screen.note("Không nhận ra hàng chiêu; chụp theo 4 vị trí như trước")
                 capture(1,SkillRow.FOUR,SkillRow.FOUR.indices.toList()) { done() } }
