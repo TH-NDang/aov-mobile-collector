@@ -1,0 +1,3 @@
+<resources>
+    <style name="Theme.Collector" parent="Theme.Collector.Dark"/>
+</resources>

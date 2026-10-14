@@ -1,0 +1,35 @@
+<resources>
+    <!-- The app's two looks; the colours match Ui.LIGHT and Ui.DARK. Controls and dialogs take the accent. -->
+    <style name="Theme.Collector.Light" parent="@android:style/Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">#5C49DC</item>
+        <item name="android:colorPrimaryDark">#F6F7FB</item>
+        <item name="android:colorAccent">#5C49DC</item>
+        <item name="android:colorControlActivated">#5C49DC</item>
+        <item name="android:windowBackground">@color/canvas_light</item>
+        <item name="android:colorBackground">#F6F7FB</item>
+        <item name="android:alertDialogTheme">@style/Theme.Collector.Dialog.Light</item>
+    </style>
+    <style name="Theme.Collector.Dark" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:colorPrimary">#ADA0FF</item>
+        <item name="android:colorPrimaryDark">#0F111A</item>
+        <item name="android:colorAccent">#ADA0FF</item>
+        <item name="android:colorControlActivated">#ADA0FF</item>
+        <item name="android:windowBackground">@color/canvas_dark</item>
+        <item name="android:colorBackground">#0F111A</item>
+        <item name="android:alertDialogTheme">@style/Theme.Collector.Dialog.Dark</item>
+    </style>
+    <style name="Theme.Collector.Dialog.Light" parent="@android:style/Theme.Material.Light.Dialog.Alert">
+        <item name="android:colorAccent">#5C49DC</item>
+        <item name="android:colorControlActivated">#5C49DC</item>
+        <item name="android:colorBackground">#FFFFFF</item>
+    </style>
+    <style name="Theme.Collector.Dialog.Dark" parent="@android:style/Theme.Material.Dialog.Alert">
+        <item name="android:colorAccent">#ADA0FF</item>
+        <item name="android:colorControlActivated">#ADA0FF</item>
+        <item name="android:colorBackground">#1B1E2C</item>
+    </style>
+    <!-- Before the app reads its own setting: the phone's light or dark mode (values-night). -->
+    <style name="Theme.Collector" parent="Theme.Collector.Light"/>
+    <color name="canvas_light">#F6F7FB</color>
+    <color name="canvas_dark">#0F111A</color>
+</resources>

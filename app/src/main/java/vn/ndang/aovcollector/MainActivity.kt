@@ -123,13 +123,15 @@ class MainActivity : Activity() {
     // The screen in front gets the result of a job; with none in front, the result comes as a notification.
     private val jobDone:(String)->Unit={ result -> showHistory();message(result) }
     override fun onCreate(savedInstanceState:Bundle?) {
+        // The look chosen in "Giao diện" (or the phone's), before any view or dialog is made.
+        Ui.use(this); setTheme(Ui.windowTheme(this))
         super.onCreate(savedInstanceState)
         CrashLog.install(this)
         if(!MacroStore.current(this).exists()) MacroStore.current(this).writeText(BuiltInMacros.create(""))
         folder=savedInstanceState?.getString("folder")?.let { File(it) }?.takeIf { it.isDirectory&&it.canonicalPath.startsWith(captures.canonicalPath+"/") }
         pendingExport=savedInstanceState?.getStringArrayList("export")?.map { File(it) }.orEmpty()
         window.statusBarColor=Ui.canvas;window.navigationBarColor=Ui.canvas
-        window.decorView.systemUiVisibility=View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+        window.decorView.systemUiVisibility=if(Ui.colors===Ui.DARK) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         showHistory()
         if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob()
     }
@@ -151,6 +153,7 @@ class MainActivity : Activity() {
             .setNeutralButton("Sao chép") { _,_ -> (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("AOV Collector",text));Toast.makeText(this,"Đã sao chép nhật ký",Toast.LENGTH_SHORT).show() }.show()
     }
     private fun shell():LinearLayout {
+        Ui.use(this)
         val root=Ui.stack(this).apply { setBackgroundColor(Ui.canvas) }
         root.setOnApplyWindowInsetsListener { v,ins -> val b=ins.getInsets(WindowInsets.Type.systemBars());v.setPadding(b.left,b.top,b.right,b.bottom);ins }
         setContentView(root);root.requestApplyInsets();return root
@@ -163,20 +166,21 @@ class MainActivity : Activity() {
         top.addView(Ui.text(this,"Thu thập trong game · quản lý ảnh tại đây",13f,Ui.muted))
         val row=LinearLayout(this)
         val connected=CollectorService.current!=null
-        headerAction(row,"access",if(connected) "Đã bật Trợ năng" else "Bật Trợ năng",if(connected) Color.rgb(31,132,112) else Ui.accent) { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        headerAction(row,"access",if(connected) "Đã bật Trợ năng" else "Bật Trợ năng",if(connected) Ui.success else Ui.accent) { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         headerAction(row,"import","Nhập file",Ui.accent) { importMenu() }
         headerAction(row,"account",if(Accounts.uid(this)!=null) "Tài khoản test" else "Tài khoản",Ui.accent) { accountDialog() }
+        headerAction(row,"theme","Giao diện",Ui.accent) { themeDialog() }
         headerAction(row,"float","Bảng nổi",Ui.accent) { val service=CollectorService.current;if(service==null) message("Bấm Bật Trợ năng, bật AOV Collector rồi quay lại.") else { service.showPanel();Toast.makeText(this,"Mở game, bấm Chọn macro trên bảng nổi để chọn cách chụp.",Toast.LENGTH_LONG).show() } }
         top.addView(row);root.addView(top)
     }
     private fun headerAction(row:LinearLayout,kind:String,label:String,color:Int,action:()->Unit) {
         val cell=Ui.stack(this).apply { gravity=Gravity.CENTER;setPadding(dp(3),dp(9),dp(3),0) }
         val icon=ImageButton(this).apply {
-            setImageDrawable(ActionIcon(kind,color));background=Ui.shape(Color.WHITE,dp(16),Ui.border);setPadding(dp(12),dp(12),dp(12),dp(12))
+            setImageDrawable(ActionIcon(kind,color));background=Ui.shape(Ui.surface,dp(16),Ui.border);setPadding(dp(12),dp(12),dp(12),dp(12))
             contentDescription=label;tooltipText=label;setOnClickListener { action() }
         }
-        cell.addView(icon,LinearLayout.LayoutParams(dp(50),dp(50)))
-        cell.addView(Ui.text(this,label,11f,Ui.muted,true).apply { gravity=Gravity.CENTER;setOnClickListener { action() } })
+        cell.addView(icon,LinearLayout.LayoutParams(dp(48),dp(48)))
+        cell.addView(Ui.text(this,label,11f,Ui.muted,true).apply { gravity=Gravity.CENTER;maxLines=2;setOnClickListener { action() } })
         row.addView(cell,LinearLayout.LayoutParams(0,-2,1f))
     }
     // A run's record of the way into the game is opened from the run's menu, not listed as a hero folder.
@@ -237,12 +241,27 @@ class MainActivity : Activity() {
         val m=meta(file)
         val ran=m.optLong("activeMs",0L).takeIf { it>0 }?.let { " · chạy "+duration(it) }?:""
         info.addView(Ui.text(this,time+(if(file.isDirectory) "${all.size} ảnh · " else "PNG · ")+Format.size(size)+ran,12f,Ui.muted))
-        val note=if(m.optString("nameSource")=="ocr") "Tên từ ảnh" else if(m.optString("nameSource")=="unknown") "Cần đặt tên" else when(m.optString("state")) { "completed"->"Hoàn tất";"paused"->"Tạm dừng";"stopped"->"Đã kết thúc";"running"->"Đang chạy";else->"" }
-        if(note.isNotEmpty()) info.addView(Ui.text(this,note,11f,Ui.muted));row.addView(info,LinearLayout.LayoutParams(0,-2,1f))
+        // What the folder is and how its run ended, as small coloured labels.
+        val chips=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL;setPadding(0,dp(3),0,0) }
+        fun chip(text:String,color:Int) { chips.addView(Ui.chip(this,text,color),LinearLayout.LayoutParams(-2,-2).apply { if(chips.childCount>0) leftMargin=dp(6) }) }
+        if(file.isDirectory&&!File(file,"hero.json").exists()) kind(file,m)?.takeUnless { k -> title(file).contains(k,true) }?.let { chip(it,Ui.accent) }
+        when(m.optString("nameSource")) { "ocr" -> chip("Tên từ ảnh",Ui.muted); "unknown" -> chip("Cần đặt tên",Ui.warning) }
+        when(m.optString("state")) { "completed" -> chip("Hoàn tất",Ui.success); "paused" -> chip("Tạm dừng",Ui.warning); "stopped" -> chip("Đã kết thúc",Ui.muted); "running" -> chip("Đang chạy",Ui.accent) }
+        if(chips.childCount>0) info.addView(chips);row.addView(info,LinearLayout.LayoutParams(0,-2,1f))
         if(!selecting) row.addView(Ui.text(this,"⋮",26f,Ui.muted).apply { gravity=Gravity.CENTER;setOnClickListener { itemMenu(file) };contentDescription="Tùy chọn ${title(file)}" },LinearLayout.LayoutParams(dp(36),dp(48)))
         card.addView(row);body.addView(card)
         card.setOnClickListener { if(selecting) { if(!selected.add(file)) selected.remove(file);showHistory() } else if(file.isDirectory) { folder=file;selected.clear();showHistory() } else preview(file) }
         card.setOnLongClickListener { selecting=true;selected.add(file);showHistory();true }
+    }
+    /** The task a run folder holds, for its label. */
+    private fun kind(file:File,m:JSONObject):String? = when(m.optString("collectionMode")) {
+        "single","all","pick" -> "Thông tin tướng"; "ranking" -> "Thống kê"; "board" -> "Chiến khu"; "custom" -> "Macro"
+        else -> if(file.name=="manual") "Chụp nhanh" else null }
+    /** "Giao diện": the phone's light or dark mode, or always light or dark; the screen is built again in it. */
+    private fun themeDialog() {
+        val options=Ui.Theme.values(); val current=Ui.theme(this)
+        AlertDialog.Builder(this).setTitle("Giao diện").setSingleChoiceItems(options.map { it.label }.toTypedArray(),options.indexOf(current)) { dialog,i ->
+            dialog.dismiss(); if(options[i]!=current) { Ui.setTheme(this,options[i]); recreate() } }.setNegativeButton("Đóng",null).show()
     }
     private fun goBack() { if(selecting) { selecting=false;selected.clear() } else folder=folder?.parentFile?.takeUnless { it==captures };showHistory() }
     @Deprecated("Legacy navigation") override fun onBackPressed() { if(historyRoot==null) showHistory() else if(folder!=null||selecting) goBack() else super.onBackPressed() }
@@ -257,7 +276,7 @@ class MainActivity : Activity() {
         val counter=Ui.text(this,"",13f,Ui.muted,true);top.addView(counter);content.addView(top)
         val caption=Ui.text(this,"",11f,Ui.muted).apply { maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.MIDDLE };content.addView(caption)
         val frame=FrameLayout(this)
-        val image=ImageView(this).apply { scaleType=ImageView.ScaleType.FIT_CENTER;background=Ui.shape(Color.rgb(24,26,40),dp(14));clipToOutline=true;contentDescription="Ảnh đang xem, vuốt ngang để đổi ảnh" }
+        val image=ImageView(this).apply { scaleType=ImageView.ScaleType.FIT_CENTER;background=Ui.shape(Ui.media,dp(14));clipToOutline=true;contentDescription="Ảnh đang xem, vuốt ngang để đổi ảnh" }
         frame.addView(image,FrameLayout.LayoutParams(-1,-1))
         fun arrow(text:String,gravity:Int)=Ui.text(this,text,26f,Color.WHITE,true).apply { this.gravity=Gravity.CENTER;background=Ui.shape(Color.argb(110,0,0,0),dp(22))
             frame.addView(this,FrameLayout.LayoutParams(dp(44),dp(44),gravity or Gravity.CENTER_VERTICAL).apply { marginStart=dp(8);marginEnd=dp(8) }) }
@@ -356,7 +375,7 @@ class MainActivity : Activity() {
         }
     }
     private fun importMenu() { AlertDialog.Builder(this).setTitle("Nhập file").setItems(arrayOf("Ảnh và thư mục từ ZIP","Macro từ JSON")) { _,i -> if(editable()) startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type=if(i==0) "application/zip" else "application/json";addCategory(Intent.CATEGORY_OPENABLE) },if(i==0) 12 else 10) }.show() }
-    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Lấy thông tin tướng → chọn Theo tên tướng, Các ô đầu danh sách hoặc Tướng đang mở → Chạy. Theo tên: tick các tướng đã lưu từ lượt trước hoặc gõ tên; app tới ô đã biết, đọc lại tên trên thẻ, sai thì dò danh sách. Với hai cách đầu, tick Tự mở game thì app đóng hẳn Liên Quân nếu còn chạy (Cài đặt → Buộc dừng), mở lại, đóng popup sự kiện và vào danh sách tướng. Thống kê tướng chụp hết Bảng Phân Bậc Tướng (2 bảng × 3 chế độ) từ mục Cộng đồng. Chiến khu chụp bảng xếp hạng người chơi của từng tướng (Đấu hạng → Chiến khu).\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080. Hàng chiêu được đọc khi chạy: 4 hoặc 5 biểu tượng, và tướng có nút ↻ được chụp thêm các chiêu đổi ở dạng khác. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nAOV Collector 0.7.0").setPositiveButton("Đã hiểu",null)
+    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Lấy thông tin tướng → chọn Theo tên tướng, Các ô đầu danh sách hoặc Tướng đang mở → Chạy. Theo tên: tick các tướng đã lưu từ lượt trước hoặc gõ tên; app tới ô đã biết, đọc lại tên trên thẻ, sai thì dò danh sách. Với hai cách đầu, tick Tự mở game thì app đóng hẳn Liên Quân nếu còn chạy (Cài đặt → Buộc dừng), mở lại, đóng popup sự kiện và vào danh sách tướng. Thống kê tướng chụp hết Bảng Phân Bậc Tướng (2 bảng × 3 chế độ) từ mục Cộng đồng. Chiến khu chụp bảng xếp hạng người chơi của từng tướng (Đấu hạng → Chiến khu).\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080. Hàng chiêu được đọc khi chạy: 4 hoặc 5 biểu tượng, và tướng có nút ↻ được chụp thêm các chiêu đổi ở dạng khác. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nGiao diện: chọn Sáng, Tối hoặc Theo hệ thống ở nút Giao diện trên đầu màn hình.\n\nAOV Collector 0.8.0").setPositiveButton("Đã hiểu",null)
         if(CrashLog.file(this).exists()) dialog.setNeutralButton("Nhật ký lỗi") { _,_ -> showLog("Nhật ký lỗi") };dialog.show() }
     private fun requestExport(files:List<File>) {
         if(files.isEmpty()||!editable()) return
@@ -461,7 +480,7 @@ class MainActivity : Activity() {
         top.addView(Ui.text(this,"Các bước vào game",19f,Ui.ink,true),LinearLayout.LayoutParams(0,-2,1f))
         val counter=Ui.text(this,"",13f,Ui.muted,true);top.addView(counter);content.addView(top)
         val caption=Ui.text(this,"",14f,Ui.ink).apply { setPadding(0,dp(4),0,0) };content.addView(caption)
-        val image=ImageView(this).apply { scaleType=ImageView.ScaleType.FIT_CENTER;background=Ui.shape(Color.rgb(24,26,40),dp(14));clipToOutline=true }
+        val image=ImageView(this).apply { scaleType=ImageView.ScaleType.FIT_CENTER;background=Ui.shape(Ui.media,dp(14));clipToOutline=true }
         content.addView(image,LinearLayout.LayoutParams(-1,0,1f).apply { topMargin=dp(8) })
         val nav=LinearLayout(this)
         var pos=0
@@ -493,6 +512,8 @@ class MainActivity : Activity() {
             when(kind) {
                 "access" -> { canvas.drawCircle(12f,4f,2f,p);canvas.drawLine(4f,9f,20f,9f,p);canvas.drawLine(12f,7f,12f,15f,p);canvas.drawLine(12f,15f,7f,22f,p);canvas.drawLine(12f,15f,17f,22f,p) }
                 "account" -> { canvas.drawCircle(12f,8f,4.5f,p);val path=Path().apply { moveTo(3f,22f);quadTo(3f,14f,12f,14f);quadTo(21f,14f,21f,22f) };canvas.drawPath(path,p) }
+                // Giao diện: a circle, its right half filled, light and dark side by side.
+                "theme" -> { canvas.drawCircle(12f,12f,9f,p);p.style=Paint.Style.FILL;canvas.drawPath(Path().apply { arcTo(3f,3f,21f,21f,-90f,180f,true);close() },p) }
                 "import" -> { canvas.drawLine(12f,2f,12f,15f,p);canvas.drawLine(7f,10f,12f,15f,p);canvas.drawLine(17f,10f,12f,15f,p);val path=Path().apply { moveTo(3f,15f);lineTo(3f,21f);lineTo(21f,21f);lineTo(21f,15f) };canvas.drawPath(path,p) }
                 else -> { canvas.drawRoundRect(2f,3f,21f,20f,3f,3f,p);p.style=Paint.Style.FILL;canvas.drawRoundRect(11f,11f,23f,23f,3f,3f,p) }
             };canvas.restore()

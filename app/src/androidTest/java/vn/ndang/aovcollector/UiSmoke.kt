@@ -213,7 +213,7 @@ class UiSmoke:Instrumentation() {
             // Heroes by name: one kept from an earlier run, ticked from the search, and a new name typed and added.
             File(targetContext.filesDir,HeroIndex.FILE).writeText("3\tFlowborn\n7\tBolt Baron\n-1\tViolet\n")
             targetContext.getSharedPreferences("ui",0).edit().putInt("heroMode",0).remove("pickNames").commit()
-            click("Lấy thông tin tướng (theo tên, đầu danh sách hoặc tướng đang mở)");SystemClock.sleep(800);snap("03-hero-form")
+            click("Lấy thông tin tướng");SystemClock.sleep(800);snap("03-hero-form")
             click("Theo tên tướng")
             fun edits(n:AccessibilityNodeInfo,out:MutableList<AccessibilityNodeInfo> =ArrayList()):List<AccessibilityNodeInfo> { if(n.className?.toString()=="android.widget.EditText") out+=n;for(i in 0 until n.childCount) n.getChild(i)?.let { edits(it,out) };return out }
             fun nameField()=nodes().flatMap { edits(it) }.firstOrNull { it.hintText?.toString()?.startsWith("Gõ tên tướng")==true }?:error("No hero name search")
@@ -227,7 +227,7 @@ class UiSmoke:Instrumentation() {
             // The hero page open now, with its name typed.
             chooserClick();check(nodes().firstNotNullOfOrNull { findEdit(it) }!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"lay thong tin") }))
             waitForIdleSync();SystemClock.sleep(400)
-            click("Lấy thông tin tướng (theo tên, đầu danh sách hoặc tướng đang mở)");SystemClock.sleep(800);click("Tướng đang mở")
+            click("Lấy thông tin tướng");SystemClock.sleep(800);click("Tướng đang mở")
             val single=nodes().flatMap { edits(it) }.firstOrNull { it.hintText?.toString()=="Để trống để tự đọc tên" }?:error("No name input")
             check(single.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"Violet") }))
             click("Chọn tác vụ")
@@ -269,7 +269,23 @@ class UiSmoke:Instrumentation() {
             check(closed==GameCloser.Result.CLOSED&&output("pidof $app").isEmpty()) { "Force stop of $app: $closed, pid ${output("pidof $app")}" }
             val again=close()
             check(again==GameCloser.Result.NOT_RUNNING) { "A stopped $app read as $again" }
-            result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, overlay, rotation, tap-through and force stop passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
+            // Giao diện Tối: the history and a task form over the game in the dark look.
+            targetContext.getSharedPreferences("ui",0).edit().putString("theme","dark").commit()
+            startActivitySync(Intent(targetContext,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+            fun luma():Double { waitForIdleSync();SystemClock.sleep(700);val shot=automation.takeScreenshot()?:error("No screenshot");val b=shot.copy(Bitmap.Config.ARGB_8888,false);shot.recycle()
+                var sum=0L;var n=0;for(y in 0 until b.height step 12) for(x in 0 until b.width step 12) { val p=b.getPixel(x,y);sum+=(299*Color.red(p)+587*Color.green(p)+114*Color.blue(p))/1000;n++ };b.recycle();return sum.toDouble()/n }
+            check(Ui.colors===Ui.DARK) { "Giao diện Tối was not taken" }
+            val darkHistory=luma();snap("08-dark-history")
+            check(darkHistory<90) { "The dark history is not dark: mean brightness $darkHistory" }
+            runOnMainSync { service!!.showPanel() };chooserClick()
+            check(nodes().firstNotNullOfOrNull { findEdit(it) }!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"lay thong tin") }))
+            waitForIdleSync();SystemClock.sleep(400);snap("09-dark-picker")
+            click("Lấy thông tin tướng");SystemClock.sleep(800)
+            val darkForm=luma();snap("10-dark-form")
+            check(darkForm<90) { "The dark task form is not dark: mean brightness $darkForm" }
+            click("Hủy")
+            targetContext.getSharedPreferences("ui",0).edit().remove("theme").commit()
+            result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
             finish(Activity.RESULT_OK,result)
         } catch(t:Throwable) { result.putString("stream","SMOKE_FAILED: ${t.stackTraceToString()}\n");finish(Activity.RESULT_CANCELED,result) }
     }

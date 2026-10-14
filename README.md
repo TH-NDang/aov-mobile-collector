@@ -630,3 +630,29 @@ Các tùy chọn chạy nhanh, chỉ chụp Chi tiết, chuyển thẳng giữa 
   - ML Kit đọc tên trên ảnh danh sách bạn gửi (UID đã che): đúng ô của Flowborn, Tamyn, Dyadia, Heino, Biron, Bolt Baron, Billow, Charlotte, và đúng chỗ bấm cho Bolt Baron.
   - Form mới: tìm "bolt" rồi tick Bolt Baron (vị trí đã lưu là ô 8), thêm tên mới "Qi", ra macro 2 tướng theo tên. Cách "Tướng đang mở" vẫn nhận tên gõ vào.
 - **Chưa chạy trên máy thật.** Lần đầu nên thử 2 tướng, rồi xem `events.txt`.
+
+## v0.8.0: giao diện Tối và chỉnh giao diện
+
+### Giao diện Sáng, Tối hoặc Theo hệ thống
+
+- **Nút "Giao diện" mới** trên đầu màn hình chính (biểu tượng hình tròn nửa sáng nửa tối) có 3 lựa chọn:
+  - **Theo hệ thống** (mặc định): theo chế độ sáng/tối của điện thoại;
+  - **Sáng**;
+  - **Tối**.
+- Lựa chọn áp dụng cho:
+  - màn Lịch sử, xem ảnh và xem lại các bước vào game;
+  - các hộp thoại trong app;
+  - danh sách tác vụ và các form trên bảng nổi (Lấy thông tin tướng, Thống kê tướng, Chiến khu).
+- Ô tick, nút chọn và nút trong hộp thoại dùng màu tím của app thay cho màu xanh mặc định của Android. Ở giao diện Tối, màu tím được làm sáng hơn để dễ đọc trên nền tối.
+
+### Chỉnh giao diện
+
+- **Lịch sử:** mỗi lượt có nhãn màu cho trạng thái: Hoàn tất (xanh lá), Tạm dừng (vàng), Đang chạy (tím), Đã kết thúc (xám). Thư mục tướng có nhãn "Tên từ ảnh" hoặc "Cần đặt tên". Lượt có tên riêng có thêm nhãn loại tác vụ (Thông tin tướng, Thống kê, Chiến khu).
+- **Danh sách tác vụ trên bảng nổi:** mỗi tác vụ có tên ngắn và một dòng mô tả. Ô tìm kiếm tìm theo cả hai.
+- **Các form:** các nhóm có tiêu đề nhỏ: Cách lấy, Tùy chọn chụp, Vào game (Thống kê tướng: Bảng, Chế độ; Chiến khu: Số tướng, Bảng cần chụp).
+- **Bảng nổi** đậm nền hơn, nên chữ không bị lẫn với màn hình game phía sau.
+
+### Kiểm tra
+
+- **Trên máy ảo CI**, UiSmoke chọn giao diện Tối rồi chụp màn Lịch sử, danh sách tác vụ và form Lấy thông tin tướng. Nó kiểm tra độ sáng trung bình của màn hình là tối.
+- Toàn bộ kiểm tra cũ vẫn chạy với tên mục mới trong danh sách tác vụ.

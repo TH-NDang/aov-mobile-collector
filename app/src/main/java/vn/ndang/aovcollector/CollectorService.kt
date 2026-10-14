@@ -218,7 +218,7 @@ class CollectorService : AccessibilityService() {
         val layout=object:LinearLayout(this) {
             // A tap that still reaches the hidden panel must not press its buttons; the macro retries it.
             override fun dispatchTouchEvent(e:MotionEvent):Boolean { if(!shielded) return super.dispatchTouchEvent(e); if(e.actionMasked==MotionEvent.ACTION_DOWN) swallowed=true; return true }
-        }.apply { orientation=LinearLayout.VERTICAL; setPadding(dp(12),dp(10),dp(12),dp(10)); background=Ui.shape(Color.argb(195,20,24,42),dp(20),Color.argb(70,230,230,255)) }
+        }.apply { orientation=LinearLayout.VERTICAL; setPadding(dp(12),dp(10),dp(12),dp(10)); background=Ui.shape(Color.argb(232,20,24,42),dp(20),Color.argb(70,230,230,255)) }
         val params=panelParams ?: WindowManager.LayoutParams().apply {
             type=WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
             flags=WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
@@ -305,6 +305,8 @@ class CollectorService : AccessibilityService() {
         val stoppable=canStop(); stopView?.isEnabled=stoppable; stopView?.alpha=if(stoppable) 1f else .4f
         bubble?.text=if(running) "AOV\n${progress?.progress ?: if(m!=null) step*100/maxOf(1,m.steps.length()) else 0}%" else "AOV"
     }
+    /** This service in the look chosen in "Giao diện", for the views and dialogs it shows over the game. */
+    private fun themed():android.content.Context { Ui.use(this); return ContextThemeWrapper(this,Ui.windowTheme(this)) }
     private fun display(dialog:AlertDialog) {
         activeDialog?.dismiss();activeDialog=dialog
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
@@ -312,23 +314,34 @@ class CollectorService : AccessibilityService() {
         dialog.setOnDismissListener { activeDialog=null;refreshPanel() };dialog.show()
     }
     fun showTaskPicker() {
+        val c=themed()
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
         if(isWorking) { status("Tạm dừng trước khi đổi macro");return }
         if(panel==null||compact) showPanel()
         if(macroPicker!=null) { dismissMacroPicker();return }
         val host=panel?:return
         val saved=MacroStore.saved(this).mapNotNull { try { Macro(it.readText()) } catch(_:Exception) { null } }
-        val choices=listOf("Lấy thông tin tướng (theo tên, đầu danh sách hoặc tướng đang mở)","Thống kê tướng (bảng xếp hạng)","Chiến khu (BXH người chơi theo tướng)")+saved.map { it.name }
+        // Each task with a line on what it does; the search reads both.
+        val choices=listOf("Lấy thông tin tướng" to "Theo tên, các ô đầu danh sách hoặc tướng đang mở","Thống kê tướng" to "Bảng xếp hạng tướng trong Cộng đồng",
+            "Chiến khu" to "Bảng xếp hạng người chơi của từng tướng")+saved.map { it.name to "Macro đã nhập" }
         var visible=choices.indices.toList()
-        val body=Ui.stack(this).apply { setPadding(dp(10),dp(10),dp(10),dp(6));background=Ui.shape(Color.argb(248,248,248,254),dp(14),Ui.border) }
-        val search=Ui.field(this,"Tìm macro…");body.addView(search,LinearLayout.LayoutParams(-1,dp(46)))
-        val list=ListView(this).apply { dividerHeight=0;isVerticalScrollBarEnabled=true }
+        val body=Ui.stack(c).apply { setPadding(dp(10),dp(10),dp(10),dp(6));background=Ui.shape(Ui.surface,dp(14),Ui.border) }
+        val search=Ui.field(c,"Tìm macro…");body.addView(search,LinearLayout.LayoutParams(-1,dp(46)))
+        val list=ListView(c).apply { dividerHeight=0;isVerticalScrollBarEnabled=true }
         body.addView(list,LinearLayout.LayoutParams(-1,0,1f))
-        val empty=Ui.text(this,"Không tìm thấy macro",13f,Ui.muted).apply { visibility=View.GONE };body.addView(empty)
+        val empty=Ui.text(c,"Không tìm thấy macro",13f,Ui.muted).apply { visibility=View.GONE };body.addView(empty)
         fun filter(query:String) {
             val q=HeroNames.slug(query).takeUnless { query.isBlank() }?:""
-            visible=choices.indices.filter { q.isEmpty()||HeroNames.slug(choices[it]).contains(q) }
-            list.adapter=ArrayAdapter(this,android.R.layout.simple_list_item_1,visible.map { choices[it] })
+            visible=choices.indices.filter { q.isEmpty()||HeroNames.slug(choices[it].first+" "+choices[it].second).contains(q) }
+            list.adapter=object:BaseAdapter() {
+                override fun getCount()=visible.size
+                override fun getItem(position:Int)=choices[visible[position]]
+                override fun getItemId(position:Int)=visible[position].toLong()
+                override fun getView(position:Int,convertView:View?,parent:ViewGroup?):View { val (title,line)=choices[visible[position]]
+                    return Ui.stack(c).apply { setPadding(dp(10),dp(8),dp(10),dp(8))
+                        addView(Ui.text(c,title,15f,Ui.ink,true).apply { setPadding(0,0,0,0) })
+                        addView(Ui.text(c,line,12f,Ui.muted).apply { setPadding(0,dp(1),0,0);maxLines=2 }) } }
+            }
             empty.visibility=if(visible.isEmpty()) View.VISIBLE else View.GONE
         }
         search.addTextChangedListener(object:android.text.TextWatcher {
@@ -340,7 +353,7 @@ class CollectorService : AccessibilityService() {
             val i=visible.getOrNull(position)?:return@setOnItemClickListener;dismissMacroPicker()
             handler.post { when(i) { 0 -> heroForm();1 -> rankingForm();2 -> boardForm();else -> selectMacro(saved[i-3].raw) } }
         }
-        body.addView(Ui.button(this,"Đóng danh sách") { dismissMacroPicker() },LinearLayout.LayoutParams(-1,dp(38)))
+        body.addView(Ui.button(c,"Đóng danh sách") { dismissMacroPicker() },LinearLayout.LayoutParams(-1,dp(38)))
         filter("")
         // Expand inside the existing accessibility window; do not create a popup token.
         for(i in 2 until host.childCount) host.getChildAt(i).visibility=View.GONE
@@ -376,44 +389,47 @@ class CollectorService : AccessibilityService() {
      * earlier runs ([HeroIndex]) or typed; the first cards of the list; or the hero page open now.
      */
     private fun heroForm() {
-        val body=Ui.stack(this).apply { setPadding(dp(20),dp(6),dp(20),dp(6)) }
-        body.addView(Ui.text(this,"Lấy tổng quan, thuộc tính và chiêu của tướng.",14f))
+        val c=themed()
+        val body=Ui.stack(c).apply { setPadding(dp(20),dp(6),dp(20),dp(6)) }
+        body.addView(Ui.text(c,"Lấy tổng quan, thuộc tính và chiêu của tướng.",14f))
         val modes=listOf("Theo tên tướng","Các ô đầu danh sách","Tướng đang mở")
-        val group=RadioGroup(this).apply { orientation=RadioGroup.VERTICAL }
-        val radios=modes.map { text -> RadioButton(this).apply { this.text=text;textSize=14f;id=View.generateViewId() }.also { group.addView(it) } }
-        body.addView(group)
+        val group=RadioGroup(c).apply { orientation=RadioGroup.VERTICAL }
+        val radios=modes.map { text -> RadioButton(c).apply { this.text=text;textSize=14f;id=View.generateViewId() }.also { group.addView(it) } }
+        body.addView(Ui.section(c,"Cách lấy")); body.addView(group)
         // By name: a search over the names kept, a check box each, and the typed name when it is a new one.
-        val byName=Ui.stack(this).also { body.addView(it) }
-        byName.addView(Ui.text(this,"Tìm và tick các tướng cần lấy (tên đã lưu từ các lượt trước), hoặc gõ tên mới rồi bấm Thêm.",13f,Ui.muted,true))
-        val query=Ui.field(this,"Gõ tên tướng, ví dụ Violet").also { byName.addView(it) }
-        val chosenLine=Ui.text(this,"",13f,Ui.ink,true).also { byName.addView(it) }
-        val add=Ui.button(this,"Thêm") {}.also { byName.addView(it) }
-        val names=Ui.stack(this).also { byName.addView(it) }
-        val more=Ui.text(this,"",12f,Ui.muted).also { byName.addView(it) }
-        byName.addView(Ui.text(this,"App tới ô tướng ở lần trước, đọc lại tên trên thẻ; sai thì dò danh sách. Tướng không có trong danh sách được bỏ qua.",12f,Ui.muted))
+        val byName=Ui.stack(c).also { body.addView(it) }
+        byName.addView(Ui.text(c,"Tìm và tick các tướng cần lấy (tên đã lưu từ các lượt trước), hoặc gõ tên mới rồi bấm Thêm.",13f,Ui.muted,true))
+        val query=Ui.field(c,"Gõ tên tướng, ví dụ Violet").also { byName.addView(it) }
+        val chosenLine=Ui.text(c,"",13f,Ui.ink,true).also { byName.addView(it) }
+        val add=Ui.button(c,"Thêm") {}.also { byName.addView(it) }
+        val names=Ui.stack(c).also { byName.addView(it) }
+        val more=Ui.text(c,"",12f,Ui.muted).also { byName.addView(it) }
+        byName.addView(Ui.text(c,"App tới ô tướng ở lần trước, đọc lại tên trên thẻ; sai thì dò danh sách. Tướng không có trong danh sách được bỏ qua.",12f,Ui.muted))
         // The first cards of the list.
-        val byCount=Ui.stack(this).also { body.addView(it) }
-        byCount.addView(Ui.text(this,"Số ô tướng cần lấy (từ đầu danh sách Tất cả tướng)",13f,Ui.muted,true))
-        val count=Ui.field(this,"1–${BuiltInMacros.ALL}",uiPrefs.getInt("count",2).toString(),true).also { byCount.addView(it) }
-        val quick=LinearLayout(this)
-        listOf(2 to "2 ô",11 to "11 ô",BuiltInMacros.ALL to "Tất cả").forEach { (n,text) -> quick.addView(Ui.button(this,text) { count.setText(n.toString()) },LinearLayout.LayoutParams(0,dp(40),1f).apply { marginEnd=dp(4) }) }
+        val byCount=Ui.stack(c).also { body.addView(it) }
+        byCount.addView(Ui.text(c,"Số ô tướng cần lấy (từ đầu danh sách Tất cả tướng)",13f,Ui.muted,true))
+        val count=Ui.field(c,"1–${BuiltInMacros.ALL}",uiPrefs.getInt("count",2).toString(),true).also { byCount.addView(it) }
+        val quick=LinearLayout(c)
+        listOf(2 to "2 ô",11 to "11 ô",BuiltInMacros.ALL to "Tất cả").forEach { (n,text) -> quick.addView(Ui.button(c,text) { count.setText(n.toString()) },LinearLayout.LayoutParams(0,dp(40),1f).apply { marginEnd=dp(4) }) }
         byCount.addView(quick)
-        byCount.addView(Ui.text(this,"App tự đưa danh sách về đầu, đo từng lần cuộn và dừng khi hết danh sách. Chọn Tất cả để lấy đến cuối.",12f,Ui.muted))
+        byCount.addView(Ui.text(c,"App tự đưa danh sách về đầu, đo từng lần cuộn và dừng khi hết danh sách. Chọn Tất cả để lấy đến cuối.",12f,Ui.muted))
         // The hero page open now.
-        val open=Ui.stack(this).also { body.addView(it) }
-        open.addView(Ui.text(this,"Mở trang chi tiết tướng trước. Tên tướng (không bắt buộc)",13f,Ui.muted,true))
-        val single=Ui.field(this,"Để trống để tự đọc tên").also { open.addView(it) }
-        open.addView(Ui.text(this,"Tên được đọc từ ảnh. Nếu không rõ, app dùng thư mục đánh số; có thể đổi tên trong Ảnh đã lưu.",12f,Ui.muted))
+        val open=Ui.stack(c).also { body.addView(it) }
+        open.addView(Ui.text(c,"Mở trang chi tiết tướng trước. Tên tướng (không bắt buộc)",13f,Ui.muted,true))
+        val single=Ui.field(c,"Để trống để tự đọc tên").also { open.addView(it) }
+        open.addView(Ui.text(c,"Tên được đọc từ ảnh. Nếu không rõ, app dùng thư mục đánh số; có thể đổi tên trong Ảnh đã lưu.",12f,Ui.muted))
         // Time and space for the whole run; it follows the mode, the heroes and the options.
-        val estimate=Ui.text(this,"",13f,Ui.ink,true).also { body.addView(it) }
-        fun option(text:String,key:String)=CheckBox(this).apply { this.text=text;textSize=14f;isChecked=uiPrefs.getBoolean(key,false) }.also { body.addView(it) }
+        val estimate=Ui.text(c,"",13f,Ui.ink,true).also { body.addView(it) }
+        fun option(text:String,key:String)=CheckBox(c).apply { this.text=text;textSize=14f;isChecked=uiPrefs.getBoolean(key,false) }.also { body.addView(it) }
+        body.addView(Ui.section(c,"Tùy chọn chụp"))
         val fast=option("Chạy nhanh: chờ ngắn hơn sau mỗi lần chạm (nên thử 2 tướng trước)","fast")
         val detailOnly=option("Chỉ chụp Chi tiết: bỏ ảnh Tóm tắt của nội tại và chiêu","detailOnly")
         val directSkills=option("Chuyển thẳng giữa các chiêu: bấm sang chiêu kế tiếp khi bảng chiêu còn mở, chỉ đóng sau chiêu cuối","directSkills")
+        body.addView(Ui.section(c,"Vào game"))
         val openGame=option("Tự mở game và vào Danh sách tướng: đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện, rồi bấm Tướng ở sảnh","openGame")
         val savedUid=Accounts.uid(this)
         val checkAccount=option(if(savedUid!=null) "Kiểm tra UID là tài khoản test ($savedUid); khác thì đăng xuất và đăng nhập tài khoản test" else "Kiểm tra UID tài khoản test (lưu tài khoản ở mục Tài khoản trong app trước)","checkAccount").apply { if(savedUid==null) { isChecked=false;isEnabled=false } }
-        val traceEntry=CheckBox(this).apply { text="Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)";textSize=14f;isChecked=uiPrefs.getBoolean("traceEntry",true) }.also { body.addView(it) }
+        val traceEntry=CheckBox(c).apply { text="Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)";textSize=14f;isChecked=uiPrefs.getBoolean("traceEntry",true) }.also { body.addView(it) }
         var known=emptyList<HeroIndex.Entry>()
         val chosen=LinkedHashSet(uiPrefs.getString("pickNames","").orEmpty().split('\n').map { it.trim() }.filter { it.isNotEmpty() })
         fun mode()=radios.indexOfFirst { it.isChecked }.coerceAtLeast(0)
@@ -451,7 +467,7 @@ class CollectorService : AccessibilityService() {
             names.removeAllViews()
             // Ticked names first, then the others, at most 40 at once: typing narrows them.
             val ordered=shown.sortedBy { if(it in chosen) 0 else 1 }
-            for(n in ordered.take(40)) names.addView(CheckBox(this).apply { text=n;textSize=14f;isChecked=n in chosen
+            for(n in ordered.take(40)) names.addView(CheckBox(c).apply { text=n;textSize=14f;isChecked=n in chosen
                 setOnCheckedChangeListener { _,on -> if(on) chosen.add(n) else chosen.remove(n); handler.post { render() } } })
             more.text=if(ordered.size>40) "… và ${ordered.size-40} tên khác: gõ để lọc" else ""; more.visibility=if(ordered.size>40) View.VISIBLE else View.GONE
             updateEstimate()
@@ -470,8 +486,8 @@ class CollectorService : AccessibilityService() {
         show(); render()
         // The names kept, rebuilt from the saved runs the first time.
         io.execute { val entries=HeroIndex.loadOrRebuild(filesDir,File(filesDir,"captures")); handler.post { known=entries; render() } }
-        body.addView(Ui.text(this,"Chọn tác vụ sẽ tạo lượt mới. Ảnh đã chụp vẫn giữ lại.",12f,Ui.muted))
-        val dialog=AlertDialog.Builder(this).setTitle("Lấy thông tin tướng").setView(ScrollView(this).apply { addView(body) })
+        body.addView(Ui.text(c,"Chọn tác vụ sẽ tạo lượt mới. Ảnh đã chụp vẫn giữ lại.",12f,Ui.muted))
+        val dialog=AlertDialog.Builder(c).setTitle("Lấy thông tin tướng").setView(ScrollView(c).apply { addView(body) })
             .setPositiveButton("Chọn tác vụ",null).setNegativeButton("Hủy",null).create()
         display(dialog)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -496,18 +512,20 @@ class CollectorService : AccessibilityService() {
     }
     /** The hero statistics: the chosen tables of "Bảng Phân Bậc Tướng", for the chosen kinds of match ([RankingReader]). */
     private fun rankingForm() {
-        val body=Ui.stack(this).apply { setPadding(dp(20),dp(6),dp(20),dp(6)) }
-        body.addView(Ui.text(this,"Từ sảnh, app vào Cộng đồng → mục tướng → Bảng xếp hạng đầy đủ, rồi chụp hết danh sách của các bảng và chế độ đã chọn.",14f))
-        val estimate=Ui.text(this,"",13f,Ui.ink,true).also { body.addView(it) }
-        fun check(text:String,on:Boolean)=CheckBox(this).apply { this.text=text;textSize=14f;isChecked=on }
+        val c=themed()
+        val body=Ui.stack(c).apply { setPadding(dp(20),dp(6),dp(20),dp(6)) }
+        body.addView(Ui.text(c,"Từ sảnh, app vào Cộng đồng → mục tướng → Bảng xếp hạng đầy đủ, rồi chụp hết danh sách của các bảng và chế độ đã chọn.",14f))
+        val estimate=Ui.text(c,"",13f,Ui.ink,true).also { body.addView(it) }
+        fun check(text:String,on:Boolean)=CheckBox(c).apply { this.text=text;textSize=14f;isChecked=on }
         // Both tables and all three kinds of match unless chosen otherwise last time.
         val saved=uiPrefs.getString("rankCombos",null)?.split(',')?.toSet()
-        body.addView(Ui.text(this,"Bảng (nút Đổi bảng xếp hạng)",13f,Ui.muted,true))
+        body.addView(Ui.section(c,"Bảng"))
         val tables=RankScreens.Table.values().associateWith { t -> check(t.label,saved==null||saved.any { it.startsWith(t.slug) }).also { body.addView(it) } }
-        body.addView(Ui.text(this,"Chế độ (ô chọn Đấu hạng)",13f,Ui.muted,true))
+        body.addView(Ui.section(c,"Chế độ"))
         val modes=RankScreens.Mode.values().associateWith { m -> check(m.label,saved==null||saved.any { it.endsWith(m.slug) }).also { body.addView(it) } }
         fun chosen()=RankScreens.COMBOS.filter { tables.getValue(it.table).isChecked&&modes.getValue(it.mode).isChecked }
         fun option(text:String,key:String,default:Boolean=false)=check(text,uiPrefs.getBoolean(key,default)).also { body.addView(it) }
+        body.addView(Ui.section(c,"Vào game"))
         val openGame=option("Tự mở game và vào sảnh: đóng game còn chạy, đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện","rankOpenGame")
         val savedUid=Accounts.uid(this)
         val checkAccount=option(if(savedUid!=null) "Kiểm tra UID là tài khoản test ($savedUid)" else "Kiểm tra UID tài khoản test (lưu tài khoản ở mục Tài khoản trong app trước)","checkAccount").apply { if(savedUid==null) { isChecked=false;isEnabled=false } }
@@ -527,8 +545,8 @@ class CollectorService : AccessibilityService() {
         follow(); updateEstimate()
         openGame.setOnCheckedChangeListener { _,_ -> follow();updateEstimate() }
         (tables.values+modes.values).forEach { it.setOnCheckedChangeListener { _,_ -> updateEstimate() } }
-        body.addView(Ui.text(this,"Không tick Tự mở game: mở sảnh game (hoặc trang Bảng Phân Bậc Tướng) trước khi bấm Chạy.",12f,Ui.muted))
-        val dialog=AlertDialog.Builder(this).setTitle("Thống kê tướng").setView(ScrollView(this).apply { addView(body) })
+        body.addView(Ui.text(c,"Không tick Tự mở game: mở sảnh game (hoặc trang Bảng Phân Bậc Tướng) trước khi bấm Chạy.",12f,Ui.muted))
+        val dialog=AlertDialog.Builder(c).setTitle("Thống kê tướng").setView(ScrollView(c).apply { addView(body) })
             .setPositiveButton("Chọn tác vụ",null).setNegativeButton("Hủy",null).create()
         display(dialog)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -541,17 +559,18 @@ class CollectorService : AccessibilityService() {
     }
     /** The players' ranking of each hero, "Chiến khu" ([BoardReader]): how many heroes, which tabs, how deep. */
     private fun boardForm() {
-        val body=Ui.stack(this).apply { setPadding(dp(20),dp(6),dp(20),dp(6)) }
-        body.addView(Ui.text(this,"Từ sảnh, app vào Đấu hạng → Chiến khu (qua các màn mở mùa mới và chọn khu vực nếu có), rồi lần lượt chọn từng tướng trong Chọn tướng và chụp bảng xếp hạng người chơi của tướng đó.",14f))
-        body.addView(Ui.text(this,"Số tướng (theo thứ tự trong Chọn tướng)",13f,Ui.muted,true))
-        val count=Ui.field(this,"1–${BuiltInMacros.ALL}",uiPrefs.getInt("boardCount",BuiltInMacros.ALL).toString(),true);body.addView(count)
-        val quick=LinearLayout(this)
-        listOf(2 to "2 tướng",11 to "11 tướng",BuiltInMacros.ALL to "Tất cả").forEach { (n,text) -> quick.addView(Ui.button(this,text) { count.setText(n.toString()) },LinearLayout.LayoutParams(0,dp(40),1f).apply { marginEnd=dp(4) }) };body.addView(quick)
-        val estimate=Ui.text(this,"",13f,Ui.ink,true).also { body.addView(it) }
-        fun check(text:String,on:Boolean)=CheckBox(this).apply { this.text=text;textSize=14f;isChecked=on }.also { body.addView(it) }
+        val c=themed()
+        val body=Ui.stack(c).apply { setPadding(dp(20),dp(6),dp(20),dp(6)) }
+        body.addView(Ui.text(c,"Từ sảnh, app vào Đấu hạng → Chiến khu (qua các màn mở mùa mới và chọn khu vực nếu có), rồi lần lượt chọn từng tướng trong Chọn tướng và chụp bảng xếp hạng người chơi của tướng đó.",14f))
+        body.addView(Ui.section(c,"Số tướng"))
+        val count=Ui.field(c,"1–${BuiltInMacros.ALL}",uiPrefs.getInt("boardCount",BuiltInMacros.ALL).toString(),true);body.addView(count)
+        val quick=LinearLayout(c)
+        listOf(2 to "2 tướng",11 to "11 tướng",BuiltInMacros.ALL to "Tất cả").forEach { (n,text) -> quick.addView(Ui.button(c,text) { count.setText(n.toString()) },LinearLayout.LayoutParams(0,dp(40),1f).apply { marginEnd=dp(4) }) };body.addView(quick)
+        val estimate=Ui.text(c,"",13f,Ui.ink,true).also { body.addView(it) }
+        fun check(text:String,on:Boolean)=CheckBox(c).apply { this.text=text;textSize=14f;isChecked=on }.also { body.addView(it) }
         // Việt Nam's top three and "Số 1 máy chủ" unless chosen otherwise last time; the others when chosen.
         val saved=uiPrefs.getString("boardWants",null)?.split(',')?.map { it.substringBefore(':') }?.toSet()?:BoardScreens.DEFAULT.map { it.tab.slug }.toSet()
-        body.addView(Ui.text(this,"Bảng cần chụp",13f,Ui.muted,true))
+        body.addView(Ui.section(c,"Bảng cần chụp"))
         val order=listOf(BoardScreens.Tab.COUNTRY,BoardScreens.Tab.TOP,BoardScreens.Tab.SERVER,BoardScreens.Tab.PROVINCE,BoardScreens.Tab.AREA)
         val tabs=order.associateWith { t -> check(when(t) {
             BoardScreens.Tab.COUNTRY -> "Việt Nam (quốc gia) · top 3"
@@ -560,6 +579,7 @@ class CollectorService : AccessibilityService() {
             BoardScreens.Tab.PROVINCE -> "Tỉnh (ví dụ Đắk Lắk) · top 3"
             BoardScreens.Tab.AREA -> "Miền (ví dụ Miền Trung) · top 3" },t.slug in saved) }
         val deep=check("Kéo hết danh sách các bảng đã chọn (lâu hơn nhiều)",uiPrefs.getBoolean("boardDeep",false))
+        body.addView(Ui.section(c,"Vào game"))
         val openGame=check("Tự mở game và vào sảnh: đóng game còn chạy, đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện",uiPrefs.getBoolean("boardOpenGame",false))
         val savedUid=Accounts.uid(this)
         val checkAccount=check(if(savedUid!=null) "Kiểm tra UID là tài khoản test ($savedUid)" else "Kiểm tra UID tài khoản test (lưu tài khoản ở mục Tài khoản trong app trước)",uiPrefs.getBoolean("checkAccount",false)).apply { if(savedUid==null) { isChecked=false;isEnabled=false } }
@@ -586,8 +606,8 @@ class CollectorService : AccessibilityService() {
             override fun afterTextChanged(s:android.text.Editable?) { updateEstimate() }
             override fun beforeTextChanged(s:CharSequence?,a:Int,b:Int,c:Int) {}
             override fun onTextChanged(s:CharSequence?,a:Int,b:Int,c:Int) {} })
-        body.addView(Ui.text(this,"Không tick Tự mở game: mở sảnh game (hoặc Chiến khu) trước khi bấm Chạy. App không bao giờ bấm nút Đấu hạng trong trang Đấu hạng (nút đó bắt đầu tìm trận).",12f,Ui.muted))
-        val dialog=AlertDialog.Builder(this).setTitle("Chiến khu").setView(ScrollView(this).apply { addView(body) })
+        body.addView(Ui.text(c,"Không tick Tự mở game: mở sảnh game (hoặc Chiến khu) trước khi bấm Chạy. App không bao giờ bấm nút Đấu hạng trong trang Đấu hạng (nút đó bắt đầu tìm trận).",12f,Ui.muted))
+        val dialog=AlertDialog.Builder(c).setTitle("Chiến khu").setView(ScrollView(c).apply { addView(body) })
             .setPositiveButton("Chọn tác vụ",null).setNegativeButton("Hủy",null).create()
         display(dialog)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
@@ -608,7 +628,7 @@ class CollectorService : AccessibilityService() {
     private fun savedPicker() {
         val entries=MacroStore.saved(this).mapNotNull { f -> try { Macro(f.readText()) } catch(e:Exception) { null } }
         if(entries.isEmpty()) { status("Chưa có macro. Vào Cài đặt → Nâng cao để nhập.");return }
-        display(AlertDialog.Builder(this).setTitle("Macro đã nhập").setItems(entries.map { it.name }.toTypedArray()) { _,i -> selectMacro(entries[i].raw) }.setNegativeButton("Hủy",null).create())
+        display(AlertDialog.Builder(themed()).setTitle("Macro đã nhập").setItems(entries.map { it.name }.toTypedArray()) { _,i -> selectMacro(entries[i].raw) }.setNegativeButton("Hủy",null).create())
     }
     fun selectMacro(raw:String):Boolean {
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return false }
@@ -623,16 +643,16 @@ class CollectorService : AccessibilityService() {
     }
     private fun showOptions() {
         if(isWorking) { status("Tạm dừng trước khi mở tùy chọn");return }
-        display(AlertDialog.Builder(this).setTitle("Tùy chọn")
+        display(AlertDialog.Builder(themed()).setTitle("Tùy chọn")
             .setItems(arrayOf("Tạo lượt mới với tác vụ này","Bỏ một thao tác…","Cách dùng các nút","Đóng bảng nổi")) { _,which -> handler.post {
-                when(which) { 0 -> reset();1 -> skipDialog();2 -> display(AlertDialog.Builder(this).setTitle("Điều khiển")
+                when(which) { 0 -> reset();1 -> skipDialog();2 -> display(AlertDialog.Builder(themed()).setTitle("Điều khiển")
                     .setMessage("Tạm dừng: nghỉ ngay. Bước vào game hay lấy chiêu đang dở sẽ làm lại từ đầu bước đó khi Tiếp tục; thao tác ngắn khác chạy nốt rồi nghỉ.\n\nKết thúc: giữ ảnh và đóng lượt. Chọn Tạo lượt mới để chạy lại.\n\nDấu −: thu gọn bảng, tác vụ vẫn chạy. Chạm nút AOV để mở lại.\n\nBỏ một thao tác là tùy chọn nâng cao, không phải bỏ cả tướng.").setPositiveButton("Đã hiểu",null).create());3 -> { pause("Đã đóng bảng");hidePanel() } }
             } }.setNegativeButton("Đóng",null).create())
     }
     private fun skipDialog() {
         val m=macro
         if(isWorking||stopped||m==null||index>=m.steps.length()) { status("Chỉ dùng khi đang tạm dừng một lượt");return }
-        display(AlertDialog.Builder(this).setTitle("Bỏ thao tác ${index+1}?")
+        display(AlertDialog.Builder(themed()).setTitle("Bỏ thao tác ${index+1}?")
             .setMessage("Chỉ bỏ một lần chạm, chờ hoặc chụp. Dùng khi bạn đã thực hiện thao tác này bằng tay.")
             .setPositiveButton("Bỏ thao tác") { _,_ -> if(!isWorking&&!stopped) { index++;save();status("Đã bỏ thao tác. Bấm Tiếp tục.") } }
             .setNegativeButton("Hủy",null).create())
