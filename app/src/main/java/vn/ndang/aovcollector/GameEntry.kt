@@ -3,6 +3,8 @@ package vn.ndang.aovcollector
 import java.text.Normalizer
 import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.sin
 import kotlin.math.hypot
 import kotlin.math.roundToInt
 
@@ -117,11 +119,13 @@ object GameScreens {
     private const val SEARCH_BOTTOM=.45
     // Half the width of an X, as fractions of the screen height: 19 px of 1080 on the popups seen so far.
     private val halfSizes=doubleArrayOf(.011,.014,.017,.021,.025,.030,.036)
+    // Radius of the circle around a circled X: 27 px of 1080 on the live match popup.
+    private val circleSizes=doubleArrayOf(.019,.022,.025,.028,.032,.036)
     /**
      * Centre of a popup's close button, or null. The button is an X: two thin strokes crossing at right angles,
-     * brighter than what is around them, with nothing touching it, so the letter X of a word does not count.
-     * Brightness itself does not count, so the button is found while the popup is still fading in. With
-     * several, the one nearest the top right corner.
+     * brighter than what is around them, with nothing touching it, so the letter X of a word does not count;
+     * or, on the live match popup, a thick X inside a circle ([circledX]). Brightness itself does not count, so
+     * the button is found while the popup is still fading in. With several, the one nearest the top right corner.
      */
     fun closeButton(width:Int,height:Int,readRow:(Int,IntArray)->Unit):Pair<Double,Double>? {
         val x0=(SEARCH_LEFT*width).toInt(); val w=(SEARCH_RIGHT*width).toInt()-x0; val h=(SEARCH_BOTTOM*height).toInt()
@@ -133,6 +137,16 @@ object GameScreens {
             var cy=reach; while(cy<h-reach) {
                 var cx=reach; while(cx<w-reach) {
                     if(luma[cy*w+cx]>=40) xScore(luma,w,cx.toDouble(),cy.toDouble(),r)?.let { found.add(doubleArrayOf(it,cx.toDouble(),cy.toDouble(),r)) }
+                    cx+=2
+                }
+                cy+=2
+            }
+        }
+        for(r0 in circleSizes) {
+            val r=r0*height; val reach=(1.35*r).toInt()+3
+            var cy=reach; while(cy<h-reach) {
+                var cx=reach; while(cx<w-reach) {
+                    if(luma[cy*w+cx]>=40) circledX(luma,w,cx.toDouble(),cy.toDouble(),r)?.let { found.add(doubleArrayOf(it,cx.toDouble(),cy.toDouble(),r)) }
                     cx+=2
                 }
                 cy+=2
@@ -174,6 +188,31 @@ object GameScreens {
         if(ring.indices.any { (it%6==0||it%6==5)&&ring[it]>lit }) return null
         if(ring.count { it>lit }>.25*ring.size||(0 until 8).any { side -> (0 until 6).count { ring[side*6+it]>lit }>=3 }) return null
         return if(alone(luma,w,cx.roundToInt(),cy.roundToInt(),r,lit)) lift else null
+    }
+    /**
+     * How much brighter a circled X centred at ([cx], [cy]) is than around it, or null if there is none: a bright
+     * circle of radius [r], the X's arms bright on the diagonals inside it, dark between the arms on the straight
+     * directions, and mostly dark just outside the circle.
+     */
+    private fun circledX(luma:IntArray,w:Int,cx:Double,cy:Double,r:Double):Double? {
+        fun at(x:Double,y:Double)=luma[y.roundToInt()*w+x.roundToInt()]
+        fun peak(x:Double,y:Double):Int { val xi=x.roundToInt(); val yi=y.roundToInt(); var m=0
+            for(dy in -1..1) for(dx in -1..1) m=maxOf(m,luma[(yi+dy)*w+xi+dx]); return m }
+        val d=r/Math.sqrt(2.0)
+        // Quick test at a few points: the circle at its four diagonal-free points, the arms, the gaps between them.
+        val quick=minOf(minOf(peak(cx+r,cy),peak(cx-r,cy)),minOf(peak(cx,cy+r),peak(cx,cy-r)),minOf(peak(cx+.4*d,cy+.4*d),peak(cx-.4*d,cy-.4*d)))
+        if(quick-maxOf(at(cx+.6*r,cy),at(cx-.6*r,cy),at(cx,cy+.6*r),at(cx,cy-.6*r))<30) return null
+        val circle=IntArray(36) { val a=2*Math.PI*it/36; peak(cx+r*cos(a),cy+r*sin(a)) }
+        val arms=IntArray(12) { val k=(.2+(it/4)*.2)*d; val sx=if(it%4==0||it%4==3) 1 else -1; val sy=if(it%2==0) 1 else -1; peak(cx+sx*k,cy+sy*k) }
+        val gaps=IntArray(16) { val j=(.5+(it%4)*.08)*r; when(it/4) { 0 -> at(cx,cy-j); 1 -> at(cx,cy+j); 2 -> at(cx-j,cy); else -> at(cx+j,cy) } }
+        val outside=IntArray(36) { val a=2*Math.PI*it/36; at(cx+1.3*r*cos(a),cy+1.3*r*sin(a)) }
+        val bg=percentile(gaps+outside,.75)
+        val lift=percentile(circle+arms,.5)-bg
+        if(lift<30) return null
+        val half=bg+.5*lift; val lit=bg+.35*lift
+        if(circle.count { it>=half }<.85*circle.size||arms.any { it<half }) return null
+        if(percentile(gaps,.9)>lit||outside.count { it>lit }>.25*outside.size) return null
+        return lift
     }
     /**
      * Whether the bright shape through ([cx], [cy]) is about 2r square and stands alone. The X is followed

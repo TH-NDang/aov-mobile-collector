@@ -444,3 +444,17 @@ App bắt đầu được từ bất kỳ màn nào trên đường đi này: s�
 - **Trên máy ảo CI:** ML Kit đọc 6 ảnh của bạn (Tính năng khác, Cộng đồng, mục tướng, 2 bảng, ô chọn đang mở) và nhận đúng từng trang, vị trí nút, bảng, chế độ và các dòng trong ô chọn.
 - **Chưa thử trên máy thật.** Ở lần chạy đầu, xin bạn xem `events.txt` của lượt và gửi tôi ảnh nếu app dừng ở trang nào.
 
+## v0.5.1: đóng popup giải đấu live (nút X trong vòng tròn)
+
+Sau các popup quảng cáo, game có thể hiện thêm **popup giải đấu đang phát trực tiếp** (ví dụ Swiss Stage – Tứ Phương Đại Chiến). Nút đóng của popup này là **dấu X đậm nằm trong một vòng tròn trắng**, ở góc trên bên phải (khoảng 83,5%, 7,7% màn hình). Bản trước chỉ nhận dấu X mảnh đứng riêng: vòng tròn quanh X bị coi là "có thứ khác dính vào" nên bỏ qua, và app đứng chờ ở màn này.
+
+- **Thêm bộ nhận "X trong vòng tròn":** một vòng tròn sáng, bên trong có 2 nét chéo sáng, giữa các nét tối, ngay ngoài vòng tròn phần lớn tối. Bán kính thử từ 21 đến 39 px (trên màn cao 1080).
+- **Không bao giờ bấm "XEM NGAY"**, chỉ bấm nút X.
+- Video trong popup thay đổi liên tục, nên nếu bấm X mà popup không đóng, app dừng sau tối đa 12 lần bấm, như với các popup khác.
+
+### Kiểm tra
+
+- Ảnh bạn gửi (UID đã che) được nhận là popup, nút X đúng chỗ.
+- 19 màn vào game cũ vẫn ra đúng như trước.
+- Trên 176 ảnh khác (129 trang tướng, ảnh chiêu, sảnh, Cộng đồng, bảng xếp hạng, màn đăng nhập…), chỉ các popup thật có nút X: không nhận nhầm.
+

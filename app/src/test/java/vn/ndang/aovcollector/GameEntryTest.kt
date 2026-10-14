@@ -49,6 +49,13 @@ class GameEntryTest {
         }
     }
 
+    @Test fun closesALivePopupByTheXInItsCircle() {
+        // A live match shown over the lobby: its close button is a thick X inside a white circle, at the top right.
+        val reading=screen("popup-live").reading()
+        assertEquals(GameScreens.Kind.POPUP,reading.kind)
+        val (x,y)=reading.close!!; assertTrue("$x,$y",abs(x-.835)<.006&&abs(y-.077)<.012)
+    }
+
     @Test fun aWhiteFormOverTheLobbyIsNotTheLobby() {
         // The registration form covers three of the four tab icons with white: tapping "Tướng" there would hit the form.
         val reading=screen("register").reading()
