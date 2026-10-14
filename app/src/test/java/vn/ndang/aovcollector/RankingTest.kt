@@ -40,18 +40,20 @@ class RankingTest {
     }
     private fun w(text:String,x:Double,y:Double)=GameScreens.Word(text,x-.05,y-.02,x+.05,y+.02)
     @Test fun readsTheTableAndTheKindOfMatchFromTheirWords() {
-        // Words as ML Kit reads them on the user's screenshots, accents dropped here and there.
-        val rates=listOf(w("Bảng Phân Bậc Tướng",.22,.077),w("Dau hang (Tat ca)",.57,.2),w("Đổi bảng xếp hạng",.835,.2),w("Tỷ lệ thắng",.45,.32),w("Tỷ lệ pick",.56,.32))
+        // Words as ML Kit reads them on the user's screenshots, on the phone of the CI emulator.
+        val rates=listOf(w("< Bảng Phân Bậc Tướng O",.217,.08),w("Đấu hạng (Tất cả) v",.567,.202),w("Đổi bảng xếp hạng",.835,.202),w("Tỷ lệ thẩng *",.454,.319),w("Tý lệ pick +",.564,.317))
         assertEquals(Page.RANKING,RankScreens.page(rates,false)); assertEquals(Table.RATES,RankScreens.table(rates))
         assertEquals(Mode.ALL,RankScreens.mode(RankScreens.modeButton(rates)))
         val figures=listOf(w("Đấu 5v5",.57,.2),w("Sát thương",.48,.29),w("mỗi trận",.48,.33),w("Vàng",.69,.32))
         assertEquals(Table.FIGURES,RankScreens.table(figures)); assertEquals(Mode.FIVE,RankScreens.mode(RankScreens.modeButton(figures)))
-        val open=rates+listOf(w("Đấu hạng (Tất cả)",.6,.313),w("Đấu 5v5",.55,.378),w("Đấu hạng (Tinh Anh trở lên)",.6,.444))
-        val button=RankScreens.modeButton(open)!!; assertEquals(.2,button.y,.001)
-        assertEquals(.444,RankScreens.option(open,button,Mode.ELITE)!!.y,.001)
+        val open=rates+listOf(w("Đấu hạng (Tất cả)",.563,.314),w("Đấu 5v5",.53,.376),w("124.2 Đấu hang (Tinh Anh trở lên)",.565,.441))
+        val button=RankScreens.modeButton(open)!!; assertEquals(.202,button.y,.001)
+        assertEquals(.441,RankScreens.option(open,button,Mode.ELITE)!!.y,.001); assertEquals(.376,RankScreens.option(open,button,Mode.FIVE)!!.y,.001)
         assertEquals(Page.HEROES,RankScreens.page(listOf(w("Bảng xếp hạng đầy đủ >",.485,.082)),false))
-        assertEquals(Page.COMMUNITY,RankScreens.page(listOf(w("LIÊNQUÂN",.083,.9)),false))
-        assertEquals(Page.PANEL,RankScreens.page(listOf(w("Tính năng khác",.12,.21),w("Cộng đồng",.15,.52)),false))
+        assertEquals(Page.COMMUNITY,RankScreens.page(listOf(w("uÊNQUÂN",.083,.905),w("MIC CHECK #6: GAM - FPL",.293,.085)),false))
+        assertEquals(.081,RankScreens.logo(listOf(w("UÊNGUÂN",.081,.904)))!!.x,.001)
+        assertEquals(Page.COMMUNITY,RankScreens.page(listOf(w("S Garena Liên Quân Mobile",.232,.409)),false))
+        assertEquals(Page.PANEL,RankScreens.page(listOf(w("Tính năng khác",.115,.219),w("Cộng đòng",.154,.521)),false))
         assertEquals(Page.LOBBY,RankScreens.page(emptyList(),true))
     }
 

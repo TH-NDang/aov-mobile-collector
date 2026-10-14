@@ -34,8 +34,8 @@ object RankScreens {
         lobby -> Page.LOBBY
         else -> Page.OTHER
     }
-    /** "LIÊNQUÂN ARENA OF VALOR" at the bottom of the Cộng đồng side bar. */
-    fun logo(words:List<GameScreens.Word>)=words.firstOrNull { it.x<.2&&it.y>.8&&(it.plain.contains("arenaofvalor")||it.plain.contains("lienquan")) }
+    /** "LIÊNQUÂN ARENA OF VALOR" at the bottom of the Cộng đồng side bar, its drawn letters read as "uÊNQUÂN" or "UÊNGUÂN". */
+    fun logo(words:List<GameScreens.Word>)=words.firstOrNull { it.x<.2&&it.y>.8&&(it.plain.contains("arenaofvalor")||it.plain.contains("lienquan")||it.plain.length in 5..10&&(it.plain.endsWith("quan")||it.plain.endsWith("guan"))) }
     fun table(words:List<GameScreens.Word>):Table? = when {
         words.any { w -> listOf("tylethang","tylepick","tyleban").any { w.plain.contains(it) } } -> Table.RATES
         words.any { it.plain.contains("satthuong")||it.plain=="vang"||it.plain.contains("phaichiu") } -> Table.FIGURES
@@ -44,8 +44,11 @@ object RankScreens {
     /** The drop-down's button, "Đấu hạng (Tất cả)" or another kind of match, above the table. */
     fun modeButton(words:List<GameScreens.Word>)=words.filter { it.plain.startsWith("dau")&&it.y<.27&&it.x>.35&&it.x<.8 }.minByOrNull { it.y }
     fun mode(word:GameScreens.Word?):Mode? = word?.plain?.let { p -> Mode.values().firstOrNull { p.contains(it.key) } }
-    /** An open drop-down's line for [mode], below its button. */
-    fun option(words:List<GameScreens.Word>,button:GameScreens.Word,mode:Mode)=words.firstOrNull { it.y>button.bottom+.02&&it.y<.7&&it.plain.startsWith("dau")&&it.plain.contains(mode.key) }
+    /**
+     * An open drop-down's line for [mode], below its button. ML Kit may join a number of the table behind it to the
+     * line, as "124.2 Đấu hang (Tinh Anh trở lên)"; its middle stays inside the drop-down.
+     */
+    fun option(words:List<GameScreens.Word>,button:GameScreens.Word,mode:Mode)=words.firstOrNull { it.y>button.bottom+.02&&it.y<.7&&it.plain.contains("dau")&&it.plain.contains(mode.key) }
 
     /** Grey levels of the table's area on a 48x24 grid, to tell whether a scroll moved it. */
     fun signature(width:Int,height:Int,readRow:(Int,IntArray)->Unit):IntArray {
