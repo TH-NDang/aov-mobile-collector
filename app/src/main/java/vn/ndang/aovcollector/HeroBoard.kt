@@ -53,17 +53,18 @@ object BoardScreens {
         season(words)!=null -> Page.SEASON
         ranked(words) -> Page.RANKED
         // The lobby only with its bottom bar's words read too: a tap there on any other screen could start a match.
-        lobby&&words.none { it.plain.contains("thoihanmuagiai") }&&words.any { w -> w.y>.85&&listOf("tuido","trangbi","giaodien","nvu").any { w.plain.contains(it) } } -> Page.LOBBY
+        lobby&&words.none { it.plain.contains("thoihanmua") }&&words.any { w -> w.y>.85&&listOf("tuido","trangbi","giaodien","nvu").any { w.plain.contains(it) } } -> Page.LOBBY
         else -> Page.OTHER
     }
     /** The ranked page: its "Chiến khu" entry on the left, with the season's time or its other entries. */
-    fun ranked(words:List<GameScreens.Word>)=chienKhu(words)!=null&&words.any { w -> listOf("thoihanmuagiai","daudinhcao","hanhtrinhdinhcao","khchien").any { w.plain.contains(it) } }
+    fun ranked(words:List<GameScreens.Word>)=chienKhu(words)!=null&&words.any { w -> listOf("thoihanmua","dinhcao","hanhtrinh","khchien").any { w.plain.contains(it) } }
     fun chienKhu(words:List<GameScreens.Word>)=words.firstOrNull { it.plain.contains("chienkhu")&&it.x<.35&&it.y>.25&&it.y<.8 }
     /**
-     * The word to tap on a season review screen: "Ấn mở l.sử mùa", "Bước kế", "Mở mùa mới", "Ấn màn hình để tiếp
-     * tục". Nothing else on those screens is ever tapped.
+     * The word to tap on a season review screen: "Ấn mở l.sử mùa" (read "An mở Isử mùa"), "Bước kế", "Mở mùa
+     * mới", "Ấn màn hình để tiếp tục". The shortest line that says it: the button, not "Mở mùa mới nhận Ruby *50"
+     * above it. Nothing else on those screens is ever tapped.
      */
-    fun season(words:List<GameScreens.Word>)=words.firstOrNull { w -> listOf("anmolsumua","molsumua","buocke","momuamoi","anmanhinhdetieptuc","manhinhdetieptuc").any { w.plain.contains(it) } }
+    fun season(words:List<GameScreens.Word>)=words.filter { w -> listOf("sumua","buocke","momuamoi","manhinhdetieptuc").any { w.plain.contains(it) } }.minByOrNull { it.plain.length }
     /** The lobby's "ĐẤU HẠNG" (or "RANKED") button, when its letters are read, at the bottom right. */
     fun rankedButton(words:List<GameScreens.Word>)=words.firstOrNull { it.x>.7&&it.y>.8&&(it.plain.contains("dauhang")||it.plain.contains("ranked")) }
     /** The hero named on the card left of the ranking. */
@@ -75,7 +76,8 @@ object BoardScreens {
     fun region(words:List<GameScreens.Word>):Region {
         val boxes=REGION_X.map { x -> words.firstOrNull { abs(it.y-REGION_Y)<.035&&abs(it.x-x)<.07 }?.plain }
         // A list hangs under the drop-down that opened it, over the dialog's own lines and buttons.
-        val below=words.filter { it.y>REGION_Y+.035&&it.y<.95&&listOf("sau","thuhai","xacnhan","chuachinh","chienkhu").none { k -> it.plain.contains(k) } }
+        // Not the dialog's own lines, which ML Kit may cut into pieces such as "ainh sửa vào" or "Xác hn".
+        val below=words.filter { it.y>REGION_Y+.035&&it.y<.95&&it.plain.length<=16&&listOf("sau","thuhai","xac","chua","chinh","sua","chienkhu").none { k -> it.plain.contains(k) } }
         val open=REGION_X.indices.firstOrNull { i -> below.count { abs(it.x-REGION_X[i])<.07 }>=1 }
         val options=if(open==null) emptyList() else below.filter { abs(it.x-REGION_X[open])<.07 }.sortedBy { it.y }
         return Region(boxes,open,options,words.firstOrNull { it.plain.contains("xacnhan")&&it.y>.7 })

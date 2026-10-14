@@ -51,6 +51,17 @@ class BoardTest {
     private fun w(text:String,x:Double,y:Double)=GameScreens.Word(text,x-.04,y-.015,x+.04,y+.015)
     private val ranked=listOf(w("Thời hạn mùa giải",.2,.141),w("Đấu đỉnh cao",.16,.26),w("Chiến khu",.15,.56),w("Đấu hạng",.795,.867))
 
+    @Test fun readsTheSeasonScreensAsMlKitDoes() {
+        // As read on the emulator from the user's screenshots.
+        assertEquals("An mở Isử mùa",BoardScreens.season(listOf(w("HỐLÚC MÙA XUÂN",.511,.451),w("An mở Isử mùa",.5,.917)))!!.text)
+        assertEquals(.853,BoardScreens.season(listOf(w("Mở mùa mới nhận Ruby *50",.5,.707),w("Mở mùa mới",.5,.853)))!!.y,.001)
+        assertEquals(Page.SEASON,BoardScreens.page(listOf(w("An màn hình dế tiếp tục",.498,.805)),false))
+        assertEquals(Page.RANKED,BoardScreens.page(listOf(w("Thời hạn mua giá",.191,.14),w("Đầu đinh cao",.159,.257),w("7 Chiến khu",.142,.558),w("Đấu hang",.796,.867)),false))
+        // The province list with pieces of the dialog's lines read among it.
+        val r=BoardScreens.region(listOf(w("Việt Nam",.345,.484),w("Mien Trung",.49,.485),w("Khu vực",.64,.485),w("Thanh Hóa",.648,.544),w("Xác hn",.586,.782),
+            w("Nghệ An",.648,.602),w("ainh sửa vào",.596,.699),w("Khánh Hòa",.648,.878)))
+        assertEquals(2,r.open); assertEquals(listOf("thanhhoa","nghean","khanhhoa"),r.options.map { it.plain })
+    }
     @Test fun readsTheRegionDialog() {
         val dialog=listOf(w("Vào chiến khu",.33,.191),w("Chưa chỉnh",.41,.789),w("Xác nhận",.587,.789))
         val start=BoardScreens.region(dialog+w("Quốc gia",.344,.486))
