@@ -396,3 +396,51 @@ Game còn trong đa nhiệm sẽ quay lại đúng chỗ đã bỏ dở, có th�
 - **Trên máy ảo CI:** app Buộc dừng thật một app có sẵn qua trang Cài đặt của Android 11. Sau đó tiến trình của app đó không còn, và lần đóng thứ hai nhận ra là app không chạy.
 - **Chưa thử trên máy thật của bạn:** nhãn nút trong Cài đặt của hãng điện thoại có thể khác. Nếu app ghi "Không thấy nút Buộc dừng", gửi tôi ảnh trang Thông tin ứng dụng của Liên Quân.
 
+## v0.5.0: Thống kê tướng (Bảng Phân Bậc Tướng)
+
+**Tác vụ mới trong danh sách macro của bảng nổi: "Thống kê tướng (bảng xếp hạng)".** Tác vụ chụp hết bảng thống kê tướng của game.
+
+**Đường đi** (từ ảnh bạn gửi):
+1. Ở sảnh, bấm nút bên trái **Túi đồ**. Biểu tượng của nút này đổi theo mùa, nên app bấm theo vị trí.
+2. Trong "Tính năng khác", bấm **Cộng đồng**.
+3. Trên thanh bên trái, chọn **mục thứ 2** (biểu tượng mũ tướng).
+4. Bấm **Bảng xếp hạng đầy đủ**.
+
+App bắt đầu được từ bất kỳ màn nào trên đường đi này: sảnh, Tính năng khác, Cộng đồng, hoặc chính trang Bảng Phân Bậc Tướng.
+
+**Chụp:** 2 bảng × 3 chế độ = 6 danh sách, mỗi danh sách chụp từ đầu tới cuối.
+- **Hai bảng**, đổi bằng nút **Đổi bảng xếp hạng**:
+  - **Tỷ lệ:** Tier, tỷ lệ thắng, pick, ban, và các tướng khắc chế.
+  - **Chỉ số:** sát thương mỗi trận, hạ, vàng, sát thương phải chịu, hỗ trợ.
+- **Ba chế độ** trong ô chọn: Đấu hạng (Tất cả), Đấu 5v5, Đấu hạng (Tinh Anh trở lên).
+- **Cuộn:** mỗi lần kéo chậm 0,4 màn hình (dừng tay trước khi nhấc để trang không trôi). Ảnh liền nhau trùng 1–2 dòng, nên không sót tướng.
+  - Khi một lần kéo không làm bảng thay đổi, là đã hết danh sách.
+  - Sau đó app vuốt nhanh lên đầu trang để đổi bảng hoặc chế độ.
+- **Ảnh xếp theo thư mục**, ví dụ `ty-le-dau-hang-tat-ca/0003-ty-le-dau-hang-tat-ca-01.png`, `chi-so-dau-5v5/…`. Trong app, thư mục hiện tên như "Tỷ lệ thắng, pick, ban · Đấu 5v5", còn ảnh là "Trang 1, 2…".
+
+**Cách nhận màn hình:**
+- Các trang sau sảnh là trang web, có lề đổi theo phía của thanh điều hướng, nên app tìm theo chữ chứ không theo tọa độ cố định:
+  - đọc bằng ML Kit;
+  - đọc cả cây Trợ năng của trang web, nếu có.
+- Sảnh được nhận bằng các biểu tượng ở thanh dưới, như trước. Đã kiểm tra trên 2 ảnh sảnh bạn gửi, kể cả bản thử nghiệm có biểu tượng khác.
+- Đổi bảng hay chế độ xong, app đọc lại tiêu đề cột và ô chọn để chắc đã đổi đúng.
+
+**Tùy chọn Tự mở game:** app đóng hẳn game còn chạy, vào game như bước Tự mở game của Danh sách tướng, nhưng dừng ở sảnh thay vì bấm Tướng. Có thể kèm kiểm tra UID và lưu ảnh từng bước như Danh sách tướng.
+
+**Tạm dừng:** bước thống kê bị ngắt ngay. Khi bấm Tiếp tục, app tìm lại đường tới bảng và bỏ qua các danh sách đã chụp xong trong lượt.
+
+### Kiểm tra
+
+- **Kịch bản:**
+  - từ sảnh tới bảng, chụp đủ 6 danh sách đúng thứ tự, chỉ đổi bảng 1 lần;
+  - bắt đầu ở bảng Chỉ số · Đấu 5v5 và bỏ qua phần đã chụp;
+  - tiêu đề cột đứng yên khi cuộn;
+  - màn hình lạ;
+  - bị Tạm dừng giữa chừng.
+- **Ảnh thật:**
+  - nhận ra sảnh;
+  - phân biệt được bảng Tỷ lệ với bảng Chỉ số;
+  - nhận ra bảng đã cuộn đi một dòng.
+- **Trên máy ảo CI:** ML Kit đọc 6 ảnh của bạn (Tính năng khác, Cộng đồng, mục tướng, 2 bảng, ô chọn đang mở) và nhận đúng từng trang, vị trí nút, bảng, chế độ và các dòng trong ô chọn.
+- **Chưa thử trên máy thật.** Ở lần chạy đầu, xin bạn xem `events.txt` của lượt và gửi tôi ảnh nếu app dừng ở trang nào.
+

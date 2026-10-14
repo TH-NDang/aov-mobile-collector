@@ -68,6 +68,7 @@ class CollectorService : AccessibilityService() {
         val target=if(all) minOf(heroes,listTotal?:heroes) else 1
         val total=if(all) lead+target*perHero else m.steps.length()
         val done=index.coerceIn(0,total)
+        if(m.json.optString("collectionMode")=="ranking") return "Thống kê tướng · ${clock(elapsed())}"
         val head=if(all) "Tướng ${minOf(target,(index-lead).coerceAtLeast(0)/perHero+1)}/${if(listTotal==null&&heroes>=BuiltInMacros.ALL) "?" else target}"
             else "${(0 until index.coerceAtMost(m.steps.length())).sumOf { m.photos(it) }}/${m.photoTotal}${if(m.photosVary) "+" else ""} ảnh"
         val t=elapsed(); val eta=if(done>=20&&t>60_000) " · còn ~"+clock(t*(total-done)/done) else ""
@@ -97,7 +98,8 @@ class CollectorService : AccessibilityService() {
     private val awayCheck=Runnable { val p=foreground(); if(running&&!entering&&p!=null&&p!=GAME&&p!=packageName) pause("Đã rời game (đang mở ${appName(p)}) — tạm dừng") }
     /** While the run opens the game itself ([GameEntry]), another app in front is expected. */
     private var entering=false
-    private fun entryStep(m:Macro,i:Int)=i<m.steps.length()&&m.steps.getJSONObject(i).optString("type")=="enter"
+    /** Steps that start outside the game or on its web pages, where another app in front is expected. */
+    private fun entryStep(m:Macro,i:Int)=i<m.steps.length()&&m.steps.getJSONObject(i).optString("type") in setOf("enter","ranking")
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (running && event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val p = event.packageName?.toString()
@@ -259,7 +261,7 @@ class CollectorService : AccessibilityService() {
         if(macroPicker!=null) { dismissMacroPicker();return }
         val host=panel?:return
         val saved=MacroStore.saved(this).mapNotNull { try { Macro(it.readText()) } catch(_:Exception) { null } }
-        val choices=listOf("Một tướng đang mở","Danh sách tướng")+saved.map { it.name }
+        val choices=listOf("Một tướng đang mở","Danh sách tướng","Thống kê tướng (bảng xếp hạng)")+saved.map { it.name }
         var visible=choices.indices.toList()
         val body=Ui.stack(this).apply { setPadding(dp(10),dp(10),dp(10),dp(6));background=Ui.shape(Color.argb(248,248,248,254),dp(14),Ui.border) }
         val search=Ui.field(this,"Tìm macro…");body.addView(search,LinearLayout.LayoutParams(-1,dp(46)))
@@ -279,7 +281,7 @@ class CollectorService : AccessibilityService() {
         })
         list.setOnItemClickListener { _,_,position,_ ->
             val i=visible.getOrNull(position)?:return@setOnItemClickListener;dismissMacroPicker()
-            handler.post { when(i) { 0 -> taskForm(false);1 -> taskForm(true);else -> selectMacro(saved[i-2].raw) } }
+            handler.post { when(i) { 0 -> taskForm(false);1 -> taskForm(true);2 -> rankingForm();else -> selectMacro(saved[i-3].raw) } }
         }
         body.addView(Ui.button(this,"Đóng danh sách") { dismissMacroPicker() },LinearLayout.LayoutParams(-1,dp(38)))
         filter("")
@@ -373,6 +375,29 @@ class CollectorService : AccessibilityService() {
             } catch(e:Exception) { field.error=e.message }
         }
     }
+    /** The hero statistics: both tables of "Bảng Phân Bậc Tướng" for each kind of match ([RankingReader]). */
+    private fun rankingForm() {
+        val body=Ui.stack(this).apply { setPadding(dp(20),dp(6),dp(20),dp(6)) }
+        body.addView(Ui.text(this,"Từ sảnh, app vào Cộng đồng → mục tướng → Bảng xếp hạng đầy đủ, rồi chụp hết danh sách của cả 2 bảng (Đổi bảng xếp hạng) cho từng chế độ: Đấu hạng (Tất cả), Đấu 5v5, Đấu hạng (Tinh Anh trở lên).",14f))
+        // Six lists of about 27 screens each.
+        val photos=6*28; val need=photos*900_000L
+        body.addView(Ui.text(this,"Ước tính: khoảng $photos ảnh · khoảng ${Format.duration(photos*4L+60)}\nCần khoảng ${Format.size(need)} · máy còn trống ${Format.size(filesDir.usableSpace)}",13f,Ui.ink,true))
+        fun option(text:String,key:String,default:Boolean=false)=CheckBox(this).apply { this.text=text;textSize=14f;isChecked=uiPrefs.getBoolean(key,default) }.also { body.addView(it) }
+        val openGame=option("Tự mở game và vào sảnh: đóng game còn chạy, đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện","rankOpenGame")
+        val savedUid=Accounts.uid(this)
+        val checkAccount=option(if(savedUid!=null) "Kiểm tra UID là tài khoản test ($savedUid)" else "Kiểm tra UID tài khoản test (lưu tài khoản ở mục Tài khoản trong app trước)","checkAccount").apply { if(savedUid==null) { isChecked=false;isEnabled=false } }
+        val traceEntry=option("Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)","traceEntry",true)
+        fun follow() { checkAccount.isEnabled=openGame.isChecked&&savedUid!=null; traceEntry.isEnabled=openGame.isChecked }
+        follow(); openGame.setOnCheckedChangeListener { _,_ -> follow() }
+        body.addView(Ui.text(this,"Không tick Tự mở game: mở sảnh game (hoặc trang Bảng Phân Bậc Tướng) trước khi bấm Chạy.",12f,Ui.muted))
+        val dialog=AlertDialog.Builder(this).setTitle("Thống kê tướng").setView(ScrollView(this).apply { addView(body) })
+            .setPositiveButton("Chọn tác vụ",null).setNegativeButton("Hủy",null).create()
+        display(dialog)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            uiPrefs.edit().putBoolean("rankOpenGame",openGame.isChecked).putBoolean("checkAccount",checkAccount.isChecked).putBoolean("traceEntry",traceEntry.isChecked).apply()
+            if(selectMacro(BuiltInMacros.ranking(openGame.isChecked,checkAccount.isChecked&&checkAccount.isEnabled,traceEntry.isChecked))) dialog.dismiss()
+        }
+    }
     /** Mean size of the screenshots saved on this phone, which depends on its screen and the game's art; 1.5 MB before any. */
     private fun averageShot():Long {
         val sizes=File(filesDir,"captures").walkTopDown().filter { it.isFile&&it.extension=="png" }.take(300).map { it.length() }.toList()
@@ -451,10 +476,11 @@ class CollectorService : AccessibilityService() {
         if(!MacroStore.current(this).exists()) return   // nothing selected yet on a fresh install
         try {
             val m=readMacro(); val mode=m.json.optString("collectionMode")
-            if((mode!="single"&&mode!="all")||m.json.optInt("builtinVersion",1)==BuiltInMacros.VERSION) return
+            if((mode!="single"&&mode!="all"&&mode!="ranking")||m.json.optInt("builtinVersion",1)==BuiltInMacros.VERSION) return
             val step=if(prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
             if(step>0&&step<m.steps.length()&&!prefs.getBoolean("stopped",false)) return
-            MacroStore.current(this).writeText(BuiltInMacros.create(m.json.optString("heroName",""),m.json.optInt("heroCount",1),mode=="all",m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills"),m.json.optBoolean("openGame"),m.json.optBoolean("checkAccount"),m.json.optBoolean("traceEntry",true)))
+            if(mode=="ranking") MacroStore.current(this).writeText(BuiltInMacros.ranking(m.json.optBoolean("openGame"),m.json.optBoolean("checkAccount"),m.json.optBoolean("traceEntry",true)))
+            else MacroStore.current(this).writeText(BuiltInMacros.create(m.json.optString("heroName",""),m.json.optInt("heroCount",1),mode=="all",m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills"),m.json.optBoolean("openGame"),m.json.optBoolean("checkAccount"),m.json.optBoolean("traceEntry",true)))
             selectionCache=null
         } catch(e:Exception) { CrashLog.record(this,"Không nâng cấp được macro",e) }
     }
@@ -516,20 +542,25 @@ class CollectorService : AccessibilityService() {
         try {
             val type=s.getString("type")
             // A step that never reports back must not leave the controller stuck on "Đang xử lý".
-            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; "pick" -> 300000L; "enter" -> GameEntry.LIMIT_MS+30000; "skills" -> 300000L; else -> 10000L }
+            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; "pick" -> 300000L; "enter" -> GameEntry.LIMIT_MS+30000; "skills" -> 300000L; "ranking" -> 2_700_000L; else -> 10000L }
             handler.postDelayed({ if(!finished && token==generation) done(false,"Bước ${index+1} ($type) quá ${limit/1000} giây không xong. Kiểm tra màn hình rồi tiếp tục.") },limit)
             // Its callbacks see the step finished and stop; a tap already sent still lands.
-            if(type=="enter"||type=="skills") cancelStep={ if(!finished) { finished=true; busy=false; entering=false; shield(false); note("Ngắt bước ${index+1} ($type) giữa chừng") } }
+            if(type=="enter"||type=="skills"||type=="ranking") cancelStep={ if(!finished) { finished=true; busy=false; entering=false; shield(false); note("Ngắt bước ${index+1} ($type) giữa chừng") } }
             when(type) {
                 "wait" -> handler.postDelayed({ done(true) },s.getLong("ms"))
                 "back" -> done(performGlobalAction(GLOBAL_ACTION_BACK))
-                "enter" -> { entering=true; enterGame({ !finished && token==generation }) { outcome -> when(outcome) {
+                "enter" -> { entering=true; enterGame(s.optString("to")=="lobby",{ !finished && token==generation }) { outcome -> when(outcome) {
                     is GameEntry.Outcome.Ready -> done(true)
                     is GameEntry.Outcome.Failed -> done(false,outcome.reason)
                 } } }
                 // A failed screenshot is retried once; Android sometimes refuses one right after a tap.
                 "screenshot" -> { val name="%04d-%s".format(index+1,s.getString("name"))
                     capture(name,runId) { ok -> if(ok) done(true) else handler.postDelayed({ if(!finished&&token==generation) capture(name,runId) { done(it) } },1000) } }
+                // The web pages of Cộng đồng may belong to another app than the game.
+                "ranking" -> { entering=true; ranking({ !finished && token==generation }) { outcome -> when(outcome) {
+                    is RankingReader.Outcome.Done -> { note("Thống kê tướng: ${outcome.pages} ảnh"); done(true) }
+                    is RankingReader.Outcome.Failed -> done(false,outcome.reason)
+                } } }
                 "skills" -> skills(s,{ !finished && token==generation }) { outcome -> when(outcome) {
                     is SkillReader.Outcome.Done -> { note("Chiêu ${s.getString("prefix")}: ${outcome.summary}"); done(true) }
                     is SkillReader.Outcome.Failed -> done(false,outcome.reason)
@@ -662,17 +693,61 @@ class CollectorService : AccessibilityService() {
         val known=skillForm?.takeIf { it.first==key }?.second
         SkillReader(s.getString("prefix"),SkillReader.Options(s.optBoolean("detailOnly"),s.optBoolean("directSkills"),s.optBoolean("fast")),screen,known,finish).start()
     }
+    /**
+     * Runs a [RankingReader]: from the lobby to the hero statistics, photographing both tables for each kind of
+     * match. The words of each screen come from its accessibility tree (the web pages have one) and from ML Kit.
+     */
+    private fun ranking(alive:()->Boolean,finish:(RankingReader.Outcome)->Unit) {
+        val stamp="%04d".format(index+1); val key="$runId/$stamp"
+        val done=rankingDone?.takeIf { it.first==key }?.second?:HashSet<String>().also { rankingDone=key to it }
+        val screen=object:RankingReader.Screen {
+            override val alive get()=alive()
+            override fun look(words:Boolean,then:(RankingReader.Look?)->Unit) {
+                if(filesDir.usableSpace<30L*1024*1024) { note("Không đủ dung lượng trống để chụp");return then(null) }
+                grab(anyApp=true) { b ->
+                    if(b==null) return@grab then(null)
+                    val nodes=if(words) screenWords() else emptyList()
+                    try { io.execute {
+                        val read=try {
+                            val rows={ y:Int,line:IntArray -> b.getPixels(line,0,b.width,0,y,b.width,1) }
+                            val lobby=words&&GameScreens.read(b.width,b.height,rows).kind==GameScreens.Kind.LOBBY
+                            Triple(if(words) nodes+GameText.words(b) else nodes,lobby,RankScreens.signature(b.width,b.height,rows))
+                        } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không đọc được màn hình thống kê",e);null }
+                        handler.post { if(read==null) { b.recycle();then(null) } else then(object:RankingReader.Look {
+                            override val words=read.first; override val lobby=read.second; override val signature=read.third
+                            override fun done(keep:String?) { if(keep!=null) store(b,runId,"$stamp-$keep") {} else b.recycle() }
+                        }) }
+                    } } catch(e:Exception) { b.recycle();then(null) }
+                }
+            }
+            override fun tap(x:Double,y:Double,then:(Boolean)->Unit) { touchGame(tapAt(x,y),true,then) }
+            override fun drag(d:Double,fling:Boolean,then:(Boolean)->Unit) {
+                val from=if(d>0) .88 else .22; val to=(from-d).coerceIn(.05,.95)
+                touchGame(drag(.55,from,to,if(fling) 160 else 700,if(fling) 0 else 400),false,then)
+            }
+            override fun later(ms:Long,then:()->Unit) { handler.postDelayed(then,ms) }
+            override fun note(text:String) { this@CollectorService.note(text) }
+            override fun say(text:String) { if(alive()) { lastStatus=text;refreshPanel() } }
+            override fun finished(combo:String) { done.add(combo) }
+        }
+        RankingReader(screen,done.toSet(),finish).start()
+    }
+    /** Tables the ranking step last started has finished, by run and step, for a try of it after a pause. */
+    private var rankingDone:Pair<String,MutableSet<String>>?=null
     /** The first form of the skills step last started, by run and step, for a try of it after a pause. */
     private var skillForm:Pair<String,SkillRow.Row>?=null
     /** Photos of the run on disk: with skill rows read at run time, the macro alone cannot tell. */
-    private fun photosTaken(m:Macro):Int = if(!m.photosVary||runId.isEmpty()) m.photoSteps.size
-        else File(filesDir,"captures/$runId").walk().count { it.extension=="png"&&it.name.contains("hero") }
+    private fun photosTaken(m:Macro):Int = when {
+        !m.photosVary||runId.isEmpty() -> m.photoSteps.size
+        m.json.optString("collectionMode")=="ranking" -> File(filesDir,"captures/$runId").walk().count { it.extension=="png"&&RankScreens.COMBOS.any { c -> it.name.contains(c.slug) } }
+        else -> File(filesDir,"captures/$runId").walk().count { it.extension=="png"&&it.name.contains("hero") }
+    }
     /**
      * Runs a [GameEntry] against the real screen: opens the game and goes through its login, reward screens and
      * popups to the hero list, checking the account's UID when the run asks for it. With the run's trace on,
      * each screenshot it decided on is kept scaled down in [GameEntry.TRACE_DIR], with the decision.
      */
-    private fun enterGame(alive:()->Boolean,finish:(GameEntry.Outcome)->Unit) {
+    private fun enterGame(toLobby:Boolean,alive:()->Boolean,finish:(GameEntry.Outcome)->Unit) {
         val stamp="%04d".format(index+1)
         val m=macro
         val expected=if(m?.json?.optBoolean("checkAccount")==true) Accounts.uid(this) else null
@@ -728,7 +803,7 @@ class CollectorService : AccessibilityService() {
             override fun note(text:String) { this@CollectorService.note(text) }
             override fun say(text:String) { if(alive()) { lastStatus=text;refreshPanel() } }
         }
-        GameEntry(screen,expected,finish).start()
+        GameEntry(screen,expected,toLobby,finish).start()
     }
     /**
      * Ends app [pkg] through its App info page in Settings ([GameCloser]). The UI smoke check runs it on an app of
@@ -820,6 +895,9 @@ class CollectorService : AccessibilityService() {
     private fun photoDirectory(folder:String,name:String,bitmap:Bitmap):File {
         val base=File(filesDir,"captures/$folder").apply { mkdirs() }
         val m=macro ?: return base
+        // Each table of the hero statistics in a folder of its own.
+        if(folder!="manual"&&m.json.optString("collectionMode")=="ranking")
+            return RankScreens.COMBOS.firstOrNull { name.contains("-${it.slug}-") }?.let { File(base,it.slug).apply { mkdirs() } }?:base
         if(folder=="manual" || m.json.optString("collectionMode") !in listOf("single","all")) return base
         val key=Regex("(hero(?:-\\d{3})?)-").find(name)?.groupValues?.get(1) ?: return base
         val mapFile=File(base,"hero-folders.json")

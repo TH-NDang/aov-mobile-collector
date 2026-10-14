@@ -149,7 +149,7 @@ class GameEntryTest {
         override fun now()=time
         override fun note(text:String) { notes.add(text) }
         override fun say(text:String) {}
-        fun run():GameEntry.Outcome { GameEntry(this,uid) { outcome=it }.start(); var guard=0
+        fun run(toLobby:Boolean=false):GameEntry.Outcome { GameEntry(this,uid,toLobby) { outcome=it }.start(); var guard=0
             while(outcome==null) { pending.removeFirstOrNull()?.invoke()?:error("stuck"); check(++guard<10000) }; return outcome!! }
     }
     private fun at(kind:GameScreens.Kind,close:Pair<Double,Double>?=null,look:Int=0,words:List<GameScreens.Word> =emptyList(),uid:String?=null,tap:Pair<Double,Double>?=null)=
@@ -180,6 +180,15 @@ class GameEntryTest {
         // Settings may not show the button: the game is opened as before.
         val anyway=Script(listOf(at(GameScreens.Kind.LIST)),quitting=GameCloser.Result.NO_BUTTON)
         assertTrue(anyway.run() is GameEntry.Outcome.Ready); assertEquals(1,anyway.launches)
+    }
+
+    @Test fun stopsAtTheLobbyForTheHeroStatistics() {
+        val game=Script(listOf(at(GameScreens.Kind.POPUP,x1),at(GameScreens.Kind.POPUP,x1),at(GameScreens.Kind.LOBBY),at(GameScreens.Kind.LOBBY)))
+        assertTrue(game.run(toLobby=true) is GameEntry.Outcome.Ready)
+        assertEquals(listOf(x1),game.taps)
+        // Already on the hero list: back to the lobby.
+        val listed=Script(listOf(at(GameScreens.Kind.LIST),at(GameScreens.Kind.LOBBY),at(GameScreens.Kind.LOBBY)))
+        assertTrue(listed.run(toLobby=true) is GameEntry.Outcome.Ready); assertEquals(1,listed.backs); assertTrue(listed.taps.isEmpty())
     }
 
     @Test fun waitsForAPopupThatAppearsAfterTheLobby() {

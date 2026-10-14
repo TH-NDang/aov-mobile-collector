@@ -62,6 +62,21 @@ class UiSmoke:Instrumentation() {
             check(register.kind==GameScreens.Kind.REGISTER&&Math.abs(register.tap!!.first-.749)<.04&&Math.abs(register.tap!!.second-.194)<.04) { "Registration form read as ${register.kind} ${register.tap}: ${register.words}" }
             val form=words("game-garena-form.jpg")
             check(form.kind==GameScreens.Kind.FORM) { "Garena page read as ${form.kind}: ${form.words}" }
+            // The way to the hero statistics, read by ML Kit on the user's screenshots: each page known by its words.
+            val rankLog=StringBuilder()
+            fun rank(asset:String):List<GameScreens.Word> { val b=context.assets.open(asset).use { BitmapFactory.decodeStream(it) }
+                return GameText.words(b).also { b.recycle();rankLog.append("$asset\n").append(it.joinToString("\n") { w -> "  %.3f %.3f %s".format(w.x,w.y,w.text) }).append("\n") } }
+            val more=rank("rank-more.jpg"); val community=rank("rank-community.jpg"); val heroes=rank("rank-community-heroes.jpg")
+            val rates=rank("rank-ranking-rates.jpg"); val figures=rank("rank-ranking-figures.jpg"); val modes=rank("rank-ranking-modes.jpg")
+            File(targetContext.filesDir,"smoke").apply { mkdirs() }.resolve("ocr-ranking.txt").writeText(rankLog.toString())
+            check(RankScreens.page(more,false)==RankScreens.Page.PANEL&&more.any { it.plain.contains("congdong")&&Math.abs(it.x-.15)<.06&&Math.abs(it.y-.52)<.05 }) { "Tính năng khác read as ${RankScreens.page(more,false)}" }
+            check(RankScreens.page(community,false)==RankScreens.Page.COMMUNITY) { "Cộng đồng read as ${RankScreens.page(community,false)}" }
+            check(RankScreens.page(heroes,false)==RankScreens.Page.HEROES&&heroes.any { it.plain.contains("bangxephangdaydu")&&Math.abs(it.y-.082)<.04 }) { "Cộng đồng heroes read as ${RankScreens.page(heroes,false)}" }
+            for((list,table) in listOf(rates to RankScreens.Table.RATES,figures to RankScreens.Table.FIGURES)) {
+                check(RankScreens.page(list,false)==RankScreens.Page.RANKING&&RankScreens.table(list)==table&&RankScreens.mode(RankScreens.modeButton(list))==RankScreens.Mode.ALL) {
+                    "Ranking read as ${RankScreens.page(list,false)} ${RankScreens.table(list)} ${RankScreens.mode(RankScreens.modeButton(list))}" } }
+            val modeButton=RankScreens.modeButton(modes)
+            check(modeButton!=null&&RankScreens.option(modes,modeButton,RankScreens.Mode.ELITE)?.let { Math.abs(it.y-.444)<.03 }==true&&RankScreens.option(modes,modeButton,RankScreens.Mode.FIVE)?.let { Math.abs(it.y-.378)<.03 }==true) { "Drop-down read as $modeButton" }
             // The faint UID line at the bottom of game screens, drawn as the game draws it.
             val strip=Bitmap.createBitmap(2400,1080,Bitmap.Config.ARGB_8888)
             Canvas(strip).apply { drawColor(Color.rgb(36,40,96));drawText("UID: 17345555466552433",1070f,1072f,Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.rgb(96,100,140);textSize=24f;typeface=android.graphics.Typeface.SERIF }) }

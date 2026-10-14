@@ -14,7 +14,7 @@ class Macro(val raw: String) {
     fun photos(i:Int):Int = steps.getJSONObject(i).let { s -> when(s.getString("type")) { "screenshot" -> 1; "skills" -> if(s.optBoolean("detailOnly")) 4 else 8; else -> 0 } }
     val photoTotal:Int by lazy { (0 until steps.length()).sumOf { photos(it) } }
     /** True when the photo count can grow at run time, as with a "skills" step. */
-    val photosVary:Boolean by lazy { (0 until steps.length()).any { steps.getJSONObject(it).getString("type")=="skills" } }
+    val photosVary:Boolean by lazy { (0 until steps.length()).any { steps.getJSONObject(it).getString("type") in setOf("skills","ranking") } }
     val hash = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray()).joinToString("") { "%02x".format(it) }
     init {
         require(name.matches(Regex("[a-zA-Z0-9_-]{1,64}"))) { "Tên macro chỉ dùng chữ, số, _ và -" }
@@ -30,7 +30,8 @@ class Macro(val raw: String) {
                 "screenshot" -> require(s.getString("name").matches(Regex("[a-zA-Z0-9_-]{1,64}"))) { "Tên ảnh không hợp lệ" }
                 "back" -> Unit
                 "pick" -> require(s.getInt("index") in 0..9999) { "pick: index từ 0 đến 9999" }
-                "enter" -> require(i==0) { "enter chỉ dùng ở bước đầu" }
+                "enter" -> { require(i==0) { "enter chỉ dùng ở bước đầu" }; require(s.optString("to","list") in setOf("list","lobby")) { "enter: to là list hoặc lobby" } }
+                "ranking" -> Unit
                 "skills" -> require(s.getString("prefix").matches(Regex("[a-zA-Z0-9_-]{1,40}"))) { "skills: prefix không hợp lệ" }
                 else -> error("Bước ${i+1}: type không hỗ trợ")
             }
@@ -84,6 +85,19 @@ object BuiltInMacros {
             .put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
             .put("collectionMode",if(batch) "all" else "single").put("heroName",safeName)
             .put("heroCount",if(batch) count else 1).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills).put("openGame",entering).put("checkAccount",entering&&checkAccount).put("traceEntry",traceEntry)
+            .put("builtinVersion",VERSION).put("steps",steps).toString(2)
+    }
+    /**
+     * The hero statistics ([RankingReader]): with [openGame], the game is opened and left at the lobby first, as for
+     * the list ([checkAccount], [traceEntry] the same).
+     */
+    fun ranking(openGame:Boolean=false,checkAccount:Boolean=false,traceEntry:Boolean=true):String {
+        val steps=org.json.JSONArray()
+        if(openGame) steps.put(JSONObject().put("type","enter").put("to","lobby"))
+        steps.put(JSONObject().put("type","wait").put("ms",if(openGame) 1000 else 3000))
+        steps.put(JSONObject().put("type","ranking"))
+        return JSONObject().put("name","hero-ranking").put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
+            .put("collectionMode","ranking").put("heroName","").put("openGame",openGame).put("checkAccount",openGame&&checkAccount).put("traceEntry",traceEntry)
             .put("builtinVersion",VERSION).put("steps",steps).toString(2)
     }
     /**

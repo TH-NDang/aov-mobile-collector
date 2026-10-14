@@ -227,14 +227,14 @@ object GameScreens {
 /**
  * Opens Liên Quân and goes from wherever it is to the All-heroes list: waits through the logos, loading and
  * trailer, logs in with the last Garena account, skips the registration form and the reward screens, closes
- * event popups by their X, and taps the lobby's "Tướng" tab. With an [expectedUid], it first checks the UID of
+ * event popups by their X, and taps the lobby's "Tướng" tab, or stops at the lobby [toLobby]. With an [expectedUid], it first checks the UID of
  * the account in play; another account is logged out and the saved test account logged in through the
  * Garena page, once. Each move is decided on a screenshot and recorded with it ([Shot.record]), so the way
  * in can be reviewed afterwards. It never sends Android's back key: in the game that does not close popups,
  * and twice in the lobby quits. Whatever it cannot get past pauses the run with that screen kept. All screen
  * access goes through [Screen], so unit tests run this exact logic on a scripted series of screens.
  */
-class GameEntry(private val screen:Screen,private val expectedUid:String?=null,private val finish:(Outcome)->Unit) {
+class GameEntry(private val screen:Screen,private val expectedUid:String?=null,private val toLobby:Boolean=false,private val finish:(Outcome)->Unit) {
     sealed class Outcome { object Ready:Outcome(); class Failed(val reason:String):Outcome() }
     /**
      * One screenshot. [record] keeps it, scaled down, with what was decided on it and where it was tapped,
@@ -387,6 +387,7 @@ class GameEntry(private val screen:Screen,private val expectedUid:String?=null,p
         screen.back { ok -> if(ok) again(1500) else fail("Không chạm được nút quay lại của game") }
     }
     private fun list(s:Shot,reading:GameScreens.Reading) {
+        if(toLobby) return back(s,"Danh sách tướng: quay lại sảnh")
         if(!uidOk) {
             // The list shows the UID too: a match saves going back; anything else is checked from the lobby.
             if(reading.uid==expectedUid) { uidOk=true; screen.note("UID $expectedUid khớp tài khoản test") }
@@ -410,6 +411,8 @@ class GameEntry(private val screen:Screen,private val expectedUid:String?=null,p
             if(uid!=expectedUid) return wrongAccount(s,uid)
             uidOk=true; screen.note("UID $uid khớp tài khoản test")
         }
+        // The hero statistics start from the lobby.
+        if(toLobby) { s.record("Đã vào sảnh"); s.done(null); screen.note("Đã vào sảnh"); return finish(Outcome.Ready) }
         if(++tabs>MAX_TABS) return stop(s,"entry-lobby","Đã bấm Tướng ở sảnh $MAX_TABS lần mà chưa vào được danh sách tướng. Mở danh sách Tất cả tướng rồi bấm Tiếp tục.")
         lobbySince=-1
         tap(s,"Sảnh: bấm Tướng",GameScreens.HEROES_X to GameScreens.HEROES_Y,2500)
