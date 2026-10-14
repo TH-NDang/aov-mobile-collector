@@ -61,7 +61,7 @@ object MacroStore {
         else -> m.name
     }
     private fun base(m:Macro):String = when(m.json.optString("collectionMode")) {
-        "single" -> m.json.optString("heroName","").ifBlank { "Tướng đang mở" }+" · ${m.photoSteps.size} ảnh"
+        "single" -> m.json.optString("heroName","").ifBlank { "Tướng đang mở" }+" · ${m.photoTotal}${if(m.photosVary) "+" else ""} ảnh"
         "all" -> if(m.json.optInt("heroCount",1)>=BuiltInMacros.ALL) "Tất cả tướng · dừng ở cuối danh sách" else "${m.json.optInt("heroCount",1)} ô tướng · cuộn có đo, dừng ở cuối danh sách"
         else -> m.name
     }

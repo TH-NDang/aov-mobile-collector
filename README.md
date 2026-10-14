@@ -297,3 +297,46 @@ Mở rộng tùy chọn **Tự mở game** của v0.4.7 với các màn bạn g�
   - Dòng UID mờ được đọc đúng.
   - Tài khoản lưu và đọc lại được, mật khẩu không nằm ở dạng chữ thường.
 - **Chưa thử được trên máy thật:** điền trang Garena thật, và đường đăng xuất trong cài đặt.
+
+## v0.4.9: đủ 5 ô chiêu và các dạng đổi chiêu (nút ↻)
+
+Trước đây app bấm 4 vị trí cố định trên hàng chiêu. Với Edras (5 ô) app chụp trùng chiêu 1 và bỏ sót chiêu 2, 3. Các chiêu ở dạng khác (Qi, Volkath, Liliana…) thì không được chụp.
+
+Giờ app **đọc hàng chiêu trên ảnh chụp ngay lúc chạy**, rồi mới bấm.
+
+- **4 hay 5 ô:**
+  - App đo viền tròn của từng ô theo hai cách xếp (4 ô, hoặc 5 ô sát nhau).
+  - Cách xếp đúng có viền rõ ở mọi ô (từ 73% trở lên), cách sai thì không (tối đa 65%).
+  - Tên ảnh: `passive`, `skill-1` … `skill-4`.
+- **Nút đổi dạng ↻:** nhận theo hình hai mũi tên (so khớp mẫu), không theo độ sáng, nên nền sáng như của Tee hay Sinestrea không bị nhận nhầm.
+- **Khi có nút ↻:**
+  1. Chụp xong dạng đầu, app đóng bảng chiêu rồi bấm ↻.
+  2. App so từng ô với các dạng đã thấy và **chỉ chụp ô đã đổi**: Qi chỉ chiêu 3, Volkath chiêu 2, Liliana chiêu 1–3, Edras cả 5 ô.
+  3. App bấm ↻ tiếp cho tới khi hàng chiêu về lại dạng đầu (tối đa 4 dạng).
+  - Ảnh dạng sau có tên `form-2-skill-3-detail`…, kèm ảnh hàng chiêu của dạng đó: `form-2-icons`.
+  - Nếu bấm ↻ mà hàng chiêu không đổi, app chờ thêm 1 giây, bấm lại một lần, rồi bỏ qua và ghi vào nhật ký lượt.
+- **Thứ tự ảnh:** ảnh chiêu có thêm số thứ tự sau số bước, như `0012-03-hero-001-skill-2-detail`, để thư mục tướng hiện đúng thứ tự chụp.
+- **Trình xem ảnh:** hiện "Chiêu 4" và "Dạng 2 · Chiêu 3 · Chi tiết".
+- **Không nhận ra hàng chiêu** (bảng còn mở, màn khác): app bấm chỗ trống một lần rồi đọc lại. Vẫn không được thì app chụp theo 4 vị trí như trước và giữ ảnh `skill-row-unknown` để xem lại.
+- **Các tùy chọn cũ vẫn dùng được:** Chỉ Chi tiết, Chuyển thẳng chiêu (trong mỗi dạng), Chạy nhanh.
+- **Nhật ký lượt (`events.txt`)** ghi số ô và các dạng của từng tướng, ví dụ: "5 ô chiêu · 2 dạng (dạng 2 đổi passive, skill-1, …)".
+
+### Kiểm tra
+
+- **8 ảnh bạn gửi** (Qi, Volkath, Liliana, Edras, mỗi tướng 2 dạng):
+  - đúng số ô;
+  - đúng nút ↻;
+  - đúng các ô đổi giữa hai dạng.
+- **Trên 129 tướng của lượt 12/10:**
+  - chỉ Edras có 5 ô;
+  - đúng 20 tướng có nút ↻;
+  - không có tướng nào bị nhận nhầm.
+- **Luồng bấm được thử bằng kịch bản:**
+  - tướng 4 ô không đổi dạng;
+  - Qi 2 dạng;
+  - Edras 5 ô đổi hết;
+  - tướng 3 dạng;
+  - nút ↻ lỡ một lần;
+  - nút ↻ không phản hồi;
+  - bảng chiêu còn mở.
+- **Phần trích xuất chữ** (`extraction/merge.py` ở nhánh `claude/vlm-text-extraction`) chưa biết chiêu 4 và ảnh dạng 2: cần cập nhật riêng.

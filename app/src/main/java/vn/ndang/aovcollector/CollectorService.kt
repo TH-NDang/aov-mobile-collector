@@ -69,7 +69,7 @@ class CollectorService : AccessibilityService() {
         val total=if(all) lead+target*perHero else m.steps.length()
         val done=index.coerceIn(0,total)
         val head=if(all) "Tướng ${minOf(target,(index-lead).coerceAtLeast(0)/perHero+1)}/${if(listTotal==null&&heroes>=BuiltInMacros.ALL) "?" else target}"
-            else "${m.photoSteps.count { it<index }}/${m.photoSteps.size} ảnh"
+            else "${(0 until index.coerceAtMost(m.steps.length())).sumOf { m.photos(it) }}/${m.photoTotal}${if(m.photosVary) "+" else ""} ảnh"
         val t=elapsed(); val eta=if(done>=20&&t>60_000) " · còn ~"+clock(t*(total-done)/done) else ""
         return "$head · ${clock(t)}$eta"
     }
@@ -478,7 +478,7 @@ class CollectorService : AccessibilityService() {
     private fun next(token:Int,away:Int=0) {
         val m=macro ?: return
         if(!running || token!=generation) return
-        if(index>=m.steps.length()) { afterSaves { if(token==generation&&running) { setRunning(false); save(); note("Hoàn tất · ${clock(elapsed())}"); status("Đã chụp xong · ${m.photoSteps.size} ảnh · ${clock(elapsed())}") } }; return }
+        if(index>=m.steps.length()) { afterSaves { if(token==generation&&running) { setRunning(false); save(); note("Hoàn tất · ${clock(elapsed())}"); status("Đã chụp xong · ${photosTaken(m)} ảnh · ${clock(elapsed())}") } }; return }
         val front=foreground()
         val opening=entryStep(m,index)
         if(!opening&&front!=null&&front!=m.target) {
@@ -510,7 +510,7 @@ class CollectorService : AccessibilityService() {
         try {
             val type=s.getString("type")
             // A step that never reports back must not leave the controller stuck on "Đang xử lý".
-            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; "pick" -> 300000L; "enter" -> GameEntry.LIMIT_MS+30000; else -> 10000L }
+            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; "pick" -> 300000L; "enter" -> GameEntry.LIMIT_MS+30000; "skills" -> 300000L; else -> 10000L }
             handler.postDelayed({ if(!finished && token==generation) done(false,"Bước ${index+1} ($type) quá ${limit/1000} giây không xong. Kiểm tra màn hình rồi tiếp tục.") },limit)
             when(type) {
                 "wait" -> handler.postDelayed({ done(true) },s.getLong("ms"))
@@ -522,6 +522,10 @@ class CollectorService : AccessibilityService() {
                 // A failed screenshot is retried once; Android sometimes refuses one right after a tap.
                 "screenshot" -> { val name="%04d-%s".format(index+1,s.getString("name"))
                     capture(name,runId) { ok -> if(ok) done(true) else handler.postDelayed({ if(!finished&&token==generation) capture(name,runId) { done(it) } },1000) } }
+                "skills" -> skills(s,{ !finished && token==generation }) { outcome -> when(outcome) {
+                    is SkillReader.Outcome.Done -> { note("Chiêu ${s.getString("prefix")}: ${outcome.summary}"); done(true) }
+                    is SkillReader.Outcome.Failed -> done(false,outcome.reason)
+                } }
                 "pick" -> { val card=s.getInt("index"); pick(card,"%04d".format(index+1),{ !finished && token==generation }) { outcome -> when(outcome) {
                     is ListNavigator.Outcome.Tapped -> done(true)
                     is ListNavigator.Outcome.End -> listEnded(card)
@@ -620,6 +624,37 @@ class CollectorService : AccessibilityService() {
             finish(outcome)
         }.start()
     }
+    /**
+     * Runs a [SkillReader] on the hero page in front. Its photos share the step's number and follow it with their
+     * order, as 0012-03-hero-001-skill-2-detail, so a hero's folder lists them as they were taken.
+     */
+    private fun skills(s:JSONObject,alive:()->Boolean,finish:(SkillReader.Outcome)->Unit) {
+        val stamp="%04d".format(index+1); var order=0
+        fun photo(n:String)="$stamp-%02d-$n".format(++order)
+        val screen=object:SkillReader.Screen {
+            override val alive get()=alive()
+            override fun look(then:(SkillReader.Look?)->Unit) {
+                grab { b ->
+                    if(b==null) return@grab then(null)
+                    try { io.execute {
+                        val read=try { SkillRow.read(b.width,b.height) { y,line -> b.getPixels(line,0,b.width,0,y,b.width,1) } } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không đọc được hàng chiêu",e);null }
+                        handler.post { if(read==null) { b.recycle();then(null) } else then(object:SkillReader.Look {
+                            override val row:SkillRow.Row=read
+                            override fun done(keep:String?) { if(keep!=null) store(b,runId,photo("${s.getString("prefix")}-$keep")) {} else b.recycle() }
+                        }) }
+                    } } catch(e:Exception) { b.recycle();then(null) }
+                }
+            }
+            override fun tap(x:Double,y:Double,then:(Boolean)->Unit) { touchGame(tapAt(x,y),true,then) }
+            override fun shot(name:String,then:(Boolean)->Unit) { capture(photo(name),runId,done=then) }
+            override fun later(ms:Long,then:()->Unit) { handler.postDelayed(then,ms) }
+            override fun note(text:String) { this@CollectorService.note(text) }
+        }
+        SkillReader(s.getString("prefix"),SkillReader.Options(s.optBoolean("detailOnly"),s.optBoolean("directSkills"),s.optBoolean("fast")),screen,finish).start()
+    }
+    /** Photos of the run on disk: with skill rows read at run time, the macro alone cannot tell. */
+    private fun photosTaken(m:Macro):Int = if(!m.photosVary||runId.isEmpty()) m.photoSteps.size
+        else File(filesDir,"captures/$runId").walk().count { it.extension=="png"&&it.name.contains("hero") }
     /**
      * Runs a [GameEntry] against the real screen: opens the game and goes through its login, reward screens and
      * popups to the hero list, checking the account's UID when the run asks for it. With the run's trace on,

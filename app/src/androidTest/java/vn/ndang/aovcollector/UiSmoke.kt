@@ -74,10 +74,11 @@ class UiSmoke:Instrumentation() {
             check(!targetContext.getSharedPreferences("test-account",0).all.values.joinToString().contains("p@ss")) { "The password is stored in clear" }
             Accounts.clear(targetContext);check(Accounts.load(targetContext)==null) { "Test account was not cleared" }
             check(HeroNames.slug("Điêu Thuyền")=="dieu-thuyen")
-            val m=Macro(BuiltInMacros.create(""));check(m.photoSteps.size==10)
-            check(Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true)).photoSteps.size==6) { "Chỉ Chi tiết should keep overview, attributes and 4 details" }
+            // The skills are one step read at run time: at least the four icons' two tabs, more for five icons or other forms.
+            val m=Macro(BuiltInMacros.create(""));check(m.photoTotal==10&&m.photosVary&&m.photoSteps.size==2)
+            check(Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true)).photoTotal==6) { "Chỉ Chi tiết should keep overview, attributes and 4 details" }
             val direct=Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true,directSkills=true))
-            check(direct.photoSteps.size==6&&Macro(BuiltInMacros.create("",1,false,fast=true,detailOnly=true)).steps.length()-direct.steps.length()==6) { "Chuyển thẳng chiêu should drop the 3 panel closes between skills and their waits" }
+            check(direct.photoTotal==6&&(0 until direct.steps.length()).map { direct.steps.getJSONObject(it) }.single { it.getString("type")=="skills" }.getBoolean("directSkills")) { "Chuyển thẳng chiêu should reach the skills step" }
             check(Macro(BuiltInMacros.create("",11,true)).steps.toString().contains("\"pick\""))
             check(BuiltInMacros.secondsPerHero(true,false,false,false) in 30.0..45.0&&BuiltInMacros.secondsPerHero(true,true,true,true) in 15.0..25.0) { "Time estimate per hero is off" }
             val run=File(targetContext.filesDir,"captures/smoke-demo").apply { mkdirs() }
