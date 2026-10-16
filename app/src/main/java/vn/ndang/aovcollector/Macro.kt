@@ -175,7 +175,7 @@ object BuiltInMacros {
             .put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
             .put("collectionMode","chess").put("heroName","")
             .put("chessTopics",org.json.JSONArray(options.topics().map { it.key }))
-            .put("chessAllPages",options.allPages).put("chessHeroDetails",options.heroDetails)
+            .put("chessHeroDetails",options.heroDetails)
             .put("chessSynergyDetails",options.synergyDetails).put("chessEquipmentDetails",options.equipmentDetails)
             .put("openGame",options.openGame).put("checkAccount",options.openGame&&options.checkAccount)
             .put("traceEntry",options.traceEntry).put("builtinVersion",VERSION)
@@ -185,7 +185,7 @@ object BuiltInMacros {
         val a=json.getJSONArray("chessTopics")
         return ChessWiki.Options((0 until a.length()).map { a.getString(it) }.toSet(),
             json.optBoolean("openGame"),json.optBoolean("checkAccount"),json.optBoolean("traceEntry",true),
-            json.optBoolean("chessAllPages",true),json.optBoolean("chessHeroDetails"),
+            json.optBoolean("chessHeroDetails"),
             json.optBoolean("chessSynergyDetails"),json.optBoolean("chessEquipmentDetails"))
     }
 
