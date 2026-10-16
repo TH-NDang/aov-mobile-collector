@@ -33,6 +33,10 @@ object GamePhotoSession {
 
     /** Gives providers time to index a freshly saved game image before automatic retrying. */
     private const val RETRY_MS=30_000L
+    fun needsRetry(totalMarks:Int,syncedMarks:Int,lastAttemptedMarks:Int,
+                   lastSyncAt:Long,now:Long):Boolean =
+        totalMarks>syncedMarks && (totalMarks>lastAttemptedMarks ||
+            now-lastSyncAt>=RETRY_MS)
 
     fun diff(baseline:Set<String>,photos:List<Scanned>,marks:List<Mark>):Diff {
         val fresh=photos.filter { it.id !in baseline }.sortedWith(compareBy({it.modified},{it.id}))
@@ -200,13 +204,15 @@ object GamePhotoSession {
         .maxByOrNull { (_,state) -> state.optLong("startedAt",0) }?.first?.name
 
     /** Auto-sync recent pending batches; a missing image can be indexed by Android a little later. */
-    fun pendingRun(context:Context,now:Long=System.currentTimeMillis()):String? =
-        sessions(context).filter { (_,state) ->
-            val marks=state.optJSONArray("saves")?.length()?:0
-            marks>state.optInt("syncedMarks",0) &&
-                (marks>state.optInt("lastAttemptedMarks",0) ||
-                    now-state.optLong("lastSyncAt",0)>=RETRY_MS)
+    fun pendingRun(context:Context,now:Long=System.currentTimeMillis()):String? {
+        val source=GamePhotoImport.chosen(context)?.toString()?:return null
+        return sessions(context).filter { (_,state) ->
+            state.optString("tree")==source &&
+                needsRetry(state.optJSONArray("saves")?.length()?:0,
+                    state.optInt("syncedMarks",0),state.optInt("lastAttemptedMarks",0),
+                    state.optLong("lastSyncAt",0),now)
         }.maxByOrNull { (_,state) -> state.optLong("startedAt",0) }?.first?.name
+    }
 
     fun state(context:Context,runId:String):JSONObject?=try { read(context,runId) } catch(_:Exception) { null }
 }
