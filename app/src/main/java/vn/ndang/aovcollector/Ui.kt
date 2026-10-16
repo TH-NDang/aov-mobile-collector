@@ -105,6 +105,7 @@ object MacroStore {
             " · "+BuiltInMacros.boardWants(m.json).joinToString(", ") { w -> w.tab.label+when { w.tab==BoardScreens.Tab.TOP -> ""; w.top>=BoardScreens.ALL -> " (hết)"; else -> " top ${w.top}" } }+(if(m.json.optBoolean("openGame")) " · tự vào game" else "")
         "ranking" -> "Bảng xếp hạng tướng · ${BuiltInMacros.rankCombos(m.json).size}/${RankScreens.COMBOS.size} bảng"+(if(m.json.optBoolean("openGame")) " · tự vào game" else "")
         "chess" -> "${m.json.optJSONArray("chessTopics")?.length()?:0} tab đã chọn · luôn chụp đến cuối"+
+            (m.json.optJSONArray("chessNativeGroups")?.length()?.let { if(it>0) " · tải $it nhóm ảnh gốc" else "" }?:"")+
             (if(m.json.optBoolean("openGame")) " · tự vào game" else "")
         "single","all","pick" -> base(m)+(if(m.json.optBoolean("fast")) " · nhanh" else "")+(if(m.json.optBoolean("detailOnly")) " · chỉ Chi tiết" else "")+(if(m.json.optBoolean("directSkills")) " · chuyển thẳng chiêu" else "")+(if(m.json.optBoolean("openGame")) " · tự vào game" else "")
         else -> m.name
