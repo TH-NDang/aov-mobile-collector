@@ -860,7 +860,8 @@ class CollectorService : AccessibilityService() {
              * "Save Photo" is a game dialog, NOT our screenshot capture. Never tap Sure without
              * recognizing Save Photo, Sure and Cancel together from a fresh screenshot.
              */
-            override fun nativeSave(group:String,item:String,x:Double,y:Double,then:(Boolean)->Unit) {
+            override fun nativeSave(group:String,item:String,x:Double,y:Double,
+                                    preserveDetail:Boolean,then:(Boolean)->Unit) {
                 val point=Path().apply {
                     val b=screen()
                     moveTo((x*(b.width()-1)).toFloat(),(y*(b.height()-1)).toFloat())
@@ -872,27 +873,48 @@ class CollectorService : AccessibilityService() {
                         grab(anyApp=true) { image ->
                             if(image==null) return@grab then(false)
                             try { io.execute {
-                                val answer=try { ChessWiki.nativeConfirm(GameText.words(image)) }
-                                    catch(e:Throwable) { null }
+                                val words=try { GameText.words(image) } catch(_:Throwable) { emptyList() }
+                                val answer=ChessWiki.nativeConfirm(words)
+                                val cancel=ChessWiki.nativeCancel(words)
                                 val hasModal=try { ChessWiki.modal(image) } catch(_:Throwable) { false }
                                 image.recycle()
                                 handler.post {
                                     if(!alive()) return@post
                                     if(answer==null) {
-                                        // A long press might have opened a normal hero modal; close it.
-                                        if(hasModal) touchGame(tapAt(.902,.082),true) { then(false) }
-                                        else then(false)
+                                        when {
+                                            cancel!=null -> {
+                                                note("Save Photo thiếu nút Sure: bấm CANCEL, không tải nhầm.")
+                                                touchGame(tapAt(cancel.first,cancel.second),true) { then(false) }
+                                            }
+                                            hasModal&&!preserveDetail -> {
+                                                // Only close a hero panel that THIS icon long-press opened.
+                                                touchGame(tapAt(.902,.082),true) { then(false) }
+                                            }
+                                            else -> {
+                                                // A skill's owning detail panel must stay open when the long
+                                                // press did not create the game's native Save Photo prompt.
+                                                then(false)
+                                            }
+                                        }
                                     } else touchGame(tapAt(answer.first,answer.second),true) { pressed ->
                                         if(!pressed) return@touchGame then(false)
                                         handler.postDelayed({
                                             grab(anyApp=true) { check ->
                                                 if(check==null) return@grab then(false)
                                                 try { io.execute {
-                                                    val stillPrompt=try {
-                                                        ChessWiki.nativeConfirm(GameText.words(check))!=null
-                                                    } catch(_:Throwable) { true }
+                                                    val confirmWords=try { GameText.words(check) }
+                                                        catch(_:Throwable) { emptyList() }
+                                                    val stillPrompt=ChessWiki.nativePromptVisible(confirmWords)
+                                                    val cancelPrompt=if(stillPrompt) ChessWiki.nativeCancel(confirmWords) else null
                                                     check.recycle()
-                                                    if(stillPrompt) handler.post { then(false) }
+                                                    if(stillPrompt) handler.post {
+                                                        if(cancelPrompt!=null) {
+                                                            note("Save Photo vẫn mở sau Sure; đóng CANCEL và bỏ qua.")
+                                                            touchGame(tapAt(cancelPrompt.first,cancelPrompt.second),true) {
+                                                                then(false)
+                                                            }
+                                                        } else then(false)
+                                                    }
                                                     else {
                                                         val marked=try {
                                                             GamePhotoSession.mark(this@CollectorService,runId,group,item);true
