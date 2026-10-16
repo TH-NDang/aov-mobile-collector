@@ -75,6 +75,32 @@ class GamePhotoSessionTest {
         assertEquals("tuong",ChessWiki.detailType(ChessWiki.TOPICS.first { it.key=="tat-ca-quan-co" },all))
     }
 
+    @Test fun unconfirmedPicturesSaveCannotAdvanceCheckpointAndRetryIsThrottled() {
+        // One image may take longer to appear in Pictures than the Android game popup.
+        assertEquals(0,GamePhotoSession.checkpoint(0,3,2,0,false))
+        assertEquals(3,GamePhotoSession.checkpoint(0,3,3,0,false))
+        assertEquals(1,GamePhotoSession.checkpoint(1,3,3,1,false))
+        assertEquals(1,GamePhotoSession.checkpoint(1,3,3,0,true))
+        assertEquals(0,GamePhotoSession.checkpoint(0,0,0,0,false))
+        val now=1_800_000_000_000L
+        assertTrue(GamePhotoSession.needsRetry(3,0,0,now-500,now))
+        assertFalse(GamePhotoSession.needsRetry(3,0,3,now-20_000,now))
+        assertTrue(GamePhotoSession.needsRetry(3,0,3,now-31_000,now))
+        assertFalse(GamePhotoSession.needsRetry(3,3,3,now-31_000,now))
+        assertTrue(GamePhotoSession.needsRetry(4,3,3,now-500,now))
+    }
+
+    @Test fun incompleteSavePhotoDialogCanOnlyBeCancelled() {
+        fun w(text:String,x:Double,y:Double)=GameScreens.Word(text,x-.03,y-.02,x+.03,y+.02)
+        val partial=listOf(w("Save Photo",.35,.42),w("CANCEL",.58,.56))
+        assertNull(ChessWiki.nativeConfirm(partial))
+        assertNotNull(ChessWiki.nativeCancel(partial))
+        assertTrue(ChessWiki.nativePromptVisible(partial))
+        val unrelated=listOf(w("CANCEL",.58,.56),w("Sure",.39,.56))
+        assertNull(ChessWiki.nativeCancel(unrelated))
+        assertFalse(ChessWiki.nativePromptVisible(unrelated))
+    }
+
     @Test fun onlyExactSavePhotoDialogCanBeConfirmed() {
         fun w(text:String,x:Double,y:Double)=GameScreens.Word(text,x-.03,y-.02,x+.03,y+.02)
         val screenshot=listOf(w("Save Photo",.35,.42),w("Sure",.391,.56),w("CANCEL",.58,.56))
