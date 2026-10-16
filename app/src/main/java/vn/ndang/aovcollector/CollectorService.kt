@@ -622,6 +622,140 @@ class CollectorService : AccessibilityService() {
             if(selectMacro(BuiltInMacros.board(openGame.isChecked,checkAccount.isChecked&&checkAccount.isEnabled,traceEntry.isChecked,heroes,wanted))) dialog.dismiss()
         }
     }
+    /**
+     * Cờ Liên Quân: user chooses the left categories and the right tabs independently.
+     * Detail expansion and scrolling are separate options; none of the twelve tabs is forced on.
+     */
+    private fun chessForm() {
+        val c=themed()
+        val body=Ui.stack(c).apply { setPadding(dp(20),dp(6),dp(20),dp(8)) }
+        body.addView(Ui.text(c,"Bách khoa Cờ Liên Quân: từ sảnh → Chọn chế độ → Chế độ giải trí → Cờ Liên Quân → Bắt đầu → Trang chủ. Chọn CHÍNH XÁC các mục cần lấy; app không tự thu thập các mục không tick.",14f))
+        val saved=uiPrefs.getString("chessTopics","")?.split(',')?.toSet().orEmpty()
+        val checks=linkedMapOf<String,CheckBox>()
+        var section=""
+        for(topic in ChessWiki.TOPICS) {
+            if(topic.section!=section) { section=topic.section;body.addView(Ui.section(c,topic.side)) }
+            val box=CheckBox(c).apply { text=topic.label;textSize=14f;isChecked=topic.key in saved }
+            checks[topic.key]=box;body.addView(box)
+        }
+        val quick=LinearLayout(c)
+        quick.addView(Ui.button(c,"Chọn tất cả") { checks.values.forEach { it.isChecked=true } },
+            LinearLayout.LayoutParams(0,dp(40),1f))
+        quick.addView(Ui.button(c,"Bỏ chọn tất cả") { checks.values.forEach { it.isChecked=false } },
+            LinearLayout.LayoutParams(0,dp(40),1f))
+        body.addView(quick)
+        fun check(text:String,on:Boolean)=CheckBox(c).apply { this.text=text;textSize=14f;isChecked=on }.also { body.addView(it) }
+        body.addView(Ui.section(c,"Thu thập nội dung"))
+        val allPages=check("Kéo và chụp đến cuối từng trang / chi tiết đã chọn",
+            uiPrefs.getBoolean("chessAllPages",true))
+        val heroDetails=check("Mở từng quân cờ trong Tất cả quân cờ; chụp thuộc tính, kỹ năng và kéo chi tiết",
+            uiPrefs.getBoolean("chessHeroDetails",false))
+        val synergyDetails=check("Mở từng biểu tượng phe và nghề trong Tương tác",
+            uiPrefs.getBoolean("chessSynergyDetails",false))
+        val equipmentDetails=check("Mở từng trang bị và chụp bảng mô tả",
+            uiPrefs.getBoolean("chessEquipmentDetails",false))
+        body.addView(Ui.section(c,"Bắt đầu và an toàn"))
+        val openGame=check("Tự mở game tới sảnh trước khi vào Cờ Liên Quân",
+            uiPrefs.getBoolean("chessOpenGame",true))
+        val uid=Accounts.uid(this)
+        val checkAccount=check(if(uid!=null) "Xác minh UID tài khoản thử nghiệm ("+uid+")" else
+            "Xác minh UID (hãy lưu UID trong mục Tài khoản trước)",uiPrefs.getBoolean("chessCheckAccount",false))
+        val trace=check("Lưu ảnh các bước đăng nhập / vào sảnh",uiPrefs.getBoolean("chessTraceEntry",true))
+        fun update() { checkAccount.isEnabled=openGame.isChecked&&uid!=null
+            if(!checkAccount.isEnabled) checkAccount.isChecked=false
+            trace.isEnabled=openGame.isChecked }
+        openGame.setOnCheckedChangeListener { _,_ -> update() };update()
+        body.addView(Ui.text(c,
+            "Nếu bỏ Tự mở game, hãy mở sẵn sảnh Cờ Liên Quân hoặc Bách khoa trước khi bấm Chạy. " +
+            "Lần đầu nên thử Quân cờ → Tất cả quân cờ với 1 mục trước khi chọn toàn bộ. " +
+            "Mọi ảnh nằm trong các thư mục mục bên trái / tab bên phải / từng đối tượng. Khi trang không cuộn thêm, app chuyển sang mục tiếp theo.",12f,Ui.muted))
+        val dialog=AlertDialog.Builder(c).setTitle("Thu thập Cờ Liên Quân")
+            .setView(ScrollView(c).apply { addView(body) })
+            .setPositiveButton("Chọn tác vụ",null).setNegativeButton("Hủy",null).create()
+        display(dialog)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val selected=checks.filterValues { it.isChecked }.keys.toSet()
+            if(selected.isEmpty()) { status("Chọn ít nhất một mục Bách khoa trước khi chạy");return@setOnClickListener }
+            val options=ChessWiki.Options(selected,openGame.isChecked,checkAccount.isChecked&&checkAccount.isEnabled,
+                trace.isChecked,allPages.isChecked,heroDetails.isChecked,synergyDetails.isChecked,equipmentDetails.isChecked)
+            uiPrefs.edit().putString("chessTopics",selected.joinToString(","))
+                .putBoolean("chessAllPages",allPages.isChecked).putBoolean("chessHeroDetails",heroDetails.isChecked)
+                .putBoolean("chessSynergyDetails",synergyDetails.isChecked).putBoolean("chessEquipmentDetails",equipmentDetails.isChecked)
+                .putBoolean("chessOpenGame",openGame.isChecked).putBoolean("chessCheckAccount",checkAccount.isChecked)
+                .putBoolean("chessTraceEntry",trace.isChecked).apply()
+            if(selectMacro(BuiltInMacros.chess(options))) dialog.dismiss()
+        }
+    }
+
+    /**
+     * Adapter to Android's screenshot/gesture APIs. Each image is written before the reader advances.
+     * The progress ledger lets a paused/restarted step revisit the encyclopedia without resaving finished topics.
+     */
+    private fun chess(alive:()->Boolean,finish:(ChessWikiReader.Outcome)->Unit) {
+        val stamp="%04d".format(index+1)
+        val ledger=File(filesDir,"captures/"+runId+"/chess-progress.json")
+        val doneIds=try { val array=JSONObject(ledger.readText()).optJSONArray("finished")
+            (0 until (array?.length()?:0)).map { array!!.getString(it) }.toMutableSet()
+        } catch(_:Exception) { mutableSetOf<String>() }
+        val screen=object:ChessWikiReader.Screen {
+            override val alive get()=alive()
+            override fun look(words:Boolean,then:(ChessWikiReader.Look?)->Unit) {
+                if(filesDir.usableSpace<30L*1024*1024) { note("Không đủ dung lượng trống");return then(null) }
+                grab(anyApp=true) { b ->
+                    if(b==null) return@grab then(null)
+                    try { io.execute {
+                        val data=try {
+                            Triple(if(words) screenWords()+GameText.words(b) else emptyList(),
+                                ChessWiki.signature(b),ChessWiki.modal(b))
+                        } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không đọc được màn hình Bách khoa",e);null }
+                        handler.post {
+                            if(!alive()) { b.recycle();then(null) }
+                            else if(data==null) { b.recycle();then(null) }
+                            else then(object:ChessWikiReader.Look {
+                                override val words=data.first
+                                override val signature=data.second
+                                override val modal=data.third
+                                override fun tiles(topic:ChessWiki.Topic)=ChessWiki.tiles(topic,b,words)
+                                override fun keep(name:String,then:(Boolean)->Unit) {
+                                    store(b,runId,stamp+"-"+name,then)
+                                }
+                                override fun discard() { b.recycle() }
+                            })
+                        }
+                    } } catch(e:Exception) { b.recycle();then(null) }
+                }
+            }
+            override fun tap(x:Double,y:Double,then:(Boolean)->Unit) {
+                touchGame(tapAt(x,y),true,then)
+            }
+            override fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit) {
+                if(kotlin.math.abs(x-toX)<.003) {
+                    touchGame(drag(x,y,toY,700,400),false,then)
+                } else {
+                    val b=screen()
+                    val path=Path().apply {
+                        moveTo((x*(b.width()-1)).toFloat(),(y*(b.height()-1)).toFloat())
+                        lineTo((toX*(b.width()-1)).toFloat(),(toY*(b.height()-1)).toFloat())
+                    }
+                    val gesture=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path,0,700)).build()
+                    touchGame(gesture,false,then)
+                }
+            }
+            override fun later(ms:Long,then:()->Unit) { handler.postDelayed(then,ms) }
+            override fun seen(id:String)=id in doneIds
+            override fun finished(id:String) {
+                if(!doneIds.add(id)) return
+                try {
+                    ledger.parentFile?.mkdirs()
+                    ledger.writeText(JSONObject().put("finished",org.json.JSONArray(doneIds.sorted())).toString(2))
+                } catch(e:Exception) { CrashLog.record(this@CollectorService,"Không ghi được tiến độ Bách khoa",e) }
+            }
+            override fun note(message:String) { this@CollectorService.note(message) }
+            override fun say(message:String) { if(alive()) { lastStatus=message;refreshPanel() } }
+        }
+        ChessWikiReader(screen,BuiltInMacros.chessOptions(readMacro().json),finish).start()
+    }
+
     /** Mean size of the screenshots saved on this phone, which depends on its screen and the game's art; 1.5 MB before any. */
     private fun averageShot():Long {
         val sizes=File(filesDir,"captures").walkTopDown().filter { it.isFile&&it.extension=="png" }.take(300).map { it.length() }.toList()
