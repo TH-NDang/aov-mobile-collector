@@ -21,11 +21,12 @@ object GamePhotoSession {
     private val validGroups=GamePhotoImport.GROUPS.map { it.key }.filter { it!="chua-phan-loai" }.toSet()
     data class Mark(val group:String,val item:String,val time:Long)
     data class Pick(val id:String,val group:String,val item:String,val size:Long)
+    data class Scanned(val id:String,val size:Long,val modified:Long)
     data class Diff(val before:Int,val after:Int,val new:Int,val matching:List<Pick>,val unrelated:Int)
     data class Imported(val before:Int,val after:Int,val added:Int,val copied:Int,val already:Int,
                         val uncertain:Int,val errors:Int,val cancelled:Boolean)
 
-    fun diff(baseline:Set<String>,photos:List<GamePhotoImport.Photo>,marks:List<Mark>):Diff {
+    fun diff(baseline:Set<String>,photos:List<Scanned>,marks:List<Mark>):Diff {
         val fresh=photos.filter { it.id !in baseline }.sortedWith(compareBy({it.modified},{it.id}))
         val available=marks.sortedBy { it.time }.toMutableList()
         val assigned=ArrayList<Pick>()
@@ -109,7 +110,7 @@ object GamePhotoSession {
         val old=(0 until baseline.length()).map { baseline.getString(it) }.toHashSet()
         val all=GamePhotoImport.scan(context,tree) { !cancelled() }
         if(cancelled()) return Imported(state.optInt("before"),all.size,0,0,0,0,0,true)
-        val diff=diff(old,all,marks(state))
+        val diff=diff(old,all.map { Scanned(it.id,it.size,it.modified) },marks(state))
         val matches=all.associateBy { it.id }
         val destRoot=File(context.filesDir,"captures/"+GamePhotoImport.ROOT).apply { mkdirs() }
         val meta=File(destRoot,"run.json")
