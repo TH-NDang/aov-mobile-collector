@@ -646,14 +646,13 @@ class CollectorService : AccessibilityService() {
         body.addView(quick)
         fun check(text:String,on:Boolean)=CheckBox(c).apply { this.text=text;textSize=14f;isChecked=on }.also { body.addView(it) }
         body.addView(Ui.section(c,"Thu thập nội dung"))
-        val allPages=check("Kéo và chụp đến cuối từng trang / chi tiết đã chọn",
-            uiPrefs.getBoolean("chessAllPages",true))
         val heroDetails=check("Mở từng quân cờ trong Tất cả quân cờ; chụp thuộc tính, kỹ năng và kéo chi tiết",
             uiPrefs.getBoolean("chessHeroDetails",false))
         val synergyDetails=check("Mở từng biểu tượng phe và nghề trong Tương tác",
             uiPrefs.getBoolean("chessSynergyDetails",false))
         val equipmentDetails=check("Mở từng trang bị và chụp bảng mô tả",
             uiPrefs.getBoolean("chessEquipmentDetails",false))
+        body.addView(Ui.text(c,"Các trang và bảng chi tiết được tự động kéo, chụp đến cuối khi còn nội dung. Không cần bật tùy chọn riêng.",12f,Ui.muted))
         body.addView(Ui.section(c,"Bắt đầu và an toàn"))
         val openGame=check("Tự mở game tới sảnh trước khi vào Cờ Liên Quân",
             uiPrefs.getBoolean("chessOpenGame",true))
@@ -677,9 +676,9 @@ class CollectorService : AccessibilityService() {
             val selected=checks.filterValues { it.isChecked }.keys.toSet()
             if(selected.isEmpty()) { status("Chọn ít nhất một mục Bách khoa trước khi chạy");return@setOnClickListener }
             val options=ChessWiki.Options(selected,openGame.isChecked,checkAccount.isChecked&&checkAccount.isEnabled,
-                trace.isChecked,allPages.isChecked,heroDetails.isChecked,synergyDetails.isChecked,equipmentDetails.isChecked)
+                trace.isChecked,heroDetails.isChecked,synergyDetails.isChecked,equipmentDetails.isChecked)
             uiPrefs.edit().putString("chessTopics",selected.joinToString(","))
-                .putBoolean("chessAllPages",allPages.isChecked).putBoolean("chessHeroDetails",heroDetails.isChecked)
+                .putBoolean("chessHeroDetails",heroDetails.isChecked)
                 .putBoolean("chessSynergyDetails",synergyDetails.isChecked).putBoolean("chessEquipmentDetails",equipmentDetails.isChecked)
                 .putBoolean("chessOpenGame",openGame.isChecked).putBoolean("chessCheckAccount",checkAccount.isChecked)
                 .putBoolean("chessTraceEntry",trace.isChecked).apply()
