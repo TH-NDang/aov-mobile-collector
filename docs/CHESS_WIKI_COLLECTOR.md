@@ -24,7 +24,7 @@ Nếu không tự mở game, hãy mở sẵn sảnh Cờ Liên Quân hoặc Bác
 | Chúc Phúc | Thường; Huyền thoại / Sử thi; Truyền thuyết |
 
 Các tùy chọn **độc lập**:
-- **Kéo và chụp đến cuối**: bật thì chụp nhiều trang chồng mép cho đến khi nội dung không di chuyển; tắt thì chỉ trang đầu của mỗi tab và của mỗi chi tiết.
+- **Luôn kéo và chụp đến cuối**: mỗi tab hoặc chi tiết được chọn sẽ tự động cuộn và lưu từng trang cho đến khi nội dung không di chuyển. Không có tùy chọn bật/tắt việc này.
 - **Mở từng quân cờ**: chỉ áp dụng cho tab **Tất cả quân cờ**, mở thẻ quân cờ và chụp chi tiết (có thể kéo).
 - **Mở từng phe và nghề**: chỉ áp dụng cho **Tương tác → Phe/Nghề**.
 - **Mở từng trang bị**: chỉ áp dụng cho **Trang bị**.
@@ -69,7 +69,7 @@ Tên item lấy từ OCR ở phần tiêu đề popup khi có thể; hậu tố 
 - Khi chụp ảnh, bảng nổi được ẩn và Android giới hạn tốc độ ảnh. Bước dài có thể bị ngắt ngay khi tạm dừng.
 - Chụp đến cuối được xác định bằng độ khác nhau của phần nội dung, thử kéo bổ sung khi không đổi; giới hạn an toàn 65 trang/tab, 16 ảnh/chi tiết. Trường hợp chưa đến cuối mà chạm giới hạn phải kiểm tra bằng tay.
 - Danh sách có ảnh động hoặc popup có giao diện mới có thể khiến nhận diện thẻ, đóng popup hoặc xác định điểm cuối không đầy đủ; ảnh chụp toàn trang vẫn được lưu.
-- Nên thử **Quân cờ → Tất cả quân cờ**, bật chi tiết, **tắt kéo hết** để kiểm tra thẻ và popup trên máy thực; sau đó bật kéo hết.
+- Nên thử **Quân cờ → Tất cả quân cờ** và tắt mở chi tiết trước để kiểm tra khả năng cuộn/chụp trên điện thoại; sau đó mới bật thêm chi tiết quân cờ.
 - Không dùng tài khoản Liên Quân trên trình giả lập nếu việc đăng nhập có nguy cơ khóa tài khoản. GitHub Actions chỉ build/test app Android; **không thể xác nhận thao tác game thật** khi không có thiết bị/game được đăng nhập.
 
 ## Kiểm thử CI
