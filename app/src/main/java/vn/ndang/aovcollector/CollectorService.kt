@@ -448,7 +448,9 @@ class CollectorService : AccessibilityService() {
         body.addView(Ui.button(c,"Đóng danh sách") { dismissMacroPicker() },LinearLayout.LayoutParams(-1,dp(38)))
         filter("")
         // Expand inside the existing accessibility window; do not create a popup token.
-        for(i in 2 until host.childCount) host.getChildAt(i).visibility=View.GONE
+        // Hide the compact selector as well while the picker is open: its selected label
+        // can equal a menu entry and would otherwise intercept accessibility clicks.
+        for(i in 1 until host.childCount) host.getChildAt(i).visibility=View.GONE
         macroPicker=body
         val height=minOf(dp(250),wm.currentWindowMetrics.bounds.height()-dp(150)).coerceAtLeast(dp(120))
         host.addView(body,2,LinearLayout.LayoutParams(-1,height))
