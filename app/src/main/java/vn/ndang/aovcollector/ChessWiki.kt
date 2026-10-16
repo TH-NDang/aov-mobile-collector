@@ -35,7 +35,7 @@ object ChessWiki {
         Topic("truyen-thuyet","chuc-phuc","Truyền thuyết",.65,.715)
     )
     data class Options(val selected:Set<String>,val openGame:Boolean=true,val checkAccount:Boolean=false,
-                       val traceEntry:Boolean=true,val allPages:Boolean=true,
+                       val traceEntry:Boolean=true,
                        val heroDetails:Boolean=false,val synergyDetails:Boolean=false,
                        val equipmentDetails:Boolean=false) {
         fun topics()=TOPICS.filter { it.key in selected }
@@ -332,8 +332,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         val shotName=ChessWiki.filename(t,kind,number,folder)
         val current=l.signature.copyOf()
         save(l,shotName) {
-            if(!options.allPages) close(at,page,signature,tiles,from,tile)
-            else swipe(.75,.82,.75,.42) {
+            swipe(.75,.82,.75,.42) {
                 look(false) { next ->
                     if(!next.modal) { next.discard();fail("Chi tiết "+folder+" đã đóng ngoài dự kiến, hãy mở đúng màn hình rồi tiếp tục.") }
                     else modal(at,page,signature,tiles,from,tile,kind,folder,number+1,next,current,0)
@@ -356,7 +355,6 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         }
     }
     private fun nextPage(at:Int,page:Int,signature:IntArray) {
-        if(!options.allPages) { screen.finished("topic:"+topics[at].key);return topic(at+1) }
         swipe(.76,.82,.76,.40,1100) { scan(at,page+1,signature,0,0) }
     }
 }
