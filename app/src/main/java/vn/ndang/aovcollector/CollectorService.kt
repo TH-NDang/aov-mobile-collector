@@ -1253,7 +1253,7 @@ class CollectorService : AccessibilityService() {
             }
             override fun tap(x:Double,y:Double,then:(Boolean)->Unit) { touchGame(tapAt(x,y),true,then) }
             override fun back(then:(Boolean)->Unit) { touchGame(tapAt(HeroGrid.BACK_X,HeroGrid.BACK_Y),true,then) }
-            override fun signIn()=signInGarena()
+            override fun signIn(then:(Boolean)->Unit) { signInGarena(then) }
             override fun later(ms:Long,then:()->Unit) { handler.postDelayed(then,ms) }
             override fun now()=SystemClock.elapsedRealtime()
             override fun note(text:String) { this@CollectorService.note(text) }
@@ -1319,27 +1319,68 @@ class CollectorService : AccessibilityService() {
      * page: it must have a password field and its "Quên mật khẩu" or "Tạo tài khoản mới" links, so the account
      * is never typed anywhere else, as into a chat box.
      */
-    private fun signInGarena():Boolean {
-        val account=Accounts.load(this)?:return false
-        val root=try { rootInActiveWindow } catch(_:Exception) { null }?:return false
-        if(root.packageName==packageName) return false
+    private fun signInGarena(then:(Boolean)->Unit) {
+        val account=Accounts.load(this)?:return then(false)
+        val root=try { rootInActiveWindow } catch(_:Exception) { null }?:return then(false)
+        if(root.packageName==packageName) return then(false)
         val all=nodes(root)
-        fun plain(n:android.view.accessibility.AccessibilityNodeInfo)=GameScreens.plain((n.text?:n.contentDescription)?.toString().orEmpty())
-        if(all.none { plain(it).let { t -> t.contains("quenmatkhau")||t.contains("taotaikhoanmoi") } }) return false
+        fun plain(n:android.view.accessibility.AccessibilityNodeInfo)=
+            GameScreens.plain((n.text?:n.contentDescription)?.toString().orEmpty())
+        // Do not put the saved password into an arbitrary dialog or chat screen.
+        if(all.none { plain(it).let { t -> t.contains("quenmatkhau")||t.contains("taotaikhoanmoi") } })
+            return then(false)
         val fields=all.filter { it.isEditable }
-        val password=fields.firstOrNull { it.isPassword }?:return false
-        val user=fields.firstOrNull { !it.isPassword }?:return false
+        val password=fields.firstOrNull { it.isPassword }?:return then(false)
+        val user=fields.firstOrNull { !it.isPassword }?:return then(false)
+        // A WebView can expose only a text leaf ("Đăng Nhập Ngay") with no clickable ancestor.
+        // Looking for the label alone is sufficient because the complete Garena form was verified.
+        if(all.none { plain(it).contains("dangnhapngay") }) return then(false)
         fun type(n:android.view.accessibility.AccessibilityNodeInfo,text:String):Boolean {
-            val args=android.os.Bundle().apply { putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,text) }
+            val args=android.os.Bundle().apply {
+                putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,text)
+            }
             if(n.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,args)) return true
-            // Some pages take text only in a focused field.
             n.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
             return n.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT,args)
         }
-        if(!type(user,account.user)||!type(password,account.password)) return false
-        var button=all.firstOrNull { plain(it).contains("dangnhapngay") }?:return false
-        while(!button.isClickable) button=button.parent?:return false
-        return button.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+        if(!type(user,account.user)||!type(password,account.password)) return then(false)
+
+        // ACTION_CLICK can return false (or true without a DOM submission) for WebView text nodes.
+        // Wait for WebView's change/input event, find the button again and send a real touch instead.
+        handler.postDelayed({
+            if(!running||!entering) return@postDelayed then(false)
+            val current=try { rootInActiveWindow } catch(_:Exception) { null }
+            if(current==null||current.packageName==packageName) return@postDelayed then(false)
+            val live=nodes(current)
+            val hasForm=live.any { it.isEditable&&it.isPassword }&&
+                live.any { plain(it).let { p -> p.contains("quenmatkhau")||p.contains("taotaikhoanmoi") } }
+            // The page may have submitted/navigated during the delay.
+            if(!hasForm) return@postDelayed then(true)
+            val button=live.firstOrNull { plain(it).contains("dangnhapngay") }?:return@postDelayed then(false)
+            val rect=android.graphics.Rect()
+            button.getBoundsInScreen(rect)
+            val bounds=screen()
+            val bx=rect.centerX().toDouble()/bounds.width()
+            val by=rect.centerY().toDouble()/bounds.height()
+            // The supplied Garena login screenshot has a red submit bar centered at about (0.50, 0.835).
+            // Prefer the label's current rectangle so the same code survives small UI/layout changes.
+            val x=if(rect.width()>0&&rect.height()>0&&bx in .12.. .94&&by in .62.. .95) bx else .50
+            val y=if(rect.width()>0&&rect.height()>0&&bx in .12.. .94&&by in .62.. .95) by else .835
+            note("Trang Garena: chạm Đăng Nhập Ngay tại ("+(x*100).toInt()+"%, "+(y*100).toInt()+"%)")
+            touchGame(tapAt(x,y),true) { touched ->
+                if(touched) then(true)
+                else {
+                    // Last fallback to accessibility only when the physical gesture was rejected.
+                    var parent:android.view.accessibility.AccessibilityNodeInfo?=button
+                    var clicked=false
+                    while(parent!=null&&!clicked) {
+                        if(parent.isClickable) clicked=parent.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
+                        parent=if(clicked) null else parent.parent
+                    }
+                    then(clicked)
+                }
+            }
+        },500)
     }
     private fun manualCapture() {
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
