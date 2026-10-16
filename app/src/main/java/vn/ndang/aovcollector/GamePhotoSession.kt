@@ -164,13 +164,33 @@ object GamePhotoSession {
                 require(image.size>=0 && image.size<=MAX_IMAGE) { "Ảnh vượt giới hạn 32 MB" }
                 require(context.filesDir.usableSpace>image.size+30L*1024*1024) { "Bộ nhớ trống quá ít" }
                 context.contentResolver.openInputStream(image.uri)?.use { input ->
-                    partial.outputStream().use { output -> input.copyTo(output,128*1024) }
+                    var bytes=0L
+                    val buffer=ByteArray(128*1024)
+                    partial.outputStream().use { output ->
+                        while(true) {
+                            if(cancelled()) throw ZipFiles.Cancelled()
+                            val n=input.read(buffer)
+                            if(n<0) break
+                            bytes+=n
+                            require(bytes<=MAX_IMAGE) { "Ảnh tải về vượt quá 32 MB" }
+                            require(context.filesDir.usableSpace>30L*1024*1024) {
+                                "Thiếu dung lượng khi sao chép ảnh"
+                            }
+                            output.write(buffer,0,n)
+                        }
+                    }
                 }?:error("Không mở được ảnh mới")
                 require(partial.length() in 1..MAX_IMAGE && partial.renameTo(target)) { "Ảnh lưu bị lỗi" }
                 ledger.put(identity,target.relativeTo(destRoot).invariantSeparatorsPath)
                 ledgerFile.writeText(ledger.toString(2))
                 copied++
-            } catch(e:Exception) { partial.delete();errors++ }
+            } catch(e:ZipFiles.Cancelled) {
+                partial.delete()
+                break
+            } catch(e:Exception) {
+                partial.delete()
+                errors++
+            }
         }
         val totalMarks=state.getJSONArray("saves").length()
         val resolved=copied+already
