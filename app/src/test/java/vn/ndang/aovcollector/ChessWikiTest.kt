@@ -63,6 +63,46 @@ class ChessWikiTest {
         assertEquals(listOf("chess__thong-tin__quy-trinh__trang__001"),kept)
         assertTrue("topic:quy-trinh" in finished)
     }
+    @Test fun wikiNavigationHandlesFirstChessAccountOnboardingAfterModeSelection() {
+        fun w(text:String,x:Double,y:Double)=GameScreens.Word(text,x-.045,y-.02,x+.045,y+.02)
+        val experience=listOf(w("Hoan nghênh bạn đến với Cờ Liên quân",.34,.22),
+            w("Đã chơi game Autochess chưa",.30,.25),w("Tân thủ",.17,.65),w("Kỳ cựu",.333,.655))
+        val tip=listOf(w("Bạn có thể đấu thử trong Đấu luyện",.32,.31),
+            w("nâng cao trình độ Cờ Liên quân",.31,.34),w("Đã rõ",.250,.577))
+        val wiki=listOf(w("Bách khoa",.16,.06),w("Cờ Liên Quân",.40,.06))
+        var stage=0
+        var result:ChessWikiReader.Outcome?=null
+        val taps=ArrayList<Pair<Double,Double>>()
+        val done=HashSet<String>()
+        val screen=object:ChessWikiReader.Screen {
+            override val alive=true
+            override fun look(words:Boolean,then:(ChessWikiReader.Look?)->Unit) {
+                then(object:ChessWikiReader.Look {
+                    override val words=when(stage) { 0 -> experience;1 -> tip;else -> wiki }
+                    override val signature=IntArray(96) { 88 }
+                    override val modal=false
+                    override fun tiles(topic:ChessWiki.Topic)=emptyList<ChessWiki.Tile>()
+                    override fun keep(name:String,then:(Boolean)->Unit)=then(true)
+                    override fun discard() {}
+                })
+            }
+            override fun tap(x:Double,y:Double,then:(Boolean)->Unit) { taps.add(x to y);stage++;then(true) }
+            override fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit)=then(true)
+            override fun later(ms:Long,then:()->Unit)=then()
+            override fun seen(id:String)=id in done
+            override fun finished(id:String) { done.add(id) }
+            override fun note(message:String) {}
+            override fun say(message:String) {}
+        }
+        ChessWikiReader(screen,ChessWiki.Options(setOf("quy-trinh"),openGame=false),{ result=it }).start()
+        assertTrue(result is ChessWikiReader.Outcome.Done)
+        assertEquals(.333,taps[0].first,.001)
+        assertEquals(GameScreens.CHESS_VETERAN_Y,taps[0].second,.001)
+        assertEquals(.250,taps[1].first,.001)
+        assertEquals(.577,taps[1].second,.001)
+        assertTrue("topic:quy-trinh" in done)
+    }
+
     @Test fun modeEntryUsesTheRealButtonEvenNextToQuest() {
         fun w(label:String,x:Double,y:Double)=
             GameScreens.Word(label,x-.035,y-.02,x+.035,y+.02)
