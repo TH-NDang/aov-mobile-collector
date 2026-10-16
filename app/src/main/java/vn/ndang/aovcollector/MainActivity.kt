@@ -174,7 +174,13 @@ class MainActivity : Activity() {
         if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob()
     }
     override fun onSaveInstanceState(out:Bundle) { super.onSaveInstanceState(out);out.putString("folder",folder?.path);out.putString("history-search",historyQueries[(folder?:captures).path].orEmpty());out.putStringArrayList("export",ArrayList(pendingExport.map { it.path }));out.putStringArrayList("copy",ArrayList(pendingCopy.map { it.path })) }
-    override fun onResume() { super.onResume();FileJob.screen=jobDone;if(historyRoot!=null) showHistory();crashNotice() }
+    override fun onResume() {
+        super.onResume();FileJob.screen=jobDone
+        if(historyRoot!=null) showHistory()
+        crashNotice()
+        // Returning from the game: fetch exactly the photos marked by Save Photo in the last run.
+        historySearchHandler.postDelayed({ maybeSyncNewGamePhotos() },450)
+    }
     override fun onPause() { if(FileJob.screen===jobDone) FileJob.screen=null;super.onPause() }
     override fun onDestroy() { historySearchToken++;historySearchTask?.let { historySearchHandler.removeCallbacks(it) };historySearchExecutor.shutdownNow();progress?.close();super.onDestroy() }
     override fun onNewIntent(intent:Intent) { super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob() }
@@ -556,6 +562,16 @@ class MainActivity : Activity() {
             } catch(e:Exception) { field.error=e.message }
         }
     }
+    /** Normally no tap is needed: coming back to the app triggers a classified import once per batch. */
+    private fun maybeSyncNewGamePhotos() {
+        if(isFinishing||FileJob.running||CollectorService.libraryBusy||
+            CollectorService.current?.isWorking==true||!GamePhotoImport.hasSource(this)) return
+        val run=GamePhotoSession.lastRun(this)?:return
+        val state=GamePhotoSession.state(this,run)?:return
+        val marks=state.optJSONArray("saves")?.length()?:0
+        if(marks>state.optInt("syncedMarks",0)) syncGamePhotoRun(run)
+    }
+
     /** Import only files newly created by confirmed Cờ Liên Quân Save Photo actions in a run. */
     private fun syncGamePhotoRun(runId:String) {
         if(!editable()) return
