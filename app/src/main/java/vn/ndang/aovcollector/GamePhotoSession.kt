@@ -132,7 +132,7 @@ object GamePhotoSession {
             val target=File(file,safe(pick.item)+"-"+identity+"."+ext)
             val partial=File(file,target.name+".part")
             try {
-                require(image.size>0 && image.size<=MAX_IMAGE) { "Ảnh vượt giới hạn 32 MB" }
+                require(image.size>=0 && image.size<=MAX_IMAGE) { "Ảnh vượt giới hạn 32 MB" }
                 require(context.filesDir.usableSpace>image.size+30L*1024*1024) { "Bộ nhớ trống quá ít" }
                 context.contentResolver.openInputStream(image.uri)?.use { input ->
                     partial.outputStream().use { output -> input.copyTo(output,128*1024) }
