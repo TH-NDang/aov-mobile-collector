@@ -17,12 +17,12 @@ class HistorySearchTest {
         File(hero,"001-overview.png").writeText("image")
         File(hero,"hero.json").writeText("{\"name\":\"Violet\"}")
         File(root,"manual.png").writeText("image")
-        val result=HistorySearch.find(root,"VIOLET",File::getName)
+        val result=HistorySearch.find(root,"VIOLET",{ it.name })
         assertEquals(listOf(hero),result)
         assertFalse(result.any { it.extension=="json" })
-        assertEquals(listOf(group),HistorySearch.find(root,"quân cờ") { file ->
-            if(file.name=="quan-co") "Quân cờ" else file.name
-        })
+        assertEquals(listOf(group),HistorySearch.find(root,"tổng hợp",{ file ->
+            if(file.name=="quan-co") "Tổng hợp quân cờ" else file.name
+        }))
     }
 
     @Test fun nestedScopeExcludesSiblingsAndShowsScreenshotFiles() {
@@ -31,9 +31,9 @@ class HistorySearchTest {
         val tasks=File(root,"chess-1/nhiem-vu").apply { mkdirs() }
         val inside=File(heroes,"001-chess__quan-co__tat-ca-quan-co__trang__001.png").apply { writeText("image") }
         File(tasks,"001-chess__nhiem-vu__danh-sach-nhiem-vu__trang__001.png").writeText("image")
-        val results=HistorySearch.find(heroes,"trang",File::getName)
+        val results=HistorySearch.find(heroes,"trang",{ it.name })
         assertEquals(listOf(inside),results)
-        assertTrue(HistorySearch.find(heroes,"nhiệm vụ",File::getName).isEmpty())
+        assertTrue(HistorySearch.find(heroes,"nhiệm vụ",{ it.name }).isEmpty())
     }
 
     @Test fun excludesPrivateEntryTraceAndAllowsAccentInsensitiveTitles() {
@@ -41,17 +41,17 @@ class HistorySearchTest {
         val run=File(root,"run-1").apply { mkdirs() }
         File(run,"buoc-vao-game").apply { mkdirs() }.resolve("001.png").writeText("image")
         val photo=File(run,"other.png").apply { writeText("image") }
-        assertTrue(HistorySearch.find(root,"001",File::getName).isEmpty())
-        assertEquals(listOf(photo),HistorySearch.find(root,"kỹ năng") {
-            if(it==photo) "Kỹ năng · Chiêu 1" else it.name
-        })
+        assertTrue(HistorySearch.find(root,"001",{ it.name }).isEmpty())
+        assertEquals(listOf(photo),HistorySearch.find(root,"kỹ năng",{ file ->
+            if(file==photo) "Kỹ năng · Chiêu 1" else file.name
+        }))
     }
 
     @Test fun capsResultsAndHandlesEmptySearch() {
         val root=temp.newFolder("captures")
         repeat(30) { File(root,"hero-$it.png").writeText("image") }
-        assertEquals(7,HistorySearch.find(root,"hero",File::getName,7).size)
-        assertTrue(HistorySearch.find(root,"",File::getName).isEmpty())
-        assertTrue(HistorySearch.find(root,"unknown",File::getName).isEmpty())
+        assertEquals(7,HistorySearch.find(root,"hero",{ it.name },7).size)
+        assertTrue(HistorySearch.find(root,"",{ it.name }).isEmpty())
+        assertTrue(HistorySearch.find(root,"unknown",{ it.name }).isEmpty())
     }
 }
