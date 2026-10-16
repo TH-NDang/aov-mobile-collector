@@ -151,7 +151,7 @@ object GamePhotoSession {
             }
             val ext=image.name.substringAfterLast('.', "jpg").lowercase()
                 .takeIf { GamePhotoImport.imageExtension(it) }?:"jpg"
-            val file=File(destRoot,pick.group+"/"+safe(runId)).apply { mkdirs() }
+            val file=File(destRoot,GamePhotoImport.groupPath(pick.group)+"/"+safe(runId)).apply { mkdirs() }
             val target=File(file,safe(pick.item)+"-"+identity+"."+ext)
             val partial=File(file,target.name+".part")
             try {
