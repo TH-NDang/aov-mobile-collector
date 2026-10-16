@@ -223,7 +223,11 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
     /** Existing lobby -> mode selection -> entertainment -> chess lobby -> encyclopedia. */
     private fun navigate():Unit=look(true) { l ->
         val words=l.words
-        val all=words.joinToString(" ") { it.plain }
+        // ML Kit can split "Chế độ giải trí" across lines; compare both whole normalized text
+        // and recognizable fragments rather than requiring one OCR box with the full phrase.
+        val all=GameScreens.plain(words.joinToString(" ") { it.text })
+        val entertainment=words.any { it.plain.contains("chedogiai")||it.plain.contains("giaitri") } ||
+            all.contains("chedogiaitri")
         if(l.modal) { l.discard();return@look tap(.901,.08) { navigate() } }
         if(all.contains("bachkhoa") && all.contains("colienquan")) {
             l.discard();screen.say("Đã vào Bách khoa Cờ Liên Quân"); return@look topic(0)
@@ -238,17 +242,17 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
             (all.contains("trangchu")&&all.contains("colienquan")) ->
                 tap(words.firstOrNull { it.plain.contains("trangchu")&&it.x<.24 }?.x?:.102,
                     words.firstOrNull { it.plain.contains("trangchu")&&it.x<.24 }?.y?:.305,1800) { navigate() }
-            all.contains("chedogiaitri") && all.contains("colienquan") && !selectedChess -> {
+            entertainment && all.contains("colienquan") && !selectedChess -> {
                 selectedChess=true
                 tap(.507,.827,1100) { navigate() }
             }
-            all.contains("chedogiaitri") && all.contains("colienquan") && all.contains("batdau") && selectedChess ->
+            entertainment && all.contains("colienquan") && all.contains("batdau") && selectedChess ->
                 tap(words.firstOrNull { it.plain=="batdau"&&it.x>.6 }?.x?:.862,
                     words.firstOrNull { it.plain=="batdau"&&it.x>.6 }?.y?:.688,3700) { navigate() }
-            all.contains("chedogiaitri") && all.contains("colienquan") ->
+            entertainment && all.contains("colienquan") ->
                 tap(.50,.824,1000) { navigate() }
-            all.contains("chedogiaitri") -> tap(.135,.37) { navigate() }
-            all.contains("chonchedo") || all.contains("tuid o") || all.contains("tuido") ->
+            entertainment -> tap(.135,.37) { navigate() }
+            all.contains("chonchedo") || all.contains("tuido") ->
                 tap(.515,.91,1700) { navigate() }
             all.contains("colienquan") -> tap(.105,.30,2000) { navigate() }
             else -> screen.later(1800) { navigate() }
@@ -337,10 +341,18 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
             }
         }
     }
-    private fun close(at:Int,page:Int,signature:IntArray,tiles:List<ChessWiki.Tile>,from:Int,tile:ChessWiki.Tile) {
+    private fun close(at:Int,page:Int,signature:IntArray,tiles:List<ChessWiki.Tile>,from:Int,
+                      tile:ChessWiki.Tile,tries:Int=0) {
+        if(tries>=3) return fail("Không đóng được bảng chi tiết. Đóng dấu X bằng tay rồi bấm Tiếp tục.")
         tap(.902,.081,900) {
-            screen.finished("item:"+topics[at].key+":"+tile.id);items++
-            collect(at,page,signature,tiles,from+1)
+            look(false) { l ->
+                val stillOpen=l.modal;l.discard()
+                if(stillOpen) close(at,page,signature,tiles,from,tile,tries+1)
+                else {
+                    screen.finished("item:"+topics[at].key+":"+tile.id);items++
+                    collect(at,page,signature,tiles,from+1)
+                }
+            }
         }
     }
     private fun nextPage(at:Int,page:Int,signature:IntArray) {
