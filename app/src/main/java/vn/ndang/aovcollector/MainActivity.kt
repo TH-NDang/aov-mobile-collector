@@ -55,6 +55,8 @@ class MainActivity : Activity() {
                 n.contains("passive") -> form+"Nội tại · "+if(n.endsWith("detail")) "Chi tiết" else "Tóm tắt"
                 Regex("skill-[1-4]").containsMatchIn(n) -> form+"Chiêu ${Regex("skill-([1-4])").find(n)!!.groupValues[1]} · "+if(n.endsWith("detail")) "Chi tiết" else "Tóm tắt"
                 n.contains("page-") -> "Trang danh sách"
+                n.contains("chess__") -> if(n.contains("__trang__")) "Trang "+(n.substringAfterLast("__").toIntOrNull()?:"")
+                    else "Chi tiết · trang "+(n.substringAfterLast("__").toIntOrNull()?:"")
                 // A screen of a hero's players' ranking: 0003-hero-001-quoc-gia-02.
                 Regex("-(so-1-may-chu|tinh|mien|quoc-gia|may-chu)-(\\d{2})$").find(n)!=null -> Regex("-(so-1-may-chu|tinh|mien|quoc-gia|may-chu)-(\\d{2})$").find(n)!!.groupValues.let { g ->
                     BoardScreens.Tab.values().first { it.slug==g[1] }.label+" · trang ${g[2].toInt()}" }
@@ -64,6 +66,21 @@ class MainActivity : Activity() {
             }
         }
         RankScreens.folderTitle(file.name)?.let { return it }
+        ChessWiki.TOPICS.firstOrNull { it.key==file.name }?.let { return it.label }
+        when(file.name) {
+            "thong-tin" -> return "Thông tin cơ bản"
+            "quan-co" -> return "Quân cờ"
+            "tuong-tac" -> return "Tương tác"
+            "trang-bi" -> return "Trang bị"
+            "nhiem-vu" -> return "Nhiệm vụ"
+            "chuc-phuc" -> return "Chúc Phúc"
+            "tuong" -> return "Chi tiết quân cờ"
+            "phe" -> return "Phe"
+            "nghe" -> return "Nghề"
+            "vat-pham" -> return "Chi tiết trang bị"
+        }
+        if(Regex("^[a-z0-9_-]+-[a-f0-9]{8}$").matches(file.name))
+            return file.name.substringBeforeLast('-').replace('-',' ').replaceFirstChar { it.uppercase() }
         val m=meta(file)
         if(File(file,"hero.json").exists()) return m.optString("name","Chưa rõ tên")
         if(m.optString("label").isNotBlank()) return m.optString("label")
@@ -73,6 +90,7 @@ class MainActivity : Activity() {
             "pick" -> m.optString("heroName").takeIf { it.isNotBlank() }?:"Lấy thông tin tướng"
             "ranking" -> "Thống kê tướng"
             "board" -> "Chiến khu"
+            "chess" -> "Cờ Liên Quân · Bách khoa"
             else -> if(file.name=="manual") "Chụp nhanh" else "Lượt thu thập"
         }
     }
@@ -255,7 +273,7 @@ class MainActivity : Activity() {
     }
     /** The task a run folder holds, for its label. */
     private fun kind(file:File,m:JSONObject):String? = when(m.optString("collectionMode")) {
-        "single","all","pick" -> "Thông tin tướng"; "ranking" -> "Thống kê"; "board" -> "Chiến khu"; "custom" -> "Macro"
+        "single","all","pick" -> "Thông tin tướng"; "ranking" -> "Thống kê"; "board" -> "Chiến khu"; "chess" -> "Cờ Liên Quân"; "custom" -> "Macro"
         else -> if(file.name=="manual") "Chụp nhanh" else null }
     /** "Giao diện": the phone's light or dark mode, or always light or dark; the screen is built again in it. */
     private fun themeDialog() {
