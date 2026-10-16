@@ -556,68 +556,75 @@ class MainActivity : Activity() {
             } catch(e:Exception) { field.error=e.message }
         }
     }
-    /** Import existing game photo exports from the selected Pictures folder INTO the app's categorized history. */
-    private fun gamePhotosDialog() {
-        if(FileJob.running) { message("Đang xử lý ảnh, vui lòng chờ lượt hiện tại xong.");return }
-        val names=GamePhotoImport.GROUPS
-        val source=GamePhotoImport.sourceLabel(this)
-        val body=Ui.stack(this).apply { setPadding(dp(20),dp(6),dp(20),dp(12)) }
-        body.addView(Ui.text(this,
-            if(GamePhotoImport.hasSource(this)) "Nguồn ảnh: "+source
-            else "Chưa chọn nguồn. Hãy chọn một thư mục trong Pictures chứa các ảnh Liên Quân cần sao chép.",13f,Ui.muted))
-        body.addView(Ui.text(this,
-            "Ảnh sẽ được sao chép vào Lịch sử → Ảnh gốc Cờ Liên Quân → nhóm bạn chọn. Ảnh trong Pictures không bị xóa hoặc sửa.",12f,Ui.muted))
-        body.addView(Ui.section(this,"Nhóm đích trong app"))
-        val spinner=Spinner(this).apply {
-            adapter=ArrayAdapter(this@MainActivity,android.R.layout.simple_spinner_dropdown_item,names.map { it.title })
-            setSelection(0)
-            contentDescription="Nhóm ảnh đích trong ứng dụng"
-        }
-        body.addView(spinner,LinearLayout.LayoutParams(-1,dp(50)))
-        val includeOld=CheckBox(this).apply {
-            text="Sao chép cả ảnh đã có từ trước (ảnh trùng không được chép lại)"
-            textSize=13f;isChecked=true
-        }
-        body.addView(includeOld)
-        body.addView(Ui.text(this,
-            "Nên chọn đúng thư mục ảnh game, không chọn toàn bộ Pictures nếu có nhiều ảnh không liên quan. Có thể đổi nhóm và chép các ảnh khác ở lượt sau.",12f,Ui.muted))
-        val dialog=AlertDialog.Builder(this).setTitle("Ảnh game từ Pictures").setView(ScrollView(this).apply { addView(body) })
-            .setNeutralButton("Chọn thư mục nguồn",null)
-            .setPositiveButton("Chép vào app",null).setNegativeButton("Đóng",null).create()
-        dialog.show()
-        dialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-            if(!editable()) return@setOnClickListener
-            dialog.dismiss()
-            try { startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
-            },GamePhotoImport.REQUEST_FOLDER) }
-            catch(e:Exception) { message("Không mở được bộ chọn thư mục: "+(e.message?:"Không hỗ trợ")) }
-        }
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            if(!editable()) return@setOnClickListener
-            if(!GamePhotoImport.hasSource(this)) {
-                message("Hãy chọn thư mục ảnh nguồn từ Pictures trước khi sao chép.");return@setOnClickListener
-            }
-            val group=names[spinner.selectedItemPosition.coerceIn(0,names.size-1)]
-            val older=includeOld.isChecked
-            dialog.dismiss()
-            FileJob.start(this,"Đang chép ảnh từ Pictures","Ảnh đã chép vào app")
-            progress=FileProgress()
-            Thread {
-                val result=try {
-                    val copied=GamePhotoImport.sync(this,group.key,older,{ FileJob.cancelled }) { n,total,name ->
-                        FileJob.report(n.toLong(),total.toLong(),"Đang xử lý "+n+"/"+total+" ảnh",name)
-                    }
-                    "Đã chép "+copied.copied+" ảnh vào Lịch sử → Ảnh gốc Cờ Liên Quân → "+group.title+
-                        ". Bỏ qua "+copied.skipped+" ảnh, lỗi "+copied.failed+" ảnh."+
-                        (if(copied.cancelled) " Đã dừng theo yêu cầu." else "")+
-                        " Ảnh gốc trong Pictures vẫn giữ nguyên."
-                } catch(e:Exception) {
-                    "Chưa hoàn tất sao chép từ Pictures: "+(e.message?:"Lỗi truy cập")
+    /** Import only files newly created by confirmed Cờ Liên Quân Save Photo actions in a run. */
+    private fun syncGamePhotoRun(runId:String) {
+        if(!editable()) return
+        FileJob.start(this,"Đang lấy ảnh mới từ Pictures","Ảnh gốc Cờ Liên Quân")
+        selected.clear();selecting=false;showHistory()
+        progress=FileProgress()
+        Thread {
+            val result=try {
+                val stats=GamePhotoSession.importNew(this,runId,{ FileJob.cancelled }) { n,total,name ->
+                    FileJob.report(n.toLong(),total.toLong(),"Đang chép ảnh "+n+"/"+total,name)
                 }
-                FileJob.finish(result)
-            }.start()
-        }
+                "Trước lượt: "+stats.before+" ảnh · Sau lượt: "+stats.after+
+                    " ảnh · Thêm: "+stats.added+" ảnh.\n"+
+                    "Đã sao chép vào app: "+stats.copied+" ảnh theo từng nhóm."+
+                    (if(stats.already>0) " "+stats.already+" ảnh đã chép trước đó, không lặp." else "")+
+                    (if(stats.uncertain>0) " Không lấy "+stats.uncertain+
+                        " ảnh mới không khớp thao tác Save Photo được xác nhận." else "")+
+                    (if(stats.errors>0) " Lỗi đọc "+stats.errors+" ảnh." else "")+
+                    (if(stats.cancelled) " Đã hủy giữa chừng, có thể đồng bộ lại." else "")+
+                    " Ảnh cá nhân trong Pictures vẫn giữ nguyên."
+            } catch(e:Exception) {
+                "Chưa đồng bộ được Pictures: "+(e.message?:"Lỗi đọc ảnh")+
+                    ". Bạn có thể chọn lại thư mục nguồn và thử lại; ảnh gốc không bị xóa."
+            }
+            FileJob.finish(result)
+        }.start()
+    }
+
+    private fun gamePhotosDialog() {
+        if(FileJob.running) { message("Đang xử lý ảnh, vui lòng chờ hoàn tất.");return }
+        val run=GamePhotoSession.lastRun(this)
+        val state=run?.let { GamePhotoSession.state(this,it) }
+        val before=state?.optInt("before",-1)?:-1
+        val saved=state?.optJSONArray("saves")?.length()?:0
+        val info="Thư mục nguồn: "+GamePhotoImport.sourceLabel(this)+
+            (if(before>=0) "\nLượt gần nhất: "+run+
+                "\nSố ảnh trước lượt: "+before+
+                "\nSố thao tác Save Photo đã xác nhận: "+saved+
+                (if(state?.has("after")==true) "\nSố ảnh sau lượt: "+state.optInt("after") else "")
+             else "\nChưa có lượt tải ảnh gốc nào được ghi mốc.")+
+            "\n\nApp tự phân loại theo mục đang thu thập: Quân cờ, chiêu, Phe, Nghề, Trang bị và ba nhóm Chúc Phúc. "+
+            "Chỉ sao chép ảnh mới khớp thao tác lưu, không quét chép ảnh cũ trong Pictures."
+        val options=arrayOf("Chọn / đổi thư mục Pictures",
+            "Đồng bộ các ảnh mới sau lượt thu thập","Mở ảnh gốc đã nhập trong Lịch sử")
+        AlertDialog.Builder(this).setTitle("Ảnh gốc Cờ Liên Quân")
+            .setMessage(info).setItems(options) { _,i ->
+                when(i) {
+                    0 -> {
+                        try {
+                            startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or
+                                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
+                                    Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+                            },GamePhotoImport.REQUEST_FOLDER)
+                        } catch(e:Exception) {
+                            message("Không chọn được Pictures: "+(e.message?:"Lỗi mở bộ chọn"))
+                        }
+                    }
+                    1 -> if(!GamePhotoImport.hasSource(this)) gamePhotosDialog()
+                         else if(run==null) message("Hãy chạy macro Cờ Liên Quân, bật nhóm Tải ảnh gốc và lưu ảnh trước.")
+                         else syncGamePhotoRun(run)
+                    2 -> {
+                        val images=File(captures,GamePhotoImport.ROOT)
+                        if(images.isDirectory) {
+                            historyTrail.add(folder);folder=images;selected.clear();showHistory()
+                        } else message("Chưa có ảnh gốc nào được sao chép.")
+                    }
+                }
+            }.setNegativeButton("Đóng",null).show()
     }
 
     private fun importMenu() { AlertDialog.Builder(this).setTitle("Nhập file").setItems(arrayOf("Ảnh và thư mục từ ZIP","Macro từ JSON","Ảnh từ Pictures vào app")) { _,i ->
