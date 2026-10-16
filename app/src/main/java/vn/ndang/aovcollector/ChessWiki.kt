@@ -213,6 +213,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
     }
     private val topics=options.topics()
     private var completed=false;private var pages=0;private var items=0;private var navigation=0;private var selectedChess=false
+    private var veteranAttempts=0;private var tipAttempts=0
     private val tried=HashSet<String>()
     fun start()=navigate()
     private fun end(out:Outcome) { if(!completed) { completed=true;finish(out) } }
@@ -247,6 +248,10 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         val all=GameScreens.plain(words.joinToString(" ") { it.text })
         val entertainment=words.any { it.plain.contains("chedogiai")||it.plain.contains("giaitri") } ||
             all.contains("chedogiaitri")
+        // A fresh chess account may show these two screens AFTER selecting the game mode.
+        // Use exactly the same guarded recognition as the game's initial entry flow.
+        val onboarding=GameScreens.refine(
+            GameScreens.Reading(GameScreens.Kind.OTHER,null,l.signature),words,null)
         val modeEntry=ChessWiki.modeEntryPoint(words)
         if(l.modal) { l.discard();return@look tap(.901,.08) { navigate() } }
         if(all.contains("bachkhoa") && all.contains("colienquan")) {
@@ -259,6 +264,16 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         }
         l.discard()
         when {
+            onboarding.kind==GameScreens.Kind.CHESS_EXPERIENCE -> {
+                if(++veteranAttempts>2) return@look fail("Không qua màn chọn kinh nghiệm Cờ Liên Quân. Chọn Kỳ cựu bằng tay rồi bấm Tiếp tục.")
+                screen.note("Tài khoản mới: chọn Kỳ cựu")
+                tap(onboarding.tap!!.first,onboarding.tap.second,2000) { navigate() }
+            }
+            onboarding.kind==GameScreens.Kind.CHESS_TIP -> {
+                if(++tipAttempts>2) return@look fail("Không qua thông báo Đấu luyện. Bấm Đã rõ bằng tay rồi Tiếp tục.")
+                screen.note("Tài khoản mới: bấm Đã rõ")
+                tap(onboarding.tap!!.first,onboarding.tap.second,2000) { navigate() }
+            }
             (all.contains("trangchu")&&all.contains("colienquan")) ->
                 tap(words.firstOrNull { it.plain.contains("trangchu")&&it.x<.24 }?.x?:.102,
                     words.firstOrNull { it.plain.contains("trangchu")&&it.x<.24 }?.y?:.305,1800) { navigate() }
