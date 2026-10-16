@@ -73,6 +73,7 @@ class CollectorService : AccessibilityService() {
         val done=index.coerceIn(0,total)
         if(m.json.optString("collectionMode")=="ranking") return "Thống kê tướng · ${clock(elapsed())}"+left(m)
         if(m.json.optString("collectionMode")=="board") return "Chiến khu · ${clock(elapsed())}"+left(m)
+        if(m.json.optString("collectionMode")=="chess") return "Cờ Liên Quân · ${photosTaken(m)} ảnh · ${clock(elapsed())}"
         val head=if(all) "Tướng ${minOf(target,(index-lead).coerceAtLeast(0)/perHero+1)}/${if(listTotal==null&&heroes>=BuiltInMacros.ALL) "?" else target}"
             else "${(0 until index.coerceAtMost(m.steps.length())).sumOf { m.photos(it) }}/${m.photoTotal}${if(m.photosVary) "+" else ""} ảnh"
         val t=elapsed()
@@ -153,7 +154,7 @@ class CollectorService : AccessibilityService() {
     /** While the run opens the game itself ([GameEntry]), another app in front is expected. */
     private var entering=false
     /** Steps that start outside the game or on its web pages, where another app in front is expected. */
-    private fun entryStep(m:Macro,i:Int)=i<m.steps.length()&&m.steps.getJSONObject(i).optString("type") in setOf("enter","ranking","board")
+    private fun entryStep(m:Macro,i:Int)=i<m.steps.length()&&m.steps.getJSONObject(i).optString("type") in setOf("enter","ranking","board","chess")
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (running && event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val p = event.packageName?.toString()
@@ -323,7 +324,8 @@ class CollectorService : AccessibilityService() {
         val saved=MacroStore.saved(this).mapNotNull { try { Macro(it.readText()) } catch(_:Exception) { null } }
         // Each task with a line on what it does; the search reads both.
         val choices=listOf("Lấy thông tin tướng" to "Theo tên, các ô đầu danh sách hoặc tướng đang mở","Thống kê tướng" to "Bảng xếp hạng tướng trong Cộng đồng",
-            "Chiến khu" to "Bảng xếp hạng người chơi của từng tướng")+saved.map { it.name to "Macro đã nhập" }
+            "Chiến khu" to "Bảng xếp hạng người chơi của từng tướng",
+            "Cờ Liên Quân · Bách khoa" to "Chọn từng mục, tab, chi tiết; cuộn hết trang và lưu theo thư mục")+saved.map { it.name to "Macro đã nhập" }
         var visible=choices.indices.toList()
         val body=Ui.stack(c).apply { setPadding(dp(10),dp(10),dp(10),dp(6));background=Ui.shape(Ui.surface,dp(14),Ui.border) }
         val search=Ui.field(c,"Tìm macro…");body.addView(search,LinearLayout.LayoutParams(-1,dp(46)))
@@ -351,7 +353,7 @@ class CollectorService : AccessibilityService() {
         })
         list.setOnItemClickListener { _,_,position,_ ->
             val i=visible.getOrNull(position)?:return@setOnItemClickListener;dismissMacroPicker()
-            handler.post { when(i) { 0 -> heroForm();1 -> rankingForm();2 -> boardForm();else -> selectMacro(saved[i-3].raw) } }
+            handler.post { when(i) { 0 -> heroForm();1 -> rankingForm();2 -> boardForm();3 -> chessForm();else -> selectMacro(saved[i-4].raw) } }
         }
         body.addView(Ui.button(c,"Đóng danh sách") { dismissMacroPicker() },LinearLayout.LayoutParams(-1,dp(38)))
         filter("")
@@ -700,10 +702,11 @@ class CollectorService : AccessibilityService() {
         if(!MacroStore.current(this).exists()) return   // nothing selected yet on a fresh install
         try {
             val m=readMacro(); val mode=m.json.optString("collectionMode")
-            if(mode !in setOf("single","all","pick","ranking","board")||m.json.optInt("builtinVersion",1)==BuiltInMacros.VERSION) return
+            if(mode !in setOf("single","all","pick","ranking","board","chess")||m.json.optInt("builtinVersion",1)==BuiltInMacros.VERSION) return
             val step=if(prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
             if(step>0&&step<m.steps.length()&&!prefs.getBoolean("stopped",false)) return
-            if(mode=="board") MacroStore.current(this).writeText(BuiltInMacros.board(m.json.optBoolean("openGame"),m.json.optBoolean("checkAccount"),m.json.optBoolean("traceEntry",true),
+            if(mode=="chess") MacroStore.current(this).writeText(BuiltInMacros.chess(BuiltInMacros.chessOptions(m.json)))
+            else if(mode=="board") MacroStore.current(this).writeText(BuiltInMacros.board(m.json.optBoolean("openGame"),m.json.optBoolean("checkAccount"),m.json.optBoolean("traceEntry",true),
                 m.json.optInt("heroCount",BuiltInMacros.ALL),BuiltInMacros.boardWants(m.json)))
             else if(mode=="pick") MacroStore.current(this).writeText(BuiltInMacros.named(BuiltInMacros.heroNames(m.json),fast=m.json.optBoolean("fast"),detailOnly=m.json.optBoolean("detailOnly"),directSkills=m.json.optBoolean("directSkills"),
                 openGame=m.json.optBoolean("openGame"),checkAccount=m.json.optBoolean("checkAccount"),traceEntry=m.json.optBoolean("traceEntry",true)))
@@ -779,10 +782,10 @@ class CollectorService : AccessibilityService() {
         try {
             val type=s.getString("type")
             // A step that never reports back must not leave the controller stuck on "Đang xử lý".
-            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; "pick" -> 300000L; "find" -> 900_000L; "enter" -> GameEntry.LIMIT_MS+30000; "skills" -> 300000L; "ranking" -> 2_700_000L; "board" -> 43_200_000L; else -> 10000L }
+            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; "pick" -> 300000L; "find" -> 900_000L; "enter" -> GameEntry.LIMIT_MS+30000; "skills" -> 300000L; "ranking" -> 2_700_000L; "board" -> 43_200_000L; "chess" -> 43_200_000L; else -> 10000L }
             handler.postDelayed({ if(!finished && token==generation) done(false,"Bước ${index+1} ($type) quá ${limit/1000} giây không xong. Kiểm tra màn hình rồi tiếp tục.") },limit)
             // Its callbacks see the step finished and stop; a tap already sent still lands.
-            if(type in setOf("enter","skills","ranking","board","find")) cancelStep={ if(!finished) { finished=true; busy=false; entering=false; shield(false); note("Ngắt bước ${index+1} ($type) giữa chừng") } }
+            if(type in setOf("enter","skills","ranking","board","chess","find")) cancelStep={ if(!finished) { finished=true; busy=false; entering=false; shield(false); note("Ngắt bước ${index+1} ($type) giữa chừng") } }
             when(type) {
                 "wait" -> handler.postDelayed({ done(true) },s.getLong("ms"))
                 "back" -> done(performGlobalAction(GLOBAL_ACTION_BACK))
@@ -797,6 +800,10 @@ class CollectorService : AccessibilityService() {
                 "board" -> { entering=true; board(s,{ !finished && token==generation }) { outcome -> when(outcome) {
                     is BoardReader.Outcome.Done -> { note("Chiến khu: ${outcome.heroes} tướng"); done(true) }
                     is BoardReader.Outcome.Failed -> done(false,outcome.reason)
+                } } }
+                "chess" -> { entering=true; chess({ !finished && token==generation }) { outcome -> when(outcome) {
+                    is ChessWikiReader.Outcome.Done -> { note("Bách khoa Cờ Liên Quân: "+outcome.pages+" ảnh, "+outcome.items+" mục chi tiết"); done(true) }
+                    is ChessWikiReader.Outcome.Failed -> done(false,outcome.reason)
                 } } }
                 // The web pages of Cộng đồng may belong to another app than the game.
                 "ranking" -> { entering=true; ranking(s,{ !finished && token==generation }) { outcome -> when(outcome) {
@@ -1052,6 +1059,7 @@ class CollectorService : AccessibilityService() {
     /** Photos of the run on disk: with skill rows read at run time, the macro alone cannot tell. */
     private fun photosTaken(m:Macro):Int = when {
         !m.photosVary||runId.isEmpty() -> m.photoSteps.size
+        m.json.optString("collectionMode")=="chess" -> File(filesDir,"captures/$runId").walk().count { it.isFile&&it.extension=="png"&&it.name.contains("-chess__") }
         m.json.optString("collectionMode")=="ranking" -> File(filesDir,"captures/$runId").walk().count { it.extension=="png"&&RankScreens.COMBOS.any { c -> it.name.contains(c.slug) } }
         else -> File(filesDir,"captures/$runId").walk().count { it.extension=="png"&&it.name.contains("hero") }
     }
@@ -1211,6 +1219,15 @@ class CollectorService : AccessibilityService() {
         // Each table of the hero statistics in a folder of its own.
         if(folder!="manual"&&m.json.optString("collectionMode")=="ranking")
             return RankScreens.COMBOS.firstOrNull { name.contains("-${it.slug}-") }?.let { File(base,it.slug).apply { mkdirs() } }?:base
+        if(folder!="manual"&&m.json.optString("collectionMode")=="chess") {
+            val parts=name.substringAfter("chess__","").split("__")
+            if(parts.size>=4) {
+                val dirs=if(parts[2]=="trang") parts.take(2) else if(parts.size>=5) parts.take(4) else emptyList()
+                if(dirs.isNotEmpty()&&dirs.all { it.matches(Regex("[a-z0-9_-]{1,90}")) })
+                    return dirs.fold(base) { dir,slug -> File(dir,slug).apply { mkdirs() } }
+            }
+            return base
+        }
         if(folder=="manual" || m.json.optString("collectionMode") !in listOf("single","all","pick","board")) return base
         val key=Regex("(hero(?:-\\d{3})?)-").find(name)?.groupValues?.get(1) ?: return base
         val mapFile=File(base,"hero-folders.json")
