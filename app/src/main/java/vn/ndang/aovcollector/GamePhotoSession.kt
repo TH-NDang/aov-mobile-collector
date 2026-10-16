@@ -145,6 +145,7 @@ object GamePhotoSession {
         }
         state.put("after",all.size).put("newFiles",diff.new)
             .put("unrelated",diff.unrelated).put("imported",copied+already)
+            .put("syncedMarks",if(cancelled()) state.optInt("syncedMarks",0) else state.getJSONArray("saves").length())
             .put("status",if(cancelled()) "paused" else "imported")
         store(context,runId,state)
         progress(diff.matching.size,diff.matching.size,"Đã lưu $copied ảnh mới")
