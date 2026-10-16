@@ -167,6 +167,46 @@ class GameEntryTest {
     private val x2=.78 to .22
     private val heroes=GameScreens.HEROES_X to GameScreens.HEROES_Y
 
+    @Test fun recognizesNewChessAccountExperienceAndTrainingTip() {
+        val unknown=at(GameScreens.Kind.OTHER)
+        val prompt=GameScreens.refine(unknown,listOf(
+            word("Hoan nghênh bạn đến với Cờ Liên quân",.32,.21),
+            word("Autochess",.45,.25),
+            word("Tân thủ",.174,.655),word("Kỳ cựu",.333,.655)),null)
+        assertEquals(GameScreens.Kind.CHESS_EXPERIENCE,prompt.kind)
+        assertEquals(.333,prompt.tap!!.first,.001)
+        assertEquals(GameScreens.CHESS_VETERAN_Y,prompt.tap!!.second,.001)
+        val tip=GameScreens.refine(unknown,listOf(
+            word("Bạn có thể đấu thử trong Đấu luyện",.31,.30),
+            word("nâng cao trình độ Cờ Liên quân",.27,.33),
+            word("Đã rõ",.250,.577)),null)
+        assertEquals(GameScreens.Kind.CHESS_TIP,tip.kind)
+        assertEquals(.250,tip.tap!!.first,.001)
+        assertEquals(.577,tip.tap!!.second,.001)
+        // A generic "Đã rõ" or "Kỳ cựu" must not trigger these taps elsewhere.
+        assertEquals(GameScreens.Kind.OTHER,GameScreens.refine(unknown,listOf(word("Đã rõ",.25,.58)),null).kind)
+        assertEquals(GameScreens.Kind.OTHER,GameScreens.refine(unknown,listOf(word("Kỳ cựu",.33,.65)),null).kind)
+    }
+
+    @Test fun newAccountChoosesVeteranAndAcknowledgesTipBeforeLobby() {
+        val veteran=at(GameScreens.Kind.CHESS_EXPERIENCE,tap=GameScreens.CHESS_VETERAN_X to GameScreens.CHESS_VETERAN_Y)
+        val tip=at(GameScreens.Kind.CHESS_TIP,tap=GameScreens.CHESS_GOT_IT_X to GameScreens.CHESS_GOT_IT_Y)
+        val game=Script(listOf(veteran,tip,at(GameScreens.Kind.LOBBY),at(GameScreens.Kind.LOBBY)))
+        assertTrue(game.run(toLobby=true) is GameEntry.Outcome.Ready)
+        assertEquals(listOf(GameScreens.CHESS_VETERAN_X to GameScreens.CHESS_VETERAN_Y,
+            GameScreens.CHESS_GOT_IT_X to GameScreens.CHESS_GOT_IT_Y),game.taps)
+        assertTrue(game.recorded.any { it.contains("Kỳ cựu") })
+        assertTrue(game.recorded.any { it.contains("Đã rõ") })
+    }
+
+    @Test fun chessExperienceWillNotTapForeverWhenTheScreenDoesNotChange() {
+        val veteran=at(GameScreens.Kind.CHESS_EXPERIENCE,tap=GameScreens.CHESS_VETERAN_X to GameScreens.CHESS_VETERAN_Y)
+        val game=Script(listOf(veteran))
+        assertTrue(game.run(toLobby=true) is GameEntry.Outcome.Failed)
+        assertEquals(2,game.taps.size)
+        assertEquals(listOf("entry-chess-experience"),game.kept)
+    }
+
     @Test fun opensTheGameClosesItsPopupsAndOpensTheHeroList() {
         val popup=GameScreens.Kind.POPUP
         val game=Script(listOf(null,at(other,look=0),at(other,look=40),at(popup,x1),at(popup,x1),at(popup,x2),at(popup,x2),
