@@ -151,7 +151,7 @@ class GameEntryTest {
         }
         override fun tap(x:Double,y:Double,then:(Boolean)->Unit) { taps.add(x to y); then(true) }
         override fun back(then:(Boolean)->Unit) { backs++; then(true) }
-        override fun signIn():Boolean { signIns++; return signs }
+        override fun signIn(then:(Boolean)->Unit) { signIns++; then(signs) }
         override fun later(ms:Long,then:()->Unit) { time+=ms; pending.addLast(then) }
         override fun now()=time
         override fun note(text:String) { notes.add(text) }
