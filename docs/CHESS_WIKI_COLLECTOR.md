@@ -75,3 +75,20 @@ Tên item lấy từ OCR ở phần tiêu đề popup khi có thể; hậu tố 
 ## Kiểm thử CI
 
 Workflow Build APK chạy unit test, lint, build universal/ARM64 và Android emulator UI smoke test. Unit test kiểm tra lựa chọn tab, tên file theo folder và máy trạng thái giả lập. Kiểm thử đầu-cuối trên app Liên Quân thật vẫn cần thao tác thủ công trên điện thoại.
+
+
+## Ảnh gốc của game từ Pictures (tùy chọn)
+
+Mục này **khác** ảnh chụp màn hình. Game có hộp **Save Photo** với hai nút **Sure** và **CANCEL** khi nhấn giữ hình phù hợp. Tác vụ ảnh gốc chỉ nhấn Sure sau khi nhận ra đầy đủ hộp thoại này; nếu màn hình không khớp, sẽ bỏ qua và ghi nhật ký thay vì chạm bừa.
+
+1. Trong **AOV Collector → Nhập file → Ảnh từ Pictures vào app**, chọn thư mục Pictures (hoặc thư mục con ảnh game) để cấp quyền đọc một lần bằng bộ chọn thư mục Android.
+2. Chọn macro **Cờ Liên Quân · Bách khoa**. Ở mục **Tải ảnh gốc từ game**, tick riêng các nhóm muốn tải: quân cờ, chiêu quân cờ, phe, nghề, trang bị và 3 loại Chúc Phúc. Đây là **chọn phạm vi**, không phải phân loại từng ảnh: app tự gán nhóm theo tab đang thu thập.
+3. Khi bắt đầu bước Bách khoa, app **đếm và ghi dấu toàn bộ mã tài liệu hiện có** trong thư mục được cấp quyền, lưu vào \`captures/<run-id>/pictures-session.json\`.
+4. Khi game xác nhận Save Photo, app ghi thời điểm và nhóm tương ứng. Sau khi bạn bấm **Về app**, ứng dụng tự quét lại Pictures và nhận diện ảnh **mới xuất hiện kể từ mốc đầu lượt**.
+5. App sao chép các ảnh mới tương ứng vào \`captures/anh-goc-co-lien-quan/<nhóm>/<lượt>/\`. Ảnh ngoài thời gian lưu hoặc không khớp nhóm không được tự gán. Không xóa/sửa ảnh trong Pictures. Có thể chọn **Đồng bộ ảnh mới** để quét lại sau đó.
+
+Kết quả cho biết **trước lượt bao nhiêu ảnh, sau lượt bao nhiêu, số ảnh mới, số ảnh đã sao chép, số ảnh trùng và số ảnh chưa xác định**. File được lưu dưới tên có mã hash để tránh trùng, và sổ theo dõi giúp không nhập lại khi bạn đồng bộ nhiều lần.
+
+**Giới hạn và an toàn:** Nếu bạn đồng thời tạo ảnh cá nhân trong vài giây quanh một lần Save Photo của game, chỉ dùng thời điểm và số lượng không thể xác minh tuyệt đối ảnh nào thuộc game. Vì vậy nên tránh lưu ảnh khác trong lúc macro chạy, hoặc chọn thư mục con chỉ chứa ảnh game. File thiếu thời gian sửa và thuộc nhiều nhóm sẽ không được tự phân loại. Khi bố cục icon thay đổi, thao tác nhấn giữ có thể không mở hộp Save Photo; khi đó app lưu screenshot bình thường và nhật ký để hiệu chỉnh, không giả vờ ảnh gốc đã được lưu.
+
+Thư viện Lịch sử, tìm kiếm và xuất ZIP hỗ trợ PNG, JPEG và WebP đã sao chép. GitHub Actions kiểm thử nhận diện nhóm, đối chiếu trước/sau và nhận diện hộp xác nhận bằng các kịch bản giả lập; thao tác tải thực tế cần kiểm thử trên thiết bị đã đăng nhập Liên Quân.
