@@ -54,6 +54,25 @@ object ChessWiki {
                else base+kind+"__"+item+"__%03d".format(page)
     }
     fun safeName(text:String)=HeroNames.slug(text).take(45).ifEmpty { "chua-ro-ten" }
+    /**
+     * "Chọn chế độ" sits immediately to the right of "N.vụ" on the landscape lobby toolbar.
+     * Screenshot 2048x921: mode icon center ~= (0.635, 0.895), quest icon ~= (0.515, 0.90).
+     * Prefer the text's own horizontal position, but tap the icon vertically rather than its
+     * low label; if OCR loses the small label, use the calibrated safe icon center.
+     * Refuse to guess unless the bottom lobby toolbar itself is identifiable.
+     */
+    const val MODE_X=.635
+    const val MODE_Y=.895
+    fun modeEntryPoint(words:List<GameScreens.Word>):Pair<Double,Double>? {
+        val footer=words.filter { it.y in .78.. .98 }
+        val label=footer.firstOrNull { it.plain.contains("chonchedo") && it.x in .57.. .71 }
+        if(label!=null) return label.x to MODE_Y
+        // The small mode text is often unreadable; other lobby labels still identify the bar.
+        // "N.vụ" is just to its left: never use that label's x as the tap target.
+        if(footer.any { it.plain in setOf("tuido","nvu","tuong","trangbi") }) return MODE_X to MODE_Y
+        return null
+    }
+
 
     data class Tile(val x:Double,val y:Double,val id:String,val label:String?=null)
     /** All coordinates are fractions of the complete landscape screenshot, including the game's side margins. */
@@ -228,6 +247,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         val all=GameScreens.plain(words.joinToString(" ") { it.text })
         val entertainment=words.any { it.plain.contains("chedogiai")||it.plain.contains("giaitri") } ||
             all.contains("chedogiaitri")
+        val modeEntry=ChessWiki.modeEntryPoint(words)
         if(l.modal) { l.discard();return@look tap(.901,.08) { navigate() } }
         if(all.contains("bachkhoa") && all.contains("colienquan")) {
             l.discard();screen.say("Đã vào Bách khoa Cờ Liên Quân"); return@look topic(0)
@@ -252,8 +272,10 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
             entertainment && all.contains("colienquan") ->
                 tap(.50,.824,1000) { navigate() }
             entertainment -> tap(.135,.37) { navigate() }
-            all.contains("chonchedo") || all.contains("tuido") ->
-                tap(.515,.91,1700) { navigate() }
+            modeEntry!=null -> {
+                screen.note("Sảnh: chọn chế độ ở "+(modeEntry.first*100).toInt()+"%, "+(modeEntry.second*100).toInt()+"% (không bấm N.vụ)")
+                tap(modeEntry.first,modeEntry.second,1700) { navigate() }
+            }
             all.contains("colienquan") -> tap(.105,.30,2000) { navigate() }
             else -> screen.later(1800) { navigate() }
         }
