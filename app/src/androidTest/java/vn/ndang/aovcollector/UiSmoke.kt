@@ -197,7 +197,11 @@ class UiSmoke:Instrumentation() {
             // Exercise the actual chooser button, repeatedly, then after rotation.
             fun chooserClick() {
                 waitForIdleSync();SystemClock.sleep(500)
-                val node=automation.windows.mapNotNull { it.root }.flatMap { it.findAccessibilityNodeInfosByText("Lấy thông tin tướng") }.firstOrNull { it.contentDescription?.toString()=="Chọn macro, có tìm kiếm" }?:error("Missing chooser button")
+                val node=automation.windows.mapNotNull { it.root }.flatMap {
+                    it.findAccessibilityNodeInfosByText("Lấy thông tin tướng")+
+                        it.findAccessibilityNodeInfosByText("Đóng danh sách")
+                }.firstOrNull { it.contentDescription?.toString()=="Chọn macro, có tìm kiếm" }
+                    ?:error("Missing chooser button")
                 check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK));waitForIdleSync();SystemClock.sleep(250)
             }
             repeat(3) { chooserClick();chooserClick() }
