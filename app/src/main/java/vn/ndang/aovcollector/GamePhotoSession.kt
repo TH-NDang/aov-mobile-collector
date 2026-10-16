@@ -43,10 +43,12 @@ object GamePhotoSession {
             }
         }
         // Providers sometimes omit dates; a count-only fallback is safe ONLY when the number of
-        // previously-unseen files equals the number of recorded, unpaired successful saves.
+        // previously-unseen files equals the number of recorded, unpaired successful saves, AND
+        // every save belongs to the same class (without dates, cross-class ordering is ambiguous).
         val leftovers=fresh.filter { photo -> assigned.none { it.id==photo.id } }
         if(leftovers.isNotEmpty()&&leftovers.size==available.size &&
-            leftovers.all { it.modified<=0L } && available.all { it.group in validGroups }) {
+            leftovers.all { it.modified<=0L } && available.all { it.group in validGroups } &&
+            available.map { it.group }.distinct().size==1) {
             leftovers.sortedBy { it.id }.zip(available.sortedBy { it.time }).forEach { (photo,mark) ->
                 assigned.add(Pick(photo.id,mark.group,mark.item,photo.size))
             }
