@@ -21,7 +21,7 @@ object GamePhotoImport {
     private const val URI="treeUri"
     private const val SELECTED_AT="selectedAt"
     private const val LEDGER="game-photo-imported.json"
-    private const val MAX_ENTRIES=15_000
+    private const val MAX_ENTRIES=50_000
     private const val MAX_DEPTH=5
     private const val MAX_IMAGE_BYTES=32L*1024*1024
     data class Group(val key:String,val title:String)
@@ -97,13 +97,14 @@ object GamePhotoImport {
                     }
                     if(!mime.startsWith("image/")&&!imageExtension(name.substringAfterLast('.',"" ))) continue
                     val size=if(cursor.isNull(sizeAt)) 0L else cursor.getLong(sizeAt)
-                    if(size<=0L||size>MAX_IMAGE_BYTES) continue
+                    if(size<0L||size>MAX_IMAGE_BYTES) continue
                     val modified=if(cursor.isNull(modAt)) 0L else cursor.getLong(modAt)
                     val documentUri=DocumentsContract.buildDocumentUriUsingTree(tree,id)
                     found.add(Photo(documentUri,id,name,mime,size,modified,path))
                 }
             }
         }
+        require(visited<MAX_ENTRIES) { "Pictures có quá nhiều file để đối chiếu an toàn. Hãy chọn thư mục con chứa ảnh game." }
         return found.sortedWith(compareBy<Photo> { it.modified }.thenBy { it.name })
     }
     /**
