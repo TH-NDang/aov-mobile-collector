@@ -746,6 +746,20 @@ class CollectorService : AccessibilityService() {
             uiPrefs.getBoolean("chessSynergyDetails",false))
         val equipmentDetails=check("Mở từng trang bị và chụp bảng mô tả",
             uiPrefs.getBoolean("chessEquipmentDetails",false))
+        body.addView(Ui.section(c,"Tải ảnh gốc từ game (tùy chọn)"))
+        body.addView(Ui.text(c,
+            "Game lưu ảnh bằng Save Photo → Sure vào Pictures. App ghi số ảnh trước lượt, " +
+            "ghi loại ảnh theo mục đang chụp, rồi khi về app chỉ sao chép ảnh mới tương ứng. " +
+            "Các ảnh cũ và ảnh không xác định sẽ không bị lấy.",12f,Ui.muted))
+        body.addView(Ui.text(c,if(GamePhotoImport.hasSource(this))
+            "Đã chọn nguồn: "+GamePhotoImport.sourceLabel(this)
+            else "Chưa chọn Pictures. Về app → Nhập file → Ảnh gốc trong Pictures để cấp quyền trước.",
+            12f,if(GamePhotoImport.hasSource(this)) Ui.success else Ui.warning))
+        val savedNative=uiPrefs.getString("chessNativeGroups","").orEmpty().split(',').toSet()
+        val nativeChecks=linkedMapOf<String,CheckBox>()
+        GamePhotoImport.GROUPS.filter { it.key!="chua-phan-loai" }.forEach { group ->
+            nativeChecks[group.key]=check("Tải "+group.title,group.key in savedNative)
+        }
         body.addView(Ui.text(c,"Các trang và bảng chi tiết được tự động kéo, chụp đến cuối khi còn nội dung. Không cần bật tùy chọn riêng.",12f,Ui.muted))
         body.addView(Ui.section(c,"Bắt đầu và an toàn"))
         val openGame=check("Tự mở game tới sảnh trước khi vào Cờ Liên Quân",
@@ -767,11 +781,16 @@ class CollectorService : AccessibilityService() {
             .setPositiveButton("Chọn tác vụ",null).setNegativeButton("Hủy",null).create()
         display(dialog)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val selected=checks.filterValues { it.isChecked }.keys.toSet()
-            if(selected.isEmpty()) { status("Chọn ít nhất một mục Bách khoa trước khi chạy");return@setOnClickListener }
+            val native=nativeChecks.filterValues { it.isChecked }.keys.toSet()
+            if(native.isNotEmpty()&&!GamePhotoImport.hasSource(this)) {
+                status("Chọn Pictures trong app trước khi tải ảnh gốc");return@setOnClickListener
+            }
+            val selected=checks.filterValues { it.isChecked }.keys.toSet()+ChessWiki.topicsForNative(native)
+            if(selected.isEmpty()) { status("Chọn ít nhất một mục Bách khoa hoặc nhóm ảnh gốc");return@setOnClickListener }
             val options=ChessWiki.Options(selected,openGame.isChecked,checkAccount.isChecked&&checkAccount.isEnabled,
-                trace.isChecked,heroDetails.isChecked,synergyDetails.isChecked,equipmentDetails.isChecked)
+                trace.isChecked,heroDetails.isChecked,synergyDetails.isChecked,equipmentDetails.isChecked,native)
             uiPrefs.edit().putString("chessTopics",selected.joinToString(","))
+                .putString("chessNativeGroups",native.joinToString(","))
                 .putBoolean("chessHeroDetails",heroDetails.isChecked)
                 .putBoolean("chessSynergyDetails",synergyDetails.isChecked).putBoolean("chessEquipmentDetails",equipmentDetails.isChecked)
                 .putBoolean("chessOpenGame",openGame.isChecked).putBoolean("chessCheckAccount",checkAccount.isChecked)
@@ -810,6 +829,8 @@ class CollectorService : AccessibilityService() {
                                 override val signature=data.second
                                 override val modal=data.third
                                 override fun tiles(topic:ChessWiki.Topic)=ChessWiki.tiles(topic,b,this.words)
+                                override fun nativeTiles(topic:ChessWiki.Topic)=ChessWiki.nativeTiles(topic,b,this.words)
+                                override fun skillIcons()=ChessWiki.skillTiles(b)
                                 override fun keep(name:String,then:(Boolean)->Unit) {
                                     store(b,runId,stamp+"-"+name,then)
                                 }
@@ -835,6 +856,61 @@ class CollectorService : AccessibilityService() {
                     touchGame(gesture,false,then)
                 }
             }
+            /**
+             * "Save Photo" is a game dialog, NOT our screenshot capture. Never tap Sure without
+             * recognizing Save Photo, Sure and Cancel together from a fresh screenshot.
+             */
+            override fun nativeSave(group:String,item:String,x:Double,y:Double,then:(Boolean)->Unit) {
+                val point=Path().apply {
+                    val b=screen()
+                    moveTo((x*(b.width()-1)).toFloat(),(y*(b.height()-1)).toFloat())
+                }
+                val hold=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(point,0,850L)).build()
+                touchGame(hold,false) { pushed ->
+                    if(!pushed) return@touchGame then(false)
+                    handler.postDelayed({
+                        grab(anyApp=true) { image ->
+                            if(image==null) return@grab then(false)
+                            try { io.execute {
+                                val answer=try { ChessWiki.nativeConfirm(GameText.words(image)) }
+                                    catch(e:Throwable) { null }
+                                val hasModal=try { ChessWiki.modal(image) } catch(_:Throwable) { false }
+                                image.recycle()
+                                handler.post {
+                                    if(!alive()) return@post
+                                    if(answer==null) {
+                                        // A long press might have opened a normal hero modal; close it.
+                                        if(hasModal) touchGame(tapAt(.902,.082),true) { then(false) }
+                                        else then(false)
+                                    } else touchGame(tapAt(answer.first,answer.second),true) { pressed ->
+                                        if(!pressed) return@touchGame then(false)
+                                        handler.postDelayed({
+                                            grab(anyApp=true) { check ->
+                                                if(check==null) return@grab then(false)
+                                                try { io.execute {
+                                                    val stillPrompt=try {
+                                                        ChessWiki.nativeConfirm(GameText.words(check))!=null
+                                                    } catch(_:Throwable) { true }
+                                                    check.recycle()
+                                                    if(stillPrompt) handler.post { then(false) }
+                                                    else {
+                                                        val marked=try {
+                                                            GamePhotoSession.mark(this@CollectorService,runId,group,item);true
+                                                        } catch(e:Throwable) {
+                                                            CrashLog.record(this@CollectorService,"Không ghi được ảnh gốc đã lưu",e);false
+                                                        }
+                                                        handler.post { then(marked) }
+                                                    }
+                                                } } catch(e:Exception) { check.recycle();then(false) }
+                                            }
+                                        },1150)
+                                    }
+                                }
+                            } } catch(e:Exception) { image.recycle();then(false) }
+                        }
+                    },1000)
+                }
+            }
             override fun later(ms:Long,then:()->Unit) { handler.postDelayed(then,ms) }
             override fun seen(id:String)=id in doneIds
             override fun finished(id:String) {
@@ -847,7 +923,26 @@ class CollectorService : AccessibilityService() {
             override fun note(message:String) { this@CollectorService.note(message) }
             override fun say(message:String) { if(alive()) { lastStatus=message;refreshPanel() } }
         }
-        ChessWikiReader(screen,BuiltInMacros.chessOptions(readMacro().json),finish).start()
+        val options=BuiltInMacros.chessOptions(readMacro().json)
+        if(options.nativeGroups.isEmpty()) {
+            ChessWikiReader(screen,options,finish).start()
+        } else try {
+            io.execute {
+                val baseline=try { GamePhotoSession.begin(this@CollectorService,runId) }
+                    catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không đếm được ảnh Pictures trước lượt",e);-1 }
+                handler.post {
+                    if(!alive()) return@post
+                    if(baseline<0) finish(ChessWikiReader.Outcome.Failed(
+                        "Không đọc được Pictures. Về app → Nhập file → Ảnh gốc trong Pictures, cấp quyền rồi thử lại."))
+                    else {
+                        note("Ảnh Pictures trước lượt: "+baseline+" · nhóm ảnh gốc: "+options.nativeGroups.joinToString(","))
+                        ChessWikiReader(screen,options,finish).start()
+                    }
+                }
+            }
+        } catch(e:Exception) {
+            finish(ChessWikiReader.Outcome.Failed("Không khởi tạo được kiểm tra ảnh Pictures: "+e.message))
+        }
     }
 
     /** Mean size of the screenshots saved on this phone, which depends on its screen and the game's art; 1.5 MB before any. */
