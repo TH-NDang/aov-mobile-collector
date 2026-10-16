@@ -33,6 +33,45 @@ class ChessWikiTest {
         assertFalse(ChessWiki.changed(base,IntArray(96) { 58 }))
         assertTrue(ChessWiki.changed(base,IntArray(96) { 61 }))
     }
+    @Test fun originalEquipmentImagesAreTaggedAutomaticallyFromCurrentTab() {
+        val observed=listOf(GameScreens.Word("Bách khoa",.15,.03,.3,.09),
+            GameScreens.Word("Cờ Liên Quân",.35,.03,.6,.09))
+        val stored=ArrayList<String>()
+        val native=ArrayList<String>()
+        val finished=HashSet<String>()
+        var outcome:ChessWikiReader.Outcome?=null
+        val screen=object:ChessWikiReader.Screen {
+            override val alive=true
+            override fun look(words:Boolean,then:(ChessWikiReader.Look?)->Unit) {
+                then(object:ChessWikiReader.Look {
+                    override val words=observed
+                    override val signature=IntArray(96) { 65 }
+                    override val modal=false
+                    override fun tiles(topic:ChessWiki.Topic)=emptyList<ChessWiki.Tile>()
+                    override fun nativeTiles(topic:ChessWiki.Topic)=listOf(ChessWiki.Tile(.4,.55,"icon-1"))
+                    override fun keep(name:String,then:(Boolean)->Unit) { stored.add(name);then(true) }
+                    override fun discard() {}
+                })
+            }
+            override fun tap(x:Double,y:Double,then:(Boolean)->Unit)=then(true)
+            override fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit)=then(true)
+            override fun nativeSave(group:String,item:String,x:Double,y:Double,then:(Boolean)->Unit) {
+                native.add(group);then(true)
+            }
+            override fun later(ms:Long,then:()->Unit)=then()
+            override fun seen(id:String)=id in finished
+            override fun finished(id:String) { finished.add(id) }
+            override fun note(message:String) {}
+            override fun say(message:String) {}
+        }
+        ChessWikiReader(screen,ChessWiki.Options(setOf("tat-ca-trang-bi"),
+            openGame=false,nativeGroups=setOf("trang-bi")), { outcome=it }).start()
+        assertTrue(outcome is ChessWikiReader.Outcome.Done)
+        assertEquals(listOf("trang-bi"),native)
+        assertTrue(finished.any { it.startsWith("native:trang-bi:") })
+        assertEquals(1,stored.size)
+    }
+
     @Test fun readerCapturesChosenPageThenStopsAtEnd() {
         val titles=listOf(GameScreens.Word("Bách khoa",.2,.02,.4,.08),
                           GameScreens.Word("Cờ Liên Quân",.4,.03,.65,.1))
