@@ -267,12 +267,12 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
             onboarding.kind==GameScreens.Kind.CHESS_EXPERIENCE -> {
                 if(++veteranAttempts>2) return@look fail("Không qua màn chọn kinh nghiệm Cờ Liên Quân. Chọn Kỳ cựu bằng tay rồi bấm Tiếp tục.")
                 screen.note("Tài khoản mới: chọn Kỳ cựu")
-                tap(onboarding.tap!!.first,onboarding.tap.second,2000) { navigate() }
+                onboarding.tap!!.let { at -> tap(at.first,at.second,2000) { navigate() } }
             }
             onboarding.kind==GameScreens.Kind.CHESS_TIP -> {
                 if(++tipAttempts>2) return@look fail("Không qua thông báo Đấu luyện. Bấm Đã rõ bằng tay rồi Tiếp tục.")
                 screen.note("Tài khoản mới: bấm Đã rõ")
-                tap(onboarding.tap!!.first,onboarding.tap.second,2000) { navigate() }
+                onboarding.tap!!.let { at -> tap(at.first,at.second,2000) { navigate() } }
             }
             (all.contains("trangchu")&&all.contains("colienquan")) ->
                 tap(words.firstOrNull { it.plain.contains("trangchu")&&it.x<.24 }?.x?:.102,
