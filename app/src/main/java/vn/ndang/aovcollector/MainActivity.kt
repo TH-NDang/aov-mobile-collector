@@ -216,45 +216,164 @@ class MainActivity : Activity() {
     }
     // A run's record of the way into the game is opened from the run's menu, not listed as a hero folder.
     private fun items():List<File> = (folder?:captures).listFiles()?.filter { (it.isDirectory&&it.name!=GameEntry.TRACE_DIR) || it.extension=="png" }?.sortedWith(compareBy<File> { !it.isDirectory }.thenByDescending { if(folder==null) meta(it).optLong("updatedAt",it.lastModified()) else 0L }.thenBy { it.name }).orEmpty()
+    /** Local search in this folder, or every nested folder when searching from history root. */
     private fun showHistory() {
         historyScroll?.let { scrollMemory[shownKey]=it.scrollY }
+        ++historySearchToken
+        historySearchTask?.let { historySearchHandler.removeCallbacks(it) }
+        if(folder?.isDirectory==false) { folder=null;historyTrail.clear() }
+        val scope=folder?:captures
+        val scopeKey=scope.path
+        val query=historyQueries[scopeKey].orEmpty()
         val root=shell();historyRoot=root;header(root)
-        if(folder?.exists()==false) folder=null
-        selected.retainAll(items().toSet())
+        selected.removeAll { !it.exists()||!it.path.startsWith(scope.path+"/") }
+        var visible=emptyList<File>()
         val bar=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL;setPadding(dp(20),0,dp(20),dp(6)) }
-        if(folder!=null) bar.addView(Ui.text(this,"‹",30f,Ui.accent).apply { setPadding(0,0,dp(16),0);contentDescription="Quay lại thư mục trước";setOnClickListener { goBack() } })
-        bar.addView(Ui.text(this,if(selecting) "Đã chọn ${selected.size}" else folder?.let { title(it) }?:"Lịch sử",20f,Ui.ink,true),LinearLayout.LayoutParams(0,-2,1f))
-        bar.addView(Ui.text(this,if(selecting) "Xong" else "Chọn",14f,Ui.accent,true).apply { setPadding(dp(16),dp(12),0,dp(12));setOnClickListener { selecting=!selecting;selected.clear();showHistory() } });root.addView(bar)
-        if(selecting) root.addView(Ui.text(this,if(selected.size==items().size&&items().isNotEmpty()) "Bỏ chọn tất cả" else "Chọn tất cả",13f,Ui.accent,true).apply { setPadding(dp(20),0,dp(20),dp(10));setOnClickListener { if(selected.size==items().size) selected.clear() else selected.addAll(items());showHistory() } })
-        val scroll=ScrollView(this);val body=Ui.stack(this).apply { setPadding(dp(20),dp(4),dp(20),dp(16)) };scroll.addView(body);root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
-        shownKey=folder?.path?:"root";historyScroll=scroll
-        val restoreY=scrollMemory[shownKey]?:0
-        if(restoreY>0) scroll.viewTreeObserver.addOnGlobalLayoutListener(object:ViewTreeObserver.OnGlobalLayoutListener {
-            override fun onGlobalLayout() { scroll.viewTreeObserver.removeOnGlobalLayoutListener(this);scroll.scrollTo(0,restoreY) } })
-        val list=items()
-        if(list.isEmpty()) {
-            val empty=Ui.card(this);empty.addView(Ui.text(this,"Ảnh sẽ xuất hiện ở đây",20f,Ui.ink,true));empty.addView(Ui.text(this,"Mở bảng nổi → chọn tác vụ → Chạy. Mỗi lượt được lưu thành một thư mục riêng.",14f,Ui.muted));body.addView(empty)
+        if(folder!=null) bar.addView(Ui.text(this,"‹",30f,Ui.accent).apply {
+            setPadding(0,0,dp(16),0);contentDescription="Quay lại thư mục trước";setOnClickListener { goBack() }
+        })
+        bar.addView(Ui.text(this,if(selecting) "Đã chọn "+selected.size else folder?.let { title(it) }?:"Lịch sử",
+            20f,Ui.ink,true),LinearLayout.LayoutParams(0,-2,1f))
+        bar.addView(Ui.text(this,if(selecting) "Xong" else "Chọn",14f,Ui.accent,true).apply {
+            setPadding(dp(16),dp(12),0,dp(12))
+            setOnClickListener { selecting=!selecting;selected.clear();showHistory() }
+        })
+        root.addView(bar)
+        val searchRow=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL;setPadding(dp(20),0,dp(20),0) }
+        val input=Ui.field(this,if(folder==null) "Tìm trong toàn bộ lịch sử…" else "Tìm trong "+title(scope)+"…",query).apply {
+            textSize=14f;setSingleLine(true);isEnabled=!selecting
+            imeOptions=android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+            contentDescription="Tìm kiếm trong lịch sử và thư mục hiện tại"
         }
-        // Show 50 rows per page; only those thumbnails are decoded.
-        val pageSize=50;val pages=maxOf(1,(list.size+pageSize-1)/pageSize)
-        val pageIndex=getPreferences(MODE_PRIVATE).getInt("page-${folder?.path?:"root"}",0).coerceIn(0,pages-1)
-        for(file in list.drop(pageIndex*pageSize).take(pageSize)) addRow(body,file)
-        if(pages>1) {
-            val pager=LinearLayout(this)
-            pager.addView(Ui.button(this,"‹ Trước") { getPreferences(MODE_PRIVATE).edit().putInt("page-${folder?.path?:"root"}",maxOf(0,pageIndex-1)).apply();showHistory() },LinearLayout.LayoutParams(0,dp(44),1f))
-            pager.addView(Ui.text(this," ${pageIndex+1}/$pages ",14f,Ui.muted).apply { gravity=Gravity.CENTER },LinearLayout.LayoutParams(dp(64),dp(44)))
-            pager.addView(Ui.button(this,"Sau ›") { getPreferences(MODE_PRIVATE).edit().putInt("page-${folder?.path?:"root"}",minOf(pages-1,pageIndex+1)).apply();showHistory() },LinearLayout.LayoutParams(0,dp(44),1f));body.addView(pager)
+        searchRow.addView(input,LinearLayout.LayoutParams(0,dp(46),1f))
+        val clear=Ui.text(this,"×",24f,Ui.accent,true).apply {
+            gravity=Gravity.CENTER;setPadding(dp(10),0,0,0)
+            contentDescription="Xóa tìm kiếm";visibility=if(query.isBlank()) View.GONE else View.VISIBLE
+            setOnClickListener { input.setText("") }
         }
-        // Sizes help decide what to save or delete: the ZIP is about as large as what is selected.
+        searchRow.addView(clear,LinearLayout.LayoutParams(dp(40),dp(46)))
+        root.addView(searchRow)
+        val hint=Ui.text(this,"",12f,Ui.muted).apply { includeFontPadding=false;setPadding(dp(20),0,dp(20),dp(4)) }
+        root.addView(hint)
+        var selectAll:TextView?=null
+        if(selecting) {
+            selectAll=Ui.text(this,"Chọn tất cả kết quả",13f,Ui.accent,true).apply {
+                setPadding(dp(20),0,dp(20),dp(10))
+                setOnClickListener {
+                    if(visible.isNotEmpty()) {
+                        if(selected.containsAll(visible)) selected.removeAll(visible.toSet())
+                        else selected.addAll(visible)
+                    }
+                    showHistory()
+                }
+            }
+            root.addView(selectAll)
+        }
+        val scroll=ScrollView(this)
+        val body=Ui.stack(this).apply { setPadding(dp(20),dp(4),dp(20),dp(16)) }
+        scroll.addView(body);root.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
+        shownKey=scopeKey+"|"+query;historyScroll=scroll
+        val savedY=scrollMemory[shownKey]?:0
+        if(savedY>0) scroll.viewTreeObserver.addOnGlobalLayoutListener(object:ViewTreeObserver.OnGlobalLayoutListener {
+            override fun onGlobalLayout() {
+                scroll.viewTreeObserver.removeOnGlobalLayoutListener(this)
+                scroll.scrollTo(0,savedY)
+            }
+        })
+
+        fun render(list:List<File>,filter:String) {
+            if(historyRoot!==root) return
+            visible=list;body.removeAllViews()
+            val searching=filter.isNotBlank()
+            hint.text=if(searching) list.size.toString()+
+                (if(list.size>=HistorySearch.LIMIT) "+ kết quả · nhập cụ thể hơn" else " kết quả")+
+                " trong "+(folder?.let { title(it) }?:"toàn bộ lịch sử")
+                else if(folder==null) "Các lượt thu thập đã lưu" else "Nội dung thư mục hiện tại"
+            if(list.isEmpty()) {
+                val empty=Ui.card(this)
+                empty.addView(Ui.text(this,if(searching) "Không tìm thấy kết quả" else "Ảnh sẽ xuất hiện ở đây",19f,Ui.ink,true))
+                empty.addView(Ui.text(this,if(searching)
+                    "Thử tên tướng, kỹ năng, tab hoặc tên ảnh khác. Có thể tìm không dấu."
+                    else "Mở bảng nổi → chọn tác vụ → Chạy. Mỗi lượt được lưu trong một thư mục.",13f,Ui.muted))
+                body.addView(empty)
+            }
+            val pageId=scopeKey+"|"+filter
+            val pages=maxOf(1,(list.size+49)/50)
+            val requested=if(searching) historyPages[pageId]?:0
+                else getPreferences(MODE_PRIVATE).getInt("page-"+(folder?.path?:"root"),0)
+            val page=requested.coerceIn(0,pages-1)
+            for(file in list.drop(page*50).take(50)) addRow(body,file,if(searching) scope else null)
+            if(pages>1) {
+                val pager=LinearLayout(this)
+                fun turn(to:Int) {
+                    if(searching) historyPages[pageId]=to
+                    else getPreferences(MODE_PRIVATE).edit().putInt("page-"+(folder?.path?:"root"),to).apply()
+                    render(list,filter);scroll.post { scroll.scrollTo(0,0) }
+                }
+                pager.addView(Ui.button(this,"‹ Trước") { turn(maxOf(0,page-1)) },LinearLayout.LayoutParams(0,dp(44),1f))
+                pager.addView(Ui.text(this,(page+1).toString()+"/"+pages,14f,Ui.muted).apply { gravity=Gravity.CENTER },
+                    LinearLayout.LayoutParams(dp(66),dp(44)))
+                pager.addView(Ui.button(this,"Sau ›") { turn(minOf(pages-1,page+1)) },LinearLayout.LayoutParams(0,dp(44),1f))
+                body.addView(pager)
+            }
+            selectAll?.text=if(list.isNotEmpty()&&selected.containsAll(list)) "Bỏ chọn tất cả kết quả" else "Chọn tất cả kết quả"
+            selectAll?.isEnabled=list.isNotEmpty()
+        }
+
+        fun startSearch(text:String) {
+            val token=++historySearchToken
+            historySearchTask?.let { historySearchHandler.removeCallbacks(it) }
+            historySearchTask=null
+            if(text.isBlank()) { historyResultsKey="";historyResults=emptyList();render(items(),"");return }
+            val key=scopeKey+"|"+text
+            if(historyResultsKey==key) render(historyResults,text)
+            else {
+                visible=emptyList();body.removeAllViews()
+                hint.text="Đang tìm trong "+(folder?.let { title(it) }?:"toàn bộ lịch sử")+"…"
+            }
+            if(selecting&&historyResultsKey==key) return
+            val task=Runnable {
+                historySearchExecutor.execute {
+                    val matches=try { HistorySearch.find(scope,text,{ title(it) }) } catch(_:Exception) { emptyList() }
+                    runOnUiThread {
+                        if(token!=historySearchToken||historyRoot!==root||isFinishing) return@runOnUiThread
+                        historyResultsKey=key;historyResults=matches
+                        render(matches,text)
+                    }
+                }
+            }
+            historySearchTask=task;historySearchHandler.postDelayed(task,250)
+        }
+        input.addTextChangedListener(object:android.text.TextWatcher {
+            override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int) {}
+            override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) {
+                val next=s?.toString().orEmpty()
+                historyQueries[scopeKey]=next;historyPages[scopeKey+"|"+next]=0
+                selected.clear();clear.visibility=if(next.isBlank()) View.GONE else View.VISIBLE
+                scrollMemory[shownKey]=scroll.scrollY;shownKey=scopeKey+"|"+next
+                scroll.scrollTo(0,0);startSearch(next)
+            }
+            override fun afterTextChanged(s:android.text.Editable?) {}
+        })
+
         val free=" · máy còn trống "+Format.size(filesDir.usableSpace)
-        if(selecting) root.addView(Ui.text(this,if(selected.isEmpty()) "Chọn mục để lưu ZIP hoặc xóa$free"
-            else "Đã chọn ${Format.size(selected.sumOf { f -> if(f.isDirectory) f.walkTopDown().filter { it.isFile }.sumOf { it.length() } else f.length() })} · file ZIP có dung lượng gần như vậy$free",12f,Ui.muted).apply { setPadding(dp(20),dp(6),dp(20),0) })
-        else if(folder==null&&list.isNotEmpty()) root.addView(Ui.text(this,"Ảnh đã lưu: "+Format.size(captures.walkTopDown().filter { it.isFile }.sumOf { it.length() })+free,12f,Ui.muted).apply { setPadding(dp(20),dp(6),dp(20),dp(6)) })
+        if(selecting) root.addView(Ui.text(this,if(selected.isEmpty()) "Chọn mục để lưu ZIP hoặc xóa"+free
+            else "Đã chọn "+Format.size(selected.sumOf { f -> if(f.isDirectory) f.walkTopDown().filter { it.isFile }.sumOf { it.length() } else f.length() })+" · file ZIP có dung lượng gần như vậy"+free,
+            12f,Ui.muted).apply { setPadding(dp(20),dp(6),dp(20),0) })
+        else if(folder==null) root.addView(Ui.text(this,"Ảnh đã lưu: "+
+            Format.size(captures.walkTopDown().filter { it.isFile }.sumOf { it.length() })+free,12f,Ui.muted)
+            .apply { setPadding(dp(20),dp(6),dp(20),dp(6)) })
         if(selecting) {
             val actions=LinearLayout(this).apply { setPadding(dp(20),dp(8),dp(20),dp(12)) }
-            actions.addView(Ui.button(this,"Lưu ZIP",true) { requestExport(selected.toList()) }.apply { isEnabled=selected.isNotEmpty();alpha=if(isEnabled) 1f else .45f },LinearLayout.LayoutParams(0,dp(48),1f))
-            actions.addView(Ui.button(this,"Xóa",dangerous=true) { delete(selected.toList()) }.apply { isEnabled=selected.isNotEmpty();alpha=if(isEnabled) 1f else .45f },LinearLayout.LayoutParams(0,dp(48),1f).apply { leftMargin=dp(10) });root.addView(actions)
+            actions.addView(Ui.button(this,"Lưu ZIP",true) { requestExport(selected.toList()) }
+                .apply { isEnabled=selected.isNotEmpty();alpha=if(isEnabled) 1f else .45f },
+                LinearLayout.LayoutParams(0,dp(48),1f))
+            actions.addView(Ui.button(this,"Xóa",dangerous=true) { delete(selected.toList()) }
+                .apply { isEnabled=selected.isNotEmpty();alpha=if(isEnabled) 1f else .45f },
+                LinearLayout.LayoutParams(0,dp(48),1f).apply { leftMargin=dp(10) })
+            root.addView(actions)
         }
+        startSearch(query)
     }
     private fun addRow(body:LinearLayout,file:File) {
         val card=Ui.card(this).apply { setPadding(dp(12),dp(12),dp(10),dp(12));if(selected.contains(file)) background=Ui.shape(Ui.pale,dp(20),Ui.accent) }
