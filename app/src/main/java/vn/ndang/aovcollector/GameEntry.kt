@@ -15,7 +15,7 @@ import kotlin.math.roundToInt
  * Garena login page, the player's profile) are told apart in [refine], from text read on the phone.
  */
 object GameScreens {
-    enum class Kind { LIST, LOBBY, HERO_PAGE, POPUP, OTHER, LOGIN, REGISTER, CONTINUE, FORM, PROFILE, UID_DIALOG }
+    enum class Kind { LIST, LOBBY, HERO_PAGE, POPUP, OTHER, LOGIN, REGISTER, CONTINUE, FORM, PROFILE, UID_DIALOG, CHESS_EXPERIENCE, CHESS_TIP }
     /** A line of text on screen, from OCR or from the accessibility tree, with its box as screen fractions. */
     class Word(val text:String,val left:Double,val top:Double,val right:Double,val bottom:Double) {
         val plain=plain(text)
@@ -63,9 +63,30 @@ object GameScreens {
      * the registration form with its "Đ.KÝ SAU" (later) button, the reward screens' "Ấn để tiếp tục", the
      * player's profile and its UID box.
      */
+    /** Two optional new-account screens from the Cờ Liên Quân onboarding flow (2048×921). */
+    const val CHESS_VETERAN_X=.332
+    const val CHESS_VETERAN_Y=.490
+    const val CHESS_GOT_IT_X=.250
+    const val CHESS_GOT_IT_Y=.577
+
     fun refine(r:Reading,words:List<Word>,uid:String?):Reading {
         fun with(kind:Kind,tap:Pair<Double,Double>?=null)=Reading(kind,r.close,r.signature,words,uid,tap)
         val all=words.map { it.plain }
+        // OCR can split a sentence between lines. Require screen-specific words, never just "Kỳ cựu"
+        // or "Đã rõ": those labels can also occur elsewhere in the game.
+        val full=plain(words.joinToString(" ") { it.text })
+        val chessExperience=(full.contains("hoannghenh")||full.contains("autochess"))&&
+            full.contains("kycuu")&&(full.contains("tanthu")||full.contains("autochess"))
+        if(chessExperience) {
+            val name=words.firstOrNull { it.plain.contains("kycuu")&&it.x in .25.. .46&&it.y in .55.. .75 }
+            return with(Kind.CHESS_EXPERIENCE,(name?.x?:CHESS_VETERAN_X) to CHESS_VETERAN_Y)
+        }
+        val chessTip=full.contains("daro")&&full.contains("colienquan")&&
+            (full.contains("dauluyen")||full.contains("nangcaotrinhdo"))
+        if(chessTip) {
+            val confirm=words.firstOrNull { it.plain.contains("daro")&&it.x in .13.. .44&&it.y in .46.. .70 }
+            return with(Kind.CHESS_TIP,(confirm?.x?:CHESS_GOT_IT_X) to (confirm?.y?:CHESS_GOT_IT_Y))
+        }
         if(all.any { it.contains("matkhau") }&&all.any { it.contains("quenmatkhau")||it.contains("taotaikhoanmoi") }) return with(Kind.FORM)
         words.firstOrNull { it.plain.contains("kysau")&&it.x>.55&&it.y<.35 }?.let { return with(Kind.REGISTER,it.x to it.y) }
         words.firstOrNull { it.plain.contains("detieptuc")&&it.y>.72&&it.x in .3..0.7 }?.let { return with(Kind.CONTINUE,it.x to it.y) }
@@ -340,6 +361,8 @@ class GameEntry(private val screen:Screen,private val expectedUid:String?=null,p
     private var backs=0
     private var continues=0
     private var registers=0
+    private var chessVeteranTaps=0
+    private var chessTipTaps=0
     private var lobbySince=-1L
     private var missingSince=-1L
     private var still:IntArray?=null
@@ -408,6 +431,16 @@ class GameEntry(private val screen:Screen,private val expectedUid:String?=null,p
                 GameScreens.Kind.REGISTER -> {
                     if(++registers>3) return@look stop(s,"entry-register","Đã bấm Đ.KÝ SAU 3 lần mà form đăng ký vẫn còn. Xử lý bằng tay rồi bấm Tiếp tục.")
                     tap(s,"Form đăng ký thông tin: bấm Đ.KÝ SAU",reading.tap!!,2500)
+                }
+                GameScreens.Kind.CHESS_EXPERIENCE -> {
+                    if(++chessVeteranTaps>2) return@look stop(s,"entry-chess-experience",
+                        "Màn hỏi kinh nghiệm Cờ Liên Quân vẫn còn sau 2 lần bấm Kỳ cựu. Chọn bằng tay rồi bấm Tiếp tục.")
+                    tap(s,"Cờ Liên Quân lần đầu: chọn Kỳ cựu",reading.tap!!,2000)
+                }
+                GameScreens.Kind.CHESS_TIP -> {
+                    if(++chessTipTaps>2) return@look stop(s,"entry-chess-tip",
+                        "Thông báo Đấu luyện vẫn còn sau 2 lần bấm Đã rõ. Xử lý bằng tay rồi bấm Tiếp tục.")
+                    tap(s,"Cờ Liên Quân lần đầu: bấm Đã rõ",reading.tap!!,2000)
                 }
                 GameScreens.Kind.CONTINUE -> {
                     if(++continues>MAX_CONTINUES) return@look stop(s,"entry-continue","Đã bấm Ấn để tiếp tục $MAX_CONTINUES lần mà vẫn chưa qua. Xử lý bằng tay rồi bấm Tiếp tục.")
