@@ -59,7 +59,9 @@ class MainActivity : Activity() {
     private fun title(file:File):String {
         if(!file.isDirectory) {
             val n=file.nameWithoutExtension
-            if(file.parentFile?.name in GamePhotoImport.GROUPS.map { it.key })
+            if(file.parentFile?.name in GamePhotoImport.GROUPS.map { it.key } ||
+                (file.parentFile?.parentFile?.name in GamePhotoImport.GROUPS.map { it.key } &&
+                file.parentFile?.parentFile?.parentFile?.name==GamePhotoImport.ROOT))
                 return file.nameWithoutExtension.replace(Regex("-[a-f0-9]{14}$"),"").replace('-',' ')
             // A hero's other form: form-2-skill-3-detail, and its skill row form-2-icons.
             val form=Regex("form-(\\d)-").find(n)?.let { "Dạng ${it.groupValues[1]} · " }.orEmpty()
@@ -84,6 +86,8 @@ class MainActivity : Activity() {
         RankScreens.folderTitle(file.name)?.let { return it }
         GamePhotoImport.GROUPS.firstOrNull { it.key==file.name }?.let { return it.title }
         if(file.name==GamePhotoImport.ROOT) return "Ảnh gốc Cờ Liên Quân · Pictures"
+        if(file.parentFile?.name in GamePhotoImport.GROUPS.map { it.key })
+            return "Lượt "+file.name.replace('-',' ')
         ChessWiki.TOPICS.firstOrNull { it.key==file.name }?.let { return it.label }
         when(file.name) {
             "thong-tin" -> return "Thông tin cơ bản"
