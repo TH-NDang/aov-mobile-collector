@@ -43,7 +43,7 @@ class Macro(val raw: String) {
                         for(k in 0 until combos.length()) require(RankScreens.COMBOS.any { it.slug==combos.getString(k) }) { "ranking: bảng không hợp lệ" } } }
                 "skills" -> require(s.getString("prefix").matches(Regex("[a-zA-Z0-9_-]{1,40}"))) { "skills: prefix không hợp lệ" }
                 "chess" -> { require(json.optString("collectionMode")=="chess") { "chess: không đúng chế độ" }
-                    require(json.optJSONArray("chessTopics")?.length() in 1..ChessWiki.TOPICS.size) { "chess: phải chọn ít nhất một mục" }
+                    require((json.optJSONArray("chessTopics")?.length()?:0) in 1..ChessWiki.TOPICS.size) { "chess: phải chọn ít nhất một mục" }
                     ChessWiki.Options((0 until json.getJSONArray("chessTopics").length()).map { json.getJSONArray("chessTopics").getString(it) }.toSet())
                 }
                 else -> error("Bước ${i+1}: type không hỗ trợ")
