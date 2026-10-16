@@ -37,16 +37,73 @@ object ChessWiki {
     data class Options(val selected:Set<String>,val openGame:Boolean=true,val checkAccount:Boolean=false,
                        val traceEntry:Boolean=true,
                        val heroDetails:Boolean=false,val synergyDetails:Boolean=false,
-                       val equipmentDetails:Boolean=false) {
+                       val equipmentDetails:Boolean=false,val nativeGroups:Set<String> =emptySet()) {
         fun topics()=TOPICS.filter { it.key in selected }
-        init { require(selected.isNotEmpty() && selected.all { key -> TOPICS.any { it.key==key } }) }
+        init {
+            require(selected.isNotEmpty() && selected.all { key -> TOPICS.any { it.key==key } })
+            require(nativeGroups.all { group -> GamePhotoImport.GROUPS.any { it.key==group&&group!="chua-phan-loai" } })
+        }
     }
     fun detailType(t:Topic,o:Options)=when(t.key) {
-        "tat-ca-quan-co" -> if(o.heroDetails) "tuong" else null
+        "tat-ca-quan-co" -> if(o.heroDetails||"chieu-quan-co" in o.nativeGroups) "tuong" else null
         "phe","nghe" -> if(o.synergyDetails) t.key else null
         "tat-ca-trang-bi" -> if(o.equipmentDetails) "vat-pham" else null
         else -> null
     }
+    /** The currently selected Bách khoa tab determines each native image's class automatically. */
+    fun nativeGroup(t:Topic,o:Options):String? {
+        val g=when(t.key) {
+            "tat-ca-quan-co" -> "quan-co"
+            "phe" -> "phe"
+            "nghe" -> "nghe"
+            "tat-ca-trang-bi" -> "trang-bi"
+            "thuong" -> "chuc-phuc-thuong"
+            "huyen-thoai-su-thi" -> "chuc-phuc-huyen-thoai-su-thi"
+            "truyen-thuyet" -> "chuc-phuc-truyen-thuyet"
+            else -> null
+        }
+        return g?.takeIf { it in o.nativeGroups }
+    }
+    fun topicsForNative(groups:Set<String>):Set<String> = groups.mapNotNull {
+        when(it) {
+            "quan-co","chieu-quan-co" -> "tat-ca-quan-co"
+            "phe" -> "phe"
+            "nghe" -> "nghe"
+            "trang-bi" -> "tat-ca-trang-bi"
+            "chuc-phuc-thuong" -> "thuong"
+            "chuc-phuc-huyen-thoai-su-thi" -> "huyen-thoai-su-thi"
+            "chuc-phuc-truyen-thuyet" -> "truyen-thuyet"
+            else -> null
+        }
+    }.toSet()
+
+    /** Only the exact Save Photo dialog may be confirmed, never a generic YES/OK in game. */
+    fun nativeConfirm(words:List<GameScreens.Word>):Pair<Double,Double>? {
+        val full=GameScreens.plain(words.joinToString(" ") { it.text })
+        if(!full.contains("savephoto") || !full.contains("sure") || !full.contains("cancel")) return null
+        val sure=words.firstOrNull { it.plain=="sure"&&it.x in .25.. .50&&it.y in .45.. .70 }
+        return sure?.let { it.x to it.y } ?: .393 to .57
+    }
+
+    /** Long-press the actual full-color pictograms, not their text or the category's background. */
+    fun nativeTiles(topic:Topic,bitmap:Bitmap,words:List<GameScreens.Word>):List<Tile> {
+        if(topic.section!="chuc-phuc") return tiles(topic,bitmap,words)
+        val spots=ArrayList<Tile>()
+        for(y in listOf(.40,.68,.91)) for(x in listOf(.275,.615)) {
+            if(score(bitmap,x,y,.027)>28) spots.add(Tile(x,y,fingerprint(bitmap,x,y)))
+        }
+        return spots
+    }
+    fun skillTiles(bitmap:Bitmap):List<Tile> {
+        val spots=ArrayList<Tile>()
+        // Modal's illustrated skill icon sits around x=.40, y=.53 in provided reference.
+        // Scrolling may expose another skill; fingerprint guards against repeats.
+        for(y in listOf(.50,.55,.66)) {
+            if(score(bitmap,.405,y,.025)>28) spots.add(Tile(.405,y,fingerprint(bitmap,.405,y)))
+        }
+        return spots.distinctBy { it.id }.take(2)
+    }
+
     /** Nested path tokens are validated before use by the storage adapter. */
     fun filename(topic:Topic,kind:String,page:Int,item:String?=null):String {
         val base="chess__"+topic.section+"__"+topic.key+"__"
