@@ -41,9 +41,15 @@ class GamePhotoSessionTest {
         val fallback=GamePhotoSession.diff(emptySet(),
             listOf(file("game-1",0),file("game-2",0)),
             listOf(GamePhotoSession.Mark("phe","phe-1",t),
-                   GamePhotoSession.Mark("nghe","nghe-1",t+1000)))
+                   GamePhotoSession.Mark("phe","phe-2",t+1000)))
         assertEquals(2,fallback.matching.size)
-        assertEquals(setOf("phe","nghe"),fallback.matching.map { it.group }.toSet())
+        assertEquals(setOf("phe"),fallback.matching.map { it.group }.toSet())
+        val crossGroup=GamePhotoSession.diff(emptySet(),
+            listOf(file("game-1",0),file("game-2",0)),
+            listOf(GamePhotoSession.Mark("phe","phe-1",t),
+                   GamePhotoSession.Mark("nghe","nghe-1",t+1000)))
+        assertTrue(crossGroup.matching.isEmpty())
+        assertEquals(2,crossGroup.unrelated)
         val ambiguous=GamePhotoSession.diff(emptySet(),listOf(file("one",0),file("two",0),file("three",0)),
             marks.take(1))
         assertTrue(ambiguous.matching.isEmpty())
