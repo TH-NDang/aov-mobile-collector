@@ -66,6 +66,31 @@ class GamePhotoSessionTest {
         assertEquals(setOf("trang-bi","chuc-phuc-thuong"),result.matching.map { it.group }.toSet())
     }
 
+    @Test fun everyNativePhotoIsStoredUnderItsExpectedNestedCategory() {
+        val folders=mapOf(
+            "quan-co" to "quan-co/anh-quan-co",
+            "chieu-quan-co" to "quan-co/chieu-quan-co",
+            "phe" to "tuong-tac/phe",
+            "nghe" to "tuong-tac/nghe",
+            "trang-bi" to "trang-bi",
+            "chuc-phuc-thuong" to "chuc-phuc/thuong",
+            "chuc-phuc-huyen-thoai-su-thi" to "chuc-phuc/huyen-thoai-su-thi",
+            "chuc-phuc-truyen-thuyet" to "chuc-phuc/truyen-thuyet"
+        )
+        folders.forEach { (group,path) ->
+            assertEquals(group, path, GamePhotoImport.groupPath(group))
+            assertNotNull("Missing label for $path",GamePhotoImport.nativeFolderTitle(path))
+            assertTrue(path.split('/').all { it.isNotBlank()&&it!=".." })
+        }
+        assertEquals("Quân cờ",GamePhotoImport.nativeFolderTitle("quan-co"))
+        assertEquals("Tương tác",GamePhotoImport.nativeFolderTitle("tuong-tac"))
+        assertEquals("Chúc Phúc",GamePhotoImport.nativeFolderTitle("chuc-phuc"))
+        try {
+            GamePhotoImport.groupPath("chua-phan-loai")
+            fail("A native Save Photo must never be placed in the unclassified group")
+        } catch(_:IllegalStateException) {}
+    }
+
     @Test fun everyNativeClassMapsToTheCorrectEncyclopediaTab() {
         assertEquals(setOf("tat-ca-quan-co","phe","nghe","tat-ca-trang-bi",
             "thuong","huyen-thoai-su-thi","truyen-thuyet"),
