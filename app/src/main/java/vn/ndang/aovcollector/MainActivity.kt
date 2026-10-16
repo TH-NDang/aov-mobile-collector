@@ -53,10 +53,12 @@ class MainActivity : Activity() {
     }
     private fun dp(n:Int)=Ui.dp(this,n)
     private fun meta(dir:File):JSONObject = try { JSONObject(File(dir,if(File(dir,"hero.json").exists()) "hero.json" else "run.json").readText()) } catch(_:Exception) { JSONObject() }
-    private fun photos(dir:File)=dir.walkTopDown().filter { it.isFile&&it.extension=="png" }.toList()
+    private fun photos(dir:File)=dir.walkTopDown().filter { GamePhotoImport.isImage(it) }.toList()
     private fun title(file:File):String {
         if(!file.isDirectory) {
             val n=file.nameWithoutExtension
+            if(file.parentFile?.name in GamePhotoImport.GROUPS.map { it.key })
+                return file.nameWithoutExtension.replace(Regex("-[a-f0-9]{14}$"),"").replace('-',' ')
             // A hero's other form: form-2-skill-3-detail, and its skill row form-2-icons.
             val form=Regex("form-(\\d)-").find(n)?.let { "Dạng ${it.groupValues[1]} · " }.orEmpty()
             return when {
@@ -78,6 +80,8 @@ class MainActivity : Activity() {
             }
         }
         RankScreens.folderTitle(file.name)?.let { return it }
+        GamePhotoImport.GROUPS.firstOrNull { it.key==file.name }?.let { return it.title }
+        if(file.name==GamePhotoImport.ROOT) return "Ảnh gốc Cờ Liên Quân · Pictures"
         ChessWiki.TOPICS.firstOrNull { it.key==file.name }?.let { return it.label }
         when(file.name) {
             "thong-tin" -> return "Thông tin cơ bản"
@@ -202,7 +206,14 @@ class MainActivity : Activity() {
         headerAction(row,"account",if(Accounts.uid(this)!=null) "Tài khoản test" else "Tài khoản",Ui.accent) { accountDialog() }
         headerAction(row,"theme","Giao diện",Ui.accent) { themeDialog() }
         headerAction(row,"float","Bảng nổi",Ui.accent) { val service=CollectorService.current;if(service==null) message("Bấm Bật Trợ năng, bật AOV Collector rồi quay lại.") else { service.showPanel();Toast.makeText(this,"Mở game, bấm Chọn macro trên bảng nổi để chọn cách chụp.",Toast.LENGTH_LONG).show() } }
-        top.addView(row);root.addView(top)
+        top.addView(row)
+        if(GamePhotoImport.hasSource(this)) top.addView(Ui.text(this,
+            "Ảnh game · Đồng bộ từ "+GamePhotoImport.sourceLabel(this)+" ›",12f,Ui.accent,true).apply {
+            setPadding(dp(6),dp(8),dp(6),dp(5))
+            contentDescription="Đồng bộ ảnh đã lưu trong Pictures vào app"
+            setOnClickListener { gamePhotosDialog() }
+        })
+        root.addView(top)
     }
     private fun headerAction(row:LinearLayout,kind:String,label:String,color:Int,action:()->Unit) {
         val cell=Ui.stack(this).apply { gravity=Gravity.CENTER;setPadding(dp(3),dp(9),dp(3),0) }
@@ -215,7 +226,7 @@ class MainActivity : Activity() {
         row.addView(cell,LinearLayout.LayoutParams(0,-2,1f))
     }
     // A run's record of the way into the game is opened from the run's menu, not listed as a hero folder.
-    private fun items():List<File> = (folder?:captures).listFiles()?.filter { (it.isDirectory&&it.name!=GameEntry.TRACE_DIR) || it.extension=="png" }?.sortedWith(compareBy<File> { !it.isDirectory }.thenByDescending { if(folder==null) meta(it).optLong("updatedAt",it.lastModified()) else 0L }.thenBy { it.name }).orEmpty()
+    private fun items():List<File> = (folder?:captures).listFiles()?.filter { (it.isDirectory&&it.name!=GameEntry.TRACE_DIR) || GamePhotoImport.isImage(it) }?.sortedWith(compareBy<File> { !it.isDirectory }.thenByDescending { if(folder==null) meta(it).optLong("updatedAt",it.lastModified()) else 0L }.thenBy { it.name }).orEmpty()
     /** Local search in this folder, or every nested folder when searching from history root. */
     private fun showHistory() {
         historyScroll?.let { scrollMemory[shownKey]=it.scrollY }
@@ -395,7 +406,7 @@ class MainActivity : Activity() {
         val time=if(file.isDirectory) SimpleDateFormat("dd/MM/yyyy HH:mm",Locale.getDefault()).format(Date(createdAt(file)))+" · " else ""
         val m=meta(file)
         val ran=m.optLong("activeMs",0L).takeIf { it>0 }?.let { " · chạy "+duration(it) }?:""
-        info.addView(Ui.text(this,time+(if(file.isDirectory) "${all.size} ảnh · " else "PNG · ")+Format.size(size)+ran,12f,Ui.muted))
+        info.addView(Ui.text(this,time+(if(file.isDirectory) "${all.size} ảnh · " else file.extension.uppercase()+" · ")+Format.size(size)+ran,12f,Ui.muted))
         // What the folder is and how its run ended, as small coloured labels.
         val chips=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL;setPadding(0,dp(3),0,0) }
         fun chip(text:String,color:Int) { chips.addView(Ui.chip(this,text,color),LinearLayout.LayoutParams(-2,-2).apply { if(chips.childCount>0) leftMargin=dp(6) }) }
@@ -427,7 +438,7 @@ class MainActivity : Activity() {
     @Deprecated("Legacy navigation") override fun onBackPressed() { if(historyRoot==null) showHistory() else if(folder!=null||selecting) goBack() else super.onBackPressed() }
     private fun preview(file:File) {
         historyRoot=null;val root=shell()
-        val images=(file.parentFile?.listFiles()?.filter { it.isFile&&it.extension=="png" }?.sortedBy { it.name }).orEmpty().ifEmpty { listOf(file) }
+        val images=(file.parentFile?.listFiles()?.filter { GamePhotoImport.isImage(it) }?.sortedBy { it.name }).orEmpty().ifEmpty { listOf(file) }
         var pos=images.indexOf(file).coerceAtLeast(0)
         val content=Ui.stack(this).apply { setPadding(dp(16),dp(6),dp(16),dp(12)) }
         val top=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
@@ -586,7 +597,7 @@ class MainActivity : Activity() {
                             // An export from v0.4.5 holds part ZIPs, read in turn as they stream out of it.
                             if(outer&&!entry.isDirectory&&parts.size==1&&parts[0].endsWith(".zip",true))
                                 java.util.zip.ZipInputStream(object:java.io.FilterInputStream(zip) { override fun close() {} }).use { take(it,false) }
-                            else if(!entry.isDirectory&&parts.size in 2..3&&(parts.last().endsWith(".png")||parts.last().endsWith(".json")||parts.last().endsWith(".jpg")||parts.last().endsWith(".jsonl"))) {
+                            else if(!entry.isDirectory&&parts.size in 2..3&&(listOf("png","jpg","jpeg","webp","json","jsonl").any { parts.last().endsWith("."+it,true) })) {
                                 require(parts[0].matches(Regex("[a-zA-Z0-9_-]{1,200}"))) { "Tên thư mục không hợp lệ" }
                                 val dir=File(captures,prefix+parts[0]).apply { mkdirs() };made.add(dir)
                                 val target=File(dir,parts.drop(1).joinToString("/"));require(target.canonicalPath.startsWith(dir.canonicalPath+"/"));target.parentFile?.mkdirs()
@@ -594,7 +605,7 @@ class MainActivity : Activity() {
                                     while(n!=-1) { total+=n;fileSize+=n;require(total<5L*1024*1024*1024&&fileSize<64L*1024*1024&&filesDir.usableSpace>30L*1024*1024) { "File quá lớn hoặc không đủ dung lượng" };out.write(buffer,0,n)
                                         if(FileJob.cancelled) throw ZipFiles.Cancelled()
                                         FileJob.report(read,size,"$imageCount ảnh · "+(if(size>0) Format.sizes(read,size) else Format.size(read)),parts.joinToString("/"));n=zip.read(buffer) }
-                                };if(target.extension=="png") imageCount++
+                                };if(GamePhotoImport.isImage(target)) imageCount++
                             }
                             zip.closeEntry();entry=zip.nextEntry
                         }
