@@ -703,9 +703,10 @@ class CollectorService : AccessibilityService() {
                 if(filesDir.usableSpace<30L*1024*1024) { note("Không đủ dung lượng trống");return then(null) }
                 grab(anyApp=true) { b ->
                     if(b==null) return@grab then(null)
+                    val nodes=if(words) screenWords() else emptyList()
                     try { io.execute {
-                        val data=try {
-                            Triple(if(words) screenWords()+GameText.words(b) else emptyList(),
+                        val data:Triple<List<GameScreens.Word>,IntArray,Boolean>?=try {
+                            Triple(if(words) nodes+GameText.words(b) else nodes,
                                 ChessWiki.signature(b),ChessWiki.modal(b))
                         } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không đọc được màn hình Bách khoa",e);null }
                         handler.post {
@@ -715,7 +716,7 @@ class CollectorService : AccessibilityService() {
                                 override val words=data.first
                                 override val signature=data.second
                                 override val modal=data.third
-                                override fun tiles(topic:ChessWiki.Topic)=ChessWiki.tiles(topic,b,words)
+                                override fun tiles(topic:ChessWiki.Topic)=ChessWiki.tiles(topic,b,this.words)
                                 override fun keep(name:String,then:(Boolean)->Unit) {
                                     store(b,runId,stamp+"-"+name,then)
                                 }
