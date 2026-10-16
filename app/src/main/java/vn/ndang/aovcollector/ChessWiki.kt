@@ -246,6 +246,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         val signature:IntArray
         val modal:Boolean
         fun tiles(topic:ChessWiki.Topic):List<ChessWiki.Tile>
+        fun nativeTiles(topic:ChessWiki.Topic):List<ChessWiki.Tile> = tiles(topic)
+        fun skillIcons():List<ChessWiki.Tile> = emptyList()
         fun keep(name:String,then:(Boolean)->Unit)
         fun discard()
     }
@@ -254,6 +256,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         fun look(words:Boolean,then:(Look?)->Unit)
         fun tap(x:Double,y:Double,then:(Boolean)->Unit)
         fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit)
+        /** Long press, identify Save Photo → Sure, and record its current group. */
+        fun nativeSave(group:String,item:String,x:Double,y:Double,then:(Boolean)->Unit) { then(false) }
         fun later(ms:Long,then:()->Unit)
         fun seen(id:String):Boolean
         fun finished(id:String)
@@ -384,31 +388,53 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         // The first screenshot of each page is saved *before* clicking any item.
         val image=ChessWiki.filename(t,"trang",page)
         val signature=l.signature.copyOf()
-        val candidates=if(ChessWiki.detailType(t,options)!=null) l.tiles(t) else emptyList()
+        val native=ChessWiki.nativeGroup(t,options)!=null
+        val candidates=if(native) l.nativeTiles(t) else if(ChessWiki.detailType(t,options)!=null) l.tiles(t) else emptyList()
         val path="chess-page:"+t.key+":"+page
         val next={ collect(at,page,signature,candidates,0) }
         if(screen.seen(path)) { l.discard(); next() }
         else save(l,image) { screen.finished(path);next() }
     }
     private fun collect(at:Int,page:Int,signature:IntArray,tiles:List<ChessWiki.Tile>,from:Int) {
-        val t=topics[at];val kind=ChessWiki.detailType(t,options)
-        if(kind==null || from>=tiles.size || items>=MAX_TILES) return nextPage(at,page,signature)
-        val item=tiles[from];val id="item:"+t.key+":"+item.id
-        if(screen.seen(id) || !tried.add(id)) return collect(at,page,signature,tiles,from+1)
-        screen.say(t.label+": chi tiết "+(from+1)+"/"+tiles.size)
-        tap(item.x,item.y,1250) {
-            look(true) { l ->
-                if(!l.modal) {
-                    l.discard();screen.note("Không mở được chi tiết ở "+item.x+","+item.y+
-                        ". Giữ ảnh trang danh sách, bỏ qua thẻ này.")
-                    return@look collect(at,page,signature,tiles,from+1)
+        val t=topics[at]
+        val kind=ChessWiki.detailType(t,options)
+        val originalGroup=ChessWiki.nativeGroup(t,options)
+        if((kind==null&&originalGroup==null)||from>=tiles.size||items>=MAX_TILES)
+            return nextPage(at,page,signature)
+        val item=tiles[from]
+        val identity="item:"+t.key+":"+item.id
+        if(!tried.add(identity)) return collect(at,page,signature,tiles,from+1)
+
+        fun detail() {
+            if(kind==null||screen.seen(identity)) return collect(at,page,signature,tiles,from+1)
+            screen.say(t.label+": chi tiết "+(from+1)+"/"+tiles.size)
+            tap(item.x,item.y,1250) {
+                look(true) { l ->
+                    if(!l.modal) {
+                        l.discard()
+                        screen.note("Không mở được chi tiết tại "+item.x+","+item.y+". Giữ ảnh danh sách.")
+                        return@look collect(at,page,signature,tiles,from+1)
+                    }
+                    val heading=l.words.firstOrNull {
+                        it.y in .215.. .335 && it.x in .35.. .79&&
+                        it.plain.length in 2..35&&!it.plain.contains("colienquan")
+                    }?.text
+                    val slug=ChessWiki.safeName(heading?:item.label?:"muc")
+                    val folder=slug+"-"+item.id.take(8)
+                    modal(at,page,signature,tiles,from,item,kind,folder,1,l,null,0)
                 }
-                val heading=l.words.firstOrNull { it.y in .215.. .335 && it.x in .35.. .79 &&
-                    it.plain.length in 2..35 && !it.plain.contains("colienquan") }?.text
-                val slug=ChessWiki.safeName(heading?:item.label?:"muc")
-                val folder=slug+"-"+item.id.take(8)
-                modal(at,page,signature,tiles,from,item,kind,folder,1,l,null,0)
             }
+        }
+
+        val nativeKey=originalGroup?.let { "native:"+it+":"+item.id }
+        if(originalGroup==null || nativeKey==null || screen.seen(nativeKey)) return detail()
+        screen.say(t.label+": lưu ảnh gốc "+(from+1)+"/"+tiles.size)
+        screen.nativeSave(originalGroup,item.label?:item.id,item.x,item.y) { saved ->
+            if(saved) {
+                screen.finished(nativeKey)
+                screen.note("Ảnh gốc "+originalGroup+": "+(item.label?:item.id))
+            } else screen.note("Không hiện Save Photo tại "+item.x+","+item.y+"; bỏ qua ảnh gốc này")
+            detail()
         }
     }
     private fun modal(at:Int,page:Int,signature:IntArray,tiles:List<ChessWiki.Tile>,from:Int,
@@ -425,13 +451,30 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         }
         val shotName=ChessWiki.filename(t,kind,number,folder)
         val current=l.signature.copyOf()
+        val skillImages=if("chieu-quan-co" in options.nativeGroups) l.skillIcons() else emptyList()
         save(l,shotName) {
-            swipe(.75,.82,.75,.42) {
-                look(false) { next ->
-                    if(!next.modal) { next.discard();fail("Chi tiết "+folder+" đã đóng ngoài dự kiến, hãy mở đúng màn hình rồi tiếp tục.") }
-                    else modal(at,page,signature,tiles,from,tile,kind,folder,number+1,next,current,0)
+            fun advance() {
+                swipe(.75,.82,.75,.42) {
+                    look(false) { next ->
+                        if(!next.modal) {
+                            next.discard()
+                            fail("Chi tiết "+folder+" đã đóng ngoài dự kiến, hãy mở đúng màn hình rồi tiếp tục.")
+                        } else modal(at,page,signature,tiles,from,tile,kind,folder,number+1,next,current,0)
+                    }
                 }
             }
+            fun nativeSkill(at:Int,images:List<ChessWiki.Tile>,next:()->Unit) {
+                if(at>=images.size) return next()
+                val candidate=images[at]
+                val key="native:chieu-quan-co:"+folder+":"+candidate.id
+                if(screen.seen(key)||!tried.add(key)) return nativeSkill(at+1,images,next)
+                screen.nativeSave("chieu-quan-co",folder+"-skill-"+candidate.id,
+                    candidate.x,candidate.y) { ok ->
+                    if(ok) screen.finished(key)
+                    nativeSkill(at+1,images,next)
+                }
+            }
+            nativeSkill(0,skillImages) { advance() }
         }
     }
     private fun close(at:Int,page:Int,signature:IntArray,tiles:List<ChessWiki.Tile>,from:Int,
