@@ -57,7 +57,7 @@ class Macro(val raw: String) {
 /** Coordinates calibrated from the user's 2400x1080 VN hero menu. */
 object BuiltInMacros {
     /** Bump when the generated steps change; selected built-in macros are then regenerated with the same settings. */
-    const val VERSION=5
+    const val VERSION=6
     /** "Tất cả": more cards than the game has; the run stops at the end of the list. */
     const val ALL=300
     /**
@@ -177,6 +177,7 @@ object BuiltInMacros {
             .put("chessTopics",org.json.JSONArray(options.topics().map { it.key }))
             .put("chessHeroDetails",options.heroDetails)
             .put("chessSynergyDetails",options.synergyDetails).put("chessEquipmentDetails",options.equipmentDetails)
+            .put("chessNativeGroups",org.json.JSONArray(options.nativeGroups.sorted()))
             .put("openGame",options.openGame).put("checkAccount",options.openGame&&options.checkAccount)
             .put("traceEntry",options.traceEntry).put("builtinVersion",VERSION)
             .put("steps",steps).toString(2)
@@ -186,7 +187,8 @@ object BuiltInMacros {
         return ChessWiki.Options((0 until a.length()).map { a.getString(it) }.toSet(),
             json.optBoolean("openGame"),json.optBoolean("checkAccount"),json.optBoolean("traceEntry",true),
             json.optBoolean("chessHeroDetails"),
-            json.optBoolean("chessSynergyDetails"),json.optBoolean("chessEquipmentDetails"))
+            json.optBoolean("chessSynergyDetails"),json.optBoolean("chessEquipmentDetails"),
+            (json.optJSONArray("chessNativeGroups")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet()))
     }
 
     /** The tabs a Chiến khu macro or its step asks for, with their top players; the default when it names none. */
