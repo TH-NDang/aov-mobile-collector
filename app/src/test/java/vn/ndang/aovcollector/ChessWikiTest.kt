@@ -55,7 +55,8 @@ class ChessWikiTest {
             }
             override fun tap(x:Double,y:Double,then:(Boolean)->Unit)=then(true)
             override fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit)=then(true)
-            override fun nativeSave(group:String,item:String,x:Double,y:Double,then:(Boolean)->Unit) {
+            override fun nativeSave(group:String,item:String,x:Double,y:Double,
+                                            preserveDetail:Boolean,then:(Boolean)->Unit) {
                 native.add(group);then(true)
             }
             override fun later(ms:Long,then:()->Unit)=then()
