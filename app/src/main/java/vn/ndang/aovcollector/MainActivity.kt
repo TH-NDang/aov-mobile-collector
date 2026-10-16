@@ -375,7 +375,7 @@ class MainActivity : Activity() {
         }
         startSearch(query)
     }
-    private fun addRow(body:LinearLayout,file:File) {
+    private fun addRow(body:LinearLayout,file:File,searchRoot:File?=null) {
         val card=Ui.card(this).apply { setPadding(dp(12),dp(12),dp(10),dp(12));if(selected.contains(file)) background=Ui.shape(Ui.pale,dp(20),Ui.accent) }
         val row=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
         val all=if(file.isDirectory) photos(file) else listOf(file)
@@ -386,6 +386,11 @@ class MainActivity : Activity() {
         row.addView(thumb,LinearLayout.LayoutParams(dp(74),dp(60)))
         val info=Ui.stack(this).apply { setPadding(dp(12),0,dp(6),0) }
         info.addView(Ui.text(this,title(file),16f,Ui.ink,true).apply { maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END })
+        if(searchRoot!=null&&file.parentFile!=searchRoot) {
+            val relative=try { file.parentFile.relativeTo(searchRoot).invariantSeparatorsPath } catch(_:Exception) { "" }
+            if(relative.isNotBlank()) info.addView(Ui.text(this,"Trong: "+relative.split('/').joinToString(" › "),11f,Ui.muted)
+                .apply { maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.MIDDLE })
+        }
         val size=all.sumOf { it.length() }
         val time=if(file.isDirectory) SimpleDateFormat("dd/MM/yyyy HH:mm",Locale.getDefault()).format(Date(createdAt(file)))+" · " else ""
         val m=meta(file)
@@ -400,7 +405,7 @@ class MainActivity : Activity() {
         if(chips.childCount>0) info.addView(chips);row.addView(info,LinearLayout.LayoutParams(0,-2,1f))
         if(!selecting) row.addView(Ui.text(this,"⋮",26f,Ui.muted).apply { gravity=Gravity.CENTER;setOnClickListener { itemMenu(file) };contentDescription="Tùy chọn ${title(file)}" },LinearLayout.LayoutParams(dp(36),dp(48)))
         card.addView(row);body.addView(card)
-        card.setOnClickListener { if(selecting) { if(!selected.add(file)) selected.remove(file);showHistory() } else if(file.isDirectory) { folder=file;selected.clear();showHistory() } else preview(file) }
+        card.setOnClickListener { if(selecting) { if(!selected.add(file)) selected.remove(file);showHistory() } else if(file.isDirectory) { historyTrail.add(folder);folder=file;selected.clear();showHistory() } else preview(file) }
         card.setOnLongClickListener { selecting=true;selected.add(file);showHistory();true }
     }
     /** The task a run folder holds, for its label. */
@@ -413,7 +418,12 @@ class MainActivity : Activity() {
         AlertDialog.Builder(this).setTitle("Giao diện").setSingleChoiceItems(options.map { it.label }.toTypedArray(),options.indexOf(current)) { dialog,i ->
             dialog.dismiss(); if(options[i]!=current) { Ui.setTheme(this,options[i]); recreate() } }.setNegativeButton("Đóng",null).show()
     }
-    private fun goBack() { if(selecting) { selecting=false;selected.clear() } else folder=folder?.parentFile?.takeUnless { it==captures };showHistory() }
+    private fun goBack() {
+        if(selecting) { selecting=false;selected.clear() }
+        else folder=if(historyTrail.isNotEmpty()) historyTrail.removeAt(historyTrail.lastIndex)
+                    else folder?.parentFile?.takeUnless { it==captures }
+        showHistory()
+    }
     @Deprecated("Legacy navigation") override fun onBackPressed() { if(historyRoot==null) showHistory() else if(folder!=null||selecting) goBack() else super.onBackPressed() }
     private fun preview(file:File) {
         historyRoot=null;val root=shell()
