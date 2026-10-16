@@ -760,7 +760,7 @@ class MainActivity : Activity() {
                             // An export from v0.4.5 holds part ZIPs, read in turn as they stream out of it.
                             if(outer&&!entry.isDirectory&&parts.size==1&&parts[0].endsWith(".zip",true))
                                 java.util.zip.ZipInputStream(object:java.io.FilterInputStream(zip) { override fun close() {} }).use { take(it,false) }
-                            else if(!entry.isDirectory&&parts.size in 2..3&&(listOf("png","jpg","jpeg","webp","json","jsonl").any { parts.last().endsWith("."+it,true) })) {
+                            else if(!entry.isDirectory&&parts.size in 2..8&&(listOf("png","jpg","jpeg","webp","json","jsonl").any { parts.last().endsWith("."+it,true) })) {
                                 require(parts[0].matches(Regex("[a-zA-Z0-9_-]{1,200}"))) { "Tên thư mục không hợp lệ" }
                                 val dir=File(captures,prefix+parts[0]).apply { mkdirs() };made.add(dir)
                                 val target=File(dir,parts.drop(1).joinToString("/"));require(target.canonicalPath.startsWith(dir.canonicalPath+"/"));target.parentFile?.mkdirs()
