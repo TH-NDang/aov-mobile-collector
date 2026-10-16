@@ -27,7 +27,7 @@ object HistorySearch {
                 // Match a folder itself (e.g. Violet), not every image only because the parent matched.
                 if(GameScreens.plain(file.name+" "+title(file)).contains(key)) found.add(file)
                 file.listFiles()?.sortedBy { it.name }?.asReversed()?.forEach { queue.addLast(it) }
-            } else if(file.isFile && file.extension.equals("png",true)) {
+            } else if(GamePhotoImport.isImage(file)) {
                 // Both stored file names and human-readable labels ("Chiêu 1", "Trang 2") work.
                 if(GameScreens.plain(file.nameWithoutExtension+" "+title(file)).contains(key)) found.add(file)
             }
