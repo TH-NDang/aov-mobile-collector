@@ -1331,9 +1331,8 @@ class CollectorService : AccessibilityService() {
         val fields=all.filter { it.isEditable }
         val password=fields.firstOrNull { it.isPassword }?:return then(false)
         val user=fields.firstOrNull { !it.isPassword }?:return then(false)
-        // A WebView can expose only a text leaf ("Đăng Nhập Ngay") with no clickable ancestor.
-        // Looking for the label alone is sufficient because the complete Garena form was verified.
-        if(all.none { plain(it).contains("dangnhapngay") }) return then(false)
+        // WebView may not expose the visible submit button at all. The two editable fields
+        // and the Garena-specific recovery/new-account links must be present first.
         fun type(n:android.view.accessibility.AccessibilityNodeInfo,text:String):Boolean {
             val args=android.os.Bundle().apply {
                 putCharSequence(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,text)
@@ -1355,9 +1354,9 @@ class CollectorService : AccessibilityService() {
                 live.any { plain(it).let { p -> p.contains("quenmatkhau")||p.contains("taotaikhoanmoi") } }
             // The page may have submitted/navigated during the delay.
             if(!hasForm) return@postDelayed then(true)
-            val button=live.firstOrNull { plain(it).contains("dangnhapngay") }?:return@postDelayed then(false)
+            val button=live.firstOrNull { plain(it).contains("dangnhapngay") }
             val rect=android.graphics.Rect()
-            button.getBoundsInScreen(rect)
+            button?.getBoundsInScreen(rect)
             val bounds=screen()
             val bx=rect.centerX().toDouble()/bounds.width()
             val by=rect.centerY().toDouble()/bounds.height()
