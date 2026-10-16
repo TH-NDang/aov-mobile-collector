@@ -380,7 +380,7 @@ class CollectorService : AccessibilityService() {
         val step=if(m!=null && prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
         taskLabel?.text=m?.let { MacroStore.title(it) }?:"Chọn tác vụ"
         taskDetail?.text=m?.let { MacroStore.description(it) }?:"Thông tin tướng, thống kê tướng hoặc Chiến khu"
-        choose?.text=m?.let { MacroStore.title(it) }?:"Chọn macro"
+        choose?.text=if(macroPicker!=null) "Đóng danh sách ▲" else m?.let { MacroStore.title(it) }?:"Chọn macro"
         choose?.tooltipText=m?.let { MacroStore.title(it) }?:"Chọn macro"
         choose?.isEnabled=!isWorking;choose?.alpha=if(isWorking) .45f else 1f
         progress?.progress=if(m!=null) step*100/maxOf(1,m.steps.length()) else 0
@@ -448,9 +448,10 @@ class CollectorService : AccessibilityService() {
         body.addView(Ui.button(c,"Đóng danh sách") { dismissMacroPicker() },LinearLayout.LayoutParams(-1,dp(38)))
         filter("")
         // Expand inside the existing accessibility window; do not create a popup token.
-        // Hide the compact selector as well while the picker is open: its selected label
-        // can equal a menu entry and would otherwise intercept accessibility clicks.
-        for(i in 1 until host.childCount) host.getChildAt(i).visibility=View.GONE
+        // Keep the compact toggle available, but give it a DIFFERENT caption than any row
+        // so the selected macro's name cannot intercept a tap on its list entry.
+        for(i in 2 until host.childCount) host.getChildAt(i).visibility=View.GONE
+        choose?.text="Đóng danh sách ▲"
         macroPicker=body
         val height=minOf(dp(250),wm.currentWindowMetrics.bounds.height()-dp(150)).coerceAtLeast(dp(120))
         host.addView(body,2,LinearLayout.LayoutParams(-1,height))
@@ -470,6 +471,7 @@ class CollectorService : AccessibilityService() {
         (getSystemService(INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager).hideSoftInputFromWindow(host.windowToken,0)
         host.removeView(picker)
         for(i in 0 until host.childCount) host.getChildAt(i).visibility=View.VISIBLE
+        choose?.text=selected()?.let { MacroStore.title(it) }?:"Chọn macro"
         panelParams?.let { params ->
             params.flags=params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
             params.softInputMode=WindowManager.LayoutParams.SOFT_INPUT_STATE_UNCHANGED
