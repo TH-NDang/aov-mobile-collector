@@ -93,11 +93,19 @@ object MacroStore {
         File(folder,"${m.hash}.json").writeText(raw)
     }
     fun saved(c:Context):List<File> = File(c.filesDir,"macros").listFiles()?.filter { it.extension=="json" }?.sortedByDescending { it.lastModified() }.orEmpty()
-    fun title(m:Macro):String = when(m.json.optString("collectionMode")) { "single","all","pick" -> "Lấy thông tin tướng"; "ranking" -> "Thống kê tướng"; "board" -> "Chiến khu"; else -> "Macro đã nhập" }
+    fun title(m:Macro):String = when(m.json.optString("collectionMode")) {
+        "single","all","pick" -> "Lấy thông tin tướng"
+        "ranking" -> "Thống kê tướng"
+        "board" -> "Chiến khu"
+        "chess" -> "Cờ Liên Quân · Bách khoa"
+        else -> m.name // Imported macro: show its real name, not the generic "Macro đã nhập".
+    }
     fun description(m:Macro):String = when(m.json.optString("collectionMode")) {
         "board" -> "BXH người chơi · "+(if(m.json.optInt("heroCount",1)>=BuiltInMacros.ALL) "tất cả tướng" else "${m.json.optInt("heroCount",1)} tướng")+
             " · "+BuiltInMacros.boardWants(m.json).joinToString(", ") { w -> w.tab.label+when { w.tab==BoardScreens.Tab.TOP -> ""; w.top>=BoardScreens.ALL -> " (hết)"; else -> " top ${w.top}" } }+(if(m.json.optBoolean("openGame")) " · tự vào game" else "")
         "ranking" -> "Bảng xếp hạng tướng · ${BuiltInMacros.rankCombos(m.json).size}/${RankScreens.COMBOS.size} bảng"+(if(m.json.optBoolean("openGame")) " · tự vào game" else "")
+        "chess" -> "${m.json.optJSONArray("chessTopics")?.length()?:0} tab đã chọn · luôn chụp đến cuối"+
+            (if(m.json.optBoolean("openGame")) " · tự vào game" else "")
         "single","all","pick" -> base(m)+(if(m.json.optBoolean("fast")) " · nhanh" else "")+(if(m.json.optBoolean("detailOnly")) " · chỉ Chi tiết" else "")+(if(m.json.optBoolean("directSkills")) " · chuyển thẳng chiêu" else "")+(if(m.json.optBoolean("openGame")) " · tự vào game" else "")
         else -> m.name
     }
@@ -107,7 +115,10 @@ object MacroStore {
         "all" -> if(m.json.optInt("heroCount",1)>=BuiltInMacros.ALL) "Tất cả tướng · dừng ở cuối danh sách" else "${m.json.optInt("heroCount",1)} ô tướng · cuộn có đo, dừng ở cuối danh sách"
         else -> m.name
     }
-    fun instruction(m:Macro):String = if(m.json.optString("collectionMode")=="board") (if(m.json.optBoolean("openGame")) "Bấm Chạy: app tự mở Liên Quân, vào sảnh rồi Đấu hạng → Chiến khu." else "Mở sảnh game (hoặc Chiến khu) rồi bấm Chạy.")
+    fun instruction(m:Macro):String = if(m.json.optString("collectionMode")=="chess")
+        (if(m.json.optBoolean("openGame")) "Bấm Chạy: app tự vào sảnh rồi Chế độ giải trí → Cờ Liên Quân → Trang chủ → Bách khoa."
+         else "Mở sảnh Cờ Liên Quân hoặc Bách khoa rồi bấm Chạy.")
+        else if(m.json.optString("collectionMode")=="board") (if(m.json.optBoolean("openGame")) "Bấm Chạy: app tự mở Liên Quân, vào sảnh rồi Đấu hạng → Chiến khu." else "Mở sảnh game (hoặc Chiến khu) rồi bấm Chạy.")
         else if(m.json.optString("collectionMode")=="ranking") (if(m.json.optBoolean("openGame")) "Bấm Chạy: app tự mở Liên Quân, vào sảnh rồi tới Bảng Phân Bậc Tướng." else "Mở sảnh game hoặc Bảng Phân Bậc Tướng rồi bấm Chạy.")
         else if(m.json.optBoolean("openGame")) "Bấm Chạy: app tự mở Liên Quân, đóng popup sự kiện và vào danh sách Tất cả tướng."
         else if(m.json.optString("collectionMode")=="all") "Mở danh sách Tất cả tướng; app tự đưa về đầu danh sách."
