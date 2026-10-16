@@ -63,9 +63,38 @@ class ChessWikiTest {
         assertEquals(listOf("chess__thong-tin__quy-trinh__trang__001"),kept)
         assertTrue("topic:quy-trinh" in finished)
     }
+    @Test fun modeEntryUsesTheRealButtonEvenNextToQuest() {
+        fun w(label:String,x:Double,y:Double)=
+            GameScreens.Word(label,x-.035,y-.02,x+.035,y+.02)
+        val p=ChessWiki.modeEntryPoint(listOf(
+            w("N.vụ",.515,.941),w("Chọn chế độ",.634,.940),w("Đấu thường",.706,.941)))
+        assertNotNull(p)
+        assertEquals(.634,p!!.first,.001)
+        assertEquals(.895,p.second,.001)
+        assertTrue(p.first>.57)
+    }
+
+    @Test fun modeEntryFallbackDoesNotReuseQuestCoordinatesWhenOcrMissesModeLabel() {
+        fun w(label:String,x:Double,y:Double)=
+            GameScreens.Word(label,x-.025,y-.025,x+.025,y+.025)
+        val fromOtherLobbyWords=ChessWiki.modeEntryPoint(listOf(
+            w("N.vụ",.515,.943),w("Túi đồ",.16,.943)))
+        assertNotNull(fromOtherLobbyWords)
+        assertEquals(.635,fromOtherLobbyWords!!.first,.001)
+        assertEquals(.895,fromOtherLobbyWords.second,.001)
+    }
+
+    @Test fun modeEntryDoesNotTapOnUnknownScreens() {
+        val unrelated=listOf(GameScreens.Word("N.vụ",.47,.20,.53,.25),
+                             GameScreens.Word("Chọn",.08,.02,.14,.08))
+        assertNull(ChessWiki.modeEntryPoint(unrelated))
+    }
+
     @Test fun modeNavigationHandlesSplitVietnameseOcr() {
         fun word(text:String,x:Double,y:Double)=GameScreens.Word(text,x-.04,y-.02,x+.04,y+.02)
-        val lobby=listOf(word("Túi đồ",.18,.9),word("Chọn chế độ",.52,.9))
+        // The actual screenshot places "Chọn chế độ" to the right of N.vụ, not on its icon.
+        val lobby=listOf(word("Túi đồ",.16,.942),word("N.vụ",.515,.94),
+                         word("Chọn chế độ",.635,.943))
         val choose=listOf(word("Chế độ giải",.14,.34),word("trí",.14,.39),
                           word("Cờ Liên Quân",.52,.83),word("Bắt đầu",.85,.68))
         val chessLobby=listOf(word("Trang chủ",.105,.30),word("Cờ Liên Quân",.15,.05))
@@ -102,7 +131,9 @@ class ChessWikiTest {
         ChessWikiReader(screen,ChessWiki.Options(setOf("quy-trinh"),openGame=false),{ outcome=it }).start()
         assertTrue(outcome is ChessWikiReader.Outcome.Done)
         assertEquals(4,stage)
-        assertEquals(.515,taps[0].first,.001)
+        assertEquals(ChessWiki.MODE_X,taps[0].first,.001)
+        assertEquals(ChessWiki.MODE_Y,taps[0].second,.001)
+        assertTrue("Must never tap N.vụ",taps[0].first>.57)
         assertEquals(.507,taps[1].first,.001)
         assertEquals(.85,taps[2].first,.05)
         assertTrue("topic:quy-trinh" in completed)
