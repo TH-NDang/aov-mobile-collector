@@ -29,6 +29,7 @@ class MainActivity : Activity() {
     private var selected=linkedSetOf<File>()
     private var selecting=false
     private var pendingExport=listOf<File>()
+    private var pendingCopy=listOf<File>()
     private var historyRoot:LinearLayout?=null
     // Rebuilding the list must not throw the reader back to the top.
     private val scrollMemory=HashMap<String,Int>()
@@ -165,12 +166,13 @@ class MainActivity : Activity() {
         folder=savedInstanceState?.getString("folder")?.let { File(it) }?.takeIf { it.isDirectory&&it.canonicalPath.startsWith(captures.canonicalPath+"/") }
         savedInstanceState?.getString("history-search")?.let { historyQueries[(folder?:captures).path]=it }
         pendingExport=savedInstanceState?.getStringArrayList("export")?.map { File(it) }.orEmpty()
+        pendingCopy=savedInstanceState?.getStringArrayList("copy")?.map { File(it) }.orEmpty()
         window.statusBarColor=Ui.canvas;window.navigationBarColor=Ui.canvas
         window.decorView.systemUiVisibility=if(Ui.colors===Ui.DARK) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         showHistory()
         if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob()
     }
-    override fun onSaveInstanceState(out:Bundle) { super.onSaveInstanceState(out);out.putString("folder",folder?.path);out.putString("history-search",historyQueries[(folder?:captures).path].orEmpty());out.putStringArrayList("export",ArrayList(pendingExport.map { it.path })) }
+    override fun onSaveInstanceState(out:Bundle) { super.onSaveInstanceState(out);out.putString("folder",folder?.path);out.putString("history-search",historyQueries[(folder?:captures).path].orEmpty());out.putStringArrayList("export",ArrayList(pendingExport.map { it.path }));out.putStringArrayList("copy",ArrayList(pendingCopy.map { it.path })) }
     override fun onResume() { super.onResume();FileJob.screen=jobDone;if(historyRoot!=null) showHistory();crashNotice() }
     override fun onPause() { if(FileJob.screen===jobDone) FileJob.screen=null;super.onPause() }
     override fun onDestroy() { historySearchToken++;historySearchTask?.let { historySearchHandler.removeCallbacks(it) };historySearchExecutor.shutdownNow();progress?.close();super.onDestroy() }
@@ -377,11 +379,14 @@ class MainActivity : Activity() {
         if(selecting) {
             val actions=LinearLayout(this).apply { setPadding(dp(20),dp(8),dp(20),dp(12)) }
             actions.addView(Ui.button(this,"Lưu ZIP",true) { requestExport(selected.toList()) }
-                .apply { isEnabled=selected.isNotEmpty();alpha=if(isEnabled) 1f else .45f },
+                .apply { isEnabled=selected.isNotEmpty();alpha=if(isEnabled) 1f else .45f;textSize=12f },
                 LinearLayout.LayoutParams(0,dp(48),1f))
+            actions.addView(Ui.button(this,"Sao chép") { requestCopy(selected.toList()) }
+                .apply { isEnabled=selected.isNotEmpty();alpha=if(isEnabled) 1f else .45f;textSize=12f },
+                LinearLayout.LayoutParams(0,dp(48),1f).apply { leftMargin=dp(7) })
             actions.addView(Ui.button(this,"Xóa",dangerous=true) { delete(selected.toList()) }
-                .apply { isEnabled=selected.isNotEmpty();alpha=if(isEnabled) 1f else .45f },
-                LinearLayout.LayoutParams(0,dp(48),1f).apply { leftMargin=dp(10) })
+                .apply { isEnabled=selected.isNotEmpty();alpha=if(isEnabled) 1f else .45f;textSize=12f },
+                LinearLayout.LayoutParams(0,dp(48),1f).apply { leftMargin=dp(7) })
             root.addView(actions)
         }
         startSearch(query)
@@ -457,8 +462,12 @@ class MainActivity : Activity() {
         val strip=HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled=false };val cells=LinearLayout(this);strip.addView(cells)
         content.addView(strip,LinearLayout.LayoutParams(-1,dp(66)).apply { topMargin=dp(10) })
         val actions=LinearLayout(this)
-        actions.addView(Ui.button(this,"Lưu ZIP",true) { requestExport(listOf(images[pos])) },LinearLayout.LayoutParams(0,dp(46),1f))
-        actions.addView(Ui.button(this,"Xóa ảnh",dangerous=true) { delete(listOf(images[pos])) },LinearLayout.LayoutParams(0,dp(46),1f).apply { leftMargin=dp(10) })
+        actions.addView(Ui.button(this,"Lưu ZIP",true) { requestExport(listOf(images[pos])) }.apply { textSize=12f },
+            LinearLayout.LayoutParams(0,dp(46),1f))
+        actions.addView(Ui.button(this,"Sao chép") { requestCopy(listOf(images[pos])) }.apply { textSize=12f },
+            LinearLayout.LayoutParams(0,dp(46),1f).apply { leftMargin=dp(7) })
+        actions.addView(Ui.button(this,"Xóa ảnh",dangerous=true) { delete(listOf(images[pos])) }.apply { textSize=12f },
+            LinearLayout.LayoutParams(0,dp(46),1f).apply { leftMargin=dp(7) })
         content.addView(actions,LinearLayout.LayoutParams(-1,-2).apply { topMargin=dp(4) });root.addView(content,LinearLayout.LayoutParams(-1,-1))
         val thumbsViews=images.mapIndexed { i,f -> ImageView(this).apply { scaleType=ImageView.ScaleType.CENTER_CROP;clipToOutline=true;setPadding(dp(2),dp(2),dp(2),dp(2));contentDescription=title(f)
             cells.addView(this,LinearLayout.LayoutParams(dp(112),-1).apply { if(i>0) leftMargin=dp(6) }) } }
@@ -489,9 +498,9 @@ class MainActivity : Activity() {
     private fun itemMenu(file:File) {
         val events=File(file,"events.txt")
         val steps=File(file,"${GameEntry.TRACE_DIR}/steps.jsonl")
-        val labels=if(file.isDirectory) listOfNotNull("Lưu thư mục thành ZIP","Đổi tên","Xóa thư mục",if(events.exists()) "Nhật ký lượt" else null,if(steps.exists()) "Xem lại các bước vào game" else null) else listOf("Lưu ảnh trong ZIP","Xóa ảnh")
+        val labels=if(file.isDirectory) listOfNotNull("Lưu thư mục thành ZIP","Sao chép vào Pictures / thư mục…","Đổi tên","Xóa thư mục",if(events.exists()) "Nhật ký lượt" else null,if(steps.exists()) "Xem lại các bước vào game" else null) else listOf("Lưu ảnh trong ZIP","Sao chép vào Pictures / thư mục…","Xóa ảnh")
         AlertDialog.Builder(this).setTitle(title(file)).setItems(labels.toTypedArray()) { _,i -> when(labels[i]) {
-            "Lưu thư mục thành ZIP","Lưu ảnh trong ZIP" -> requestExport(listOf(file)); "Đổi tên" -> rename(file); "Nhật ký lượt" -> runLog(events)
+            "Lưu thư mục thành ZIP","Lưu ảnh trong ZIP" -> requestExport(listOf(file)); "Sao chép vào Pictures / thư mục…" -> requestCopy(listOf(file)); "Đổi tên" -> rename(file); "Nhật ký lượt" -> runLog(events)
             "Xem lại các bước vào game" -> entrySteps(steps.parentFile!!); else -> delete(listOf(file)) } }.show()
     }
     /** Starts, pauses with their reasons, failures and the end of a run, written by the collector. */
@@ -548,6 +557,59 @@ class MainActivity : Activity() {
     private fun importMenu() { AlertDialog.Builder(this).setTitle("Nhập file").setItems(arrayOf("Ảnh và thư mục từ ZIP","Macro từ JSON")) { _,i -> if(editable()) startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply { type=if(i==0) "application/zip" else "application/json";addCategory(Intent.CATEGORY_OPENABLE) },if(i==0) 12 else 10) }.show() }
     private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Lấy thông tin tướng → chọn Theo tên tướng, Các ô đầu danh sách hoặc Tướng đang mở → Chạy. Theo tên: tick các tướng đã lưu từ lượt trước hoặc gõ tên; app tới ô đã biết, đọc lại tên trên thẻ, sai thì dò danh sách. Với hai cách đầu, tick Tự mở game thì app đóng hẳn Liên Quân nếu còn chạy (Cài đặt → Buộc dừng), mở lại, đóng popup sự kiện và vào danh sách tướng. Thống kê tướng chụp hết Bảng Phân Bậc Tướng (2 bảng × 3 chế độ) từ mục Cộng đồng. Chiến khu chụp bảng xếp hạng người chơi của từng tướng (Đấu hạng → Chiến khu).\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080. Hàng chiêu được đọc khi chạy: 4 hoặc 5 biểu tượng, và tướng có nút ↻ được chụp thêm các chiêu đổi ở dạng khác. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nGiao diện: chọn Sáng, Tối hoặc Theo hệ thống ở nút Giao diện trên đầu màn hình.\n\nAOV Collector 0.8.0").setPositiveButton("Đã hiểu",null)
         if(CrashLog.file(this).exists()) dialog.setNeutralButton("Nhật ký lỗi") { _,_ -> showLog("Nhật ký lỗi") };dialog.show() }
+    /** Choose Pictures or any folder in Android Files. Copy originals without creating a ZIP. */
+    private fun requestCopy(files:List<File>) {
+        if(files.isEmpty()||!editable()) return
+        pendingCopy=files
+        try {
+            val intent=Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+            }
+            startActivityForResult(intent,14)
+        } catch(e:Exception) {
+            message("Không mở được bộ chọn thư mục: "+(e.message?:"Không hỗ trợ"))
+        }
+    }
+
+    /** Copy runs/folders/selected images to the chosen Android document directory, preserving their tree. */
+    private fun copySelectedTo(uri:android.net.Uri,flags:Int) {
+        val selections=pendingCopy.toList()
+        if(selections.isEmpty()) { message("Chưa chọn ảnh để sao chép.");return }
+        if(!editable()) return
+        val perms=flags and (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        if(perms and Intent.FLAG_GRANT_WRITE_URI_PERMISSION==0) {
+            message("Thư mục đã chọn không cấp quyền ghi. Vui lòng chọn thư mục khác.");return
+        }
+        try {
+            contentResolver.takePersistableUriPermission(uri,perms)
+        } catch(e:Exception) {
+            message("Không giữ được quyền ghi thư mục. Chọn lại thư mục Pictures hoặc thư mục bạn có quyền truy cập.");return
+        }
+        FileJob.start(this,"Đang sao chép ảnh","Sao chép ảnh")
+        selected.clear();selecting=false;showHistory()
+        progress=FileProgress()
+        Thread {
+            val result=try {
+                val items=PictureCopyPlan.create(captures,selections)
+                val stat=PictureFolderCopy.copy(this,uri,items,{ FileJob.cancelled }) { bytes,total,number,count,name ->
+                    FileJob.report(bytes,total,"Đã xử lý "+number+"/"+count+" ảnh · "+Format.sizes(bytes,total),name)
+                }
+                "Đã sao chép "+stat.copied+" ảnh."+
+                    (if(stat.skipped>0) " Bỏ qua "+stat.skipped+" ảnh cùng tên đã có (không ghi đè)." else "")+
+                    " Ảnh gốc vẫn còn trong AOV Collector."
+            } catch(e:ZipFiles.Cancelled) {
+                "Đã hủy sao chép. Các ảnh đã chép vẫn giữ trong thư mục đích; ảnh gốc không thay đổi."
+            } catch(e:Exception) {
+                "Sao chép chưa hoàn tất: "+(e.message?:"Lỗi truy cập thư mục")+
+                    ". Các ảnh đã chép vẫn giữ nguyên; ảnh gốc không bị xóa."
+            } finally {
+                try { contentResolver.releasePersistableUriPermission(uri,perms) } catch(_:Exception) {}
+            }
+            FileJob.finish(result)
+        }.start()
+    }
+
     private fun requestExport(files:List<File>) {
         if(files.isEmpty()||!editable()) return
         pendingExport=files
@@ -556,6 +618,7 @@ class MainActivity : Activity() {
     @Deprecated("Legacy activity result API") override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
         super.onActivityResult(requestCode,resultCode,data);if(resultCode!=RESULT_OK) return;val uri=data?.data?:return
         if(!editable()) return
+        if(requestCode==14) { copySelectedTo(uri,data.flags);return }
         if(requestCode==10) {
             try {
                 val raw=contentResolver.openInputStream(uri)?.use { input -> val out=java.io.ByteArrayOutputStream();val buffer=ByteArray(8192);var n=input.read(buffer);while(n!=-1) { require(out.size()+n<=1024*1024) { "Macro tối đa 1 MB" };out.write(buffer,0,n);n=input.read(buffer) };out.toString("UTF-8") }?:error("Không đọc được file")
