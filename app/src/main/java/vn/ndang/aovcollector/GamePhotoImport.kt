@@ -36,6 +36,34 @@ object GamePhotoImport {
         Group("chuc-phuc-huyen-thoai-su-thi","Chúc Phúc · Huyền thoại / Sử thi"),
         Group("chuc-phuc-truyen-thuyet","Chúc Phúc · Truyền thuyết")
     )
+    /** Stable native-photo hierarchy matching Bách khoa's left navigation and subcategories. */
+    fun groupPath(group:String):String=when(group) {
+        "quan-co" -> "quan-co/anh-quan-co"
+        "chieu-quan-co" -> "quan-co/chieu-quan-co"
+        "phe" -> "tuong-tac/phe"
+        "nghe" -> "tuong-tac/nghe"
+        "trang-bi" -> "trang-bi"
+        "chuc-phuc-thuong" -> "chuc-phuc/thuong"
+        "chuc-phuc-huyen-thoai-su-thi" -> "chuc-phuc/huyen-thoai-su-thi"
+        "chuc-phuc-truyen-thuyet" -> "chuc-phuc/truyen-thuyet"
+        else -> error("Không phải nhóm ảnh gốc được hỗ trợ: "+group)
+    }
+
+    fun nativeFolderTitle(path:String):String?=when(path) {
+        "quan-co" -> "Quân cờ"
+        "quan-co/anh-quan-co" -> "Tất cả quân cờ"
+        "quan-co/chieu-quan-co" -> "Chiêu quân cờ"
+        "tuong-tac" -> "Tương tác"
+        "tuong-tac/phe" -> "Phe"
+        "tuong-tac/nghe" -> "Nghề"
+        "trang-bi" -> "Trang bị"
+        "chuc-phuc" -> "Chúc Phúc"
+        "chuc-phuc/thuong" -> "Thường"
+        "chuc-phuc/huyen-thoai-su-thi" -> "Huyền thoại / Sử thi"
+        "chuc-phuc/truyen-thuyet" -> "Truyền thuyết"
+        else -> null
+    }
+
     fun isImage(file:File)=file.isFile&&imageExtension(file.extension)
     fun imageExtension(ext:String)=ext.lowercase() in setOf("png","jpg","jpeg","webp")
     fun chosen(context:Context):Uri?=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE)
