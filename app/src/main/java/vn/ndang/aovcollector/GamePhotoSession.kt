@@ -24,7 +24,15 @@ object GamePhotoSession {
     data class Scanned(val id:String,val size:Long,val modified:Long)
     data class Diff(val before:Int,val after:Int,val new:Int,val matching:List<Pick>,val unrelated:Int)
     data class Imported(val before:Int,val after:Int,val added:Int,val copied:Int,val already:Int,
-                        val uncertain:Int,val errors:Int,val cancelled:Boolean)
+                        val uncertain:Int,val errors:Int,val cancelled:Boolean,val pending:Int=0)
+
+    /** Do not acknowledge a batch until every Save Photo event has a corresponding readable file. */
+    fun checkpoint(previous:Int,totalMarks:Int,resolved:Int,failed:Int,cancelled:Boolean):Int =
+        if(!cancelled && failed==0 && resolved>=totalMarks) totalMarks
+        else previous.coerceIn(0,totalMarks)
+
+    /** Gives providers time to index a freshly saved game image before automatic retrying. */
+    private const val RETRY_MS=30_000L
 
     fun diff(baseline:Set<String>,photos:List<Scanned>,marks:List<Mark>):Diff {
         val fresh=photos.filter { it.id !in baseline }.sortedWith(compareBy({it.modified},{it.id}))
@@ -127,13 +135,28 @@ object GamePhotoSession {
             progress(index,diff.matching.size,pick.group+"/"+pick.item)
             val image=matches[pick.id]?:continue
             val identity=sha(tree.toString()+"|"+image.key)
-            if(ledger.has(identity)) { already++;continue }
+            if(ledger.has(identity)) {
+                val location=ledger.optString(identity)
+                val existing=File(destRoot,location)
+                if(location.isNotBlank()&&existing.isFile&&existing.length()>0) {
+                    already++
+                    continue
+                }
+                // A user may have deleted the internal copy; the ledger must not suppress re-import.
+                ledger.remove(identity)
+            }
             val ext=image.name.substringAfterLast('.', "jpg").lowercase()
                 .takeIf { GamePhotoImport.imageExtension(it) }?:"jpg"
             val file=File(destRoot,pick.group+"/"+safe(runId)).apply { mkdirs() }
             val target=File(file,safe(pick.item)+"-"+identity+"."+ext)
             val partial=File(file,target.name+".part")
             try {
+                if(target.isFile&&target.length()>0) {
+                    ledger.put(identity,target.relativeTo(destRoot).invariantSeparatorsPath)
+                    ledgerFile.writeText(ledger.toString(2))
+                    already++
+                    continue
+                }
                 require(image.size>=0 && image.size<=MAX_IMAGE) { "Ảnh vượt giới hạn 32 MB" }
                 require(context.filesDir.usableSpace>image.size+30L*1024*1024) { "Bộ nhớ trống quá ít" }
                 context.contentResolver.openInputStream(image.uri)?.use { input ->
@@ -145,18 +168,45 @@ object GamePhotoSession {
                 copied++
             } catch(e:Exception) { partial.delete();errors++ }
         }
+        val totalMarks=state.getJSONArray("saves").length()
+        val resolved=copied+already
+        val newCheckpoint=checkpoint(state.optInt("syncedMarks",0),totalMarks,resolved,errors,cancelled())
+        val pending=(totalMarks-resolved).coerceAtLeast(0)
         state.put("after",all.size).put("newFiles",diff.new)
-            .put("unrelated",diff.unrelated).put("imported",copied+already)
-            .put("syncedMarks",if(cancelled()) state.optInt("syncedMarks",0) else state.getJSONArray("saves").length())
-            .put("status",if(cancelled()) "paused" else "imported")
+            .put("unrelated",diff.unrelated).put("imported",resolved)
+            .put("syncedMarks",newCheckpoint)
+            .put("lastAttemptedMarks",totalMarks)
+            .put("lastSyncAt",System.currentTimeMillis())
+            .put("pending",pending)
+            .put("status",when {
+                cancelled() -> "paused"
+                errors>0 || pending>0 -> "waiting-for-pictures"
+                else -> "imported"
+            })
         store(context,runId,state)
         progress(diff.matching.size,diff.matching.size,"Đã lưu $copied ảnh mới")
-        return Imported(diff.before,diff.after,diff.new,copied,already,diff.unrelated,errors,cancelled())
+        return Imported(diff.before,diff.after,diff.new,copied,already,diff.unrelated,errors,cancelled(),pending)
     }
 
-    fun lastRun(context:Context):String? = File(context.filesDir,"captures").listFiles()
-        ?.filter { it.isDirectory&&File(it,FILE).exists() }
-        ?.maxByOrNull { File(it,FILE).lastModified() }?.name
+    private fun sessions(context:Context):List<Pair<File,JSONObject>> =
+        File(context.filesDir,"captures").listFiles().orEmpty()
+            .filter { it.isDirectory&&File(it,FILE).exists() }
+            .mapNotNull { dir ->
+                try { dir to JSONObject(File(dir,FILE).readText()) } catch(_:Exception) { null }
+            }
+
+    /** A re-sync of an older run must not make it look like a new capture run. */
+    fun lastRun(context:Context):String?=sessions(context)
+        .maxByOrNull { (_,state) -> state.optLong("startedAt",0) }?.first?.name
+
+    /** Auto-sync recent pending batches; a missing image can be indexed by Android a little later. */
+    fun pendingRun(context:Context,now:Long=System.currentTimeMillis()):String? =
+        sessions(context).filter { (_,state) ->
+            val marks=state.optJSONArray("saves")?.length()?:0
+            marks>state.optInt("syncedMarks",0) &&
+                (marks>state.optInt("lastAttemptedMarks",0) ||
+                    now-state.optLong("lastSyncAt",0)>=RETRY_MS)
+        }.maxByOrNull { (_,state) -> state.optLong("startedAt",0) }?.first?.name
 
     fun state(context:Context,runId:String):JSONObject?=try { read(context,runId) } catch(_:Exception) { null }
 }
