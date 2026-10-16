@@ -570,10 +570,8 @@ class MainActivity : Activity() {
     private fun maybeSyncNewGamePhotos() {
         if(isFinishing||FileJob.running||CollectorService.libraryBusy||
             CollectorService.current?.isWorking==true||!GamePhotoImport.hasSource(this)) return
-        val run=GamePhotoSession.lastRun(this)?:return
-        val state=GamePhotoSession.state(this,run)?:return
-        val marks=state.optJSONArray("saves")?.length()?:0
-        if(marks>state.optInt("syncedMarks",0)) syncGamePhotoRun(run)
+        val run=GamePhotoSession.pendingRun(this)?:return
+        syncGamePhotoRun(run)
     }
 
     /** Import only files newly created by confirmed Cờ Liên Quân Save Photo actions in a run. */
@@ -594,6 +592,8 @@ class MainActivity : Activity() {
                     (if(stats.uncertain>0) " Không lấy "+stats.uncertain+
                         " ảnh mới không khớp thao tác Save Photo được xác nhận." else "")+
                     (if(stats.errors>0) " Lỗi đọc "+stats.errors+" ảnh." else "")+
+                    (if(stats.pending>0) " Còn "+stats.pending+
+                        " lần lưu chưa thấy ảnh tương ứng trong Pictures; app sẽ thử lại khi quay về." else "")+
                     (if(stats.cancelled) " Đã hủy giữa chừng, có thể đồng bộ lại." else "")+
                     " Ảnh cá nhân trong Pictures vẫn giữ nguyên."
             } catch(e:Exception) {
@@ -610,11 +610,13 @@ class MainActivity : Activity() {
         val state=run?.let { GamePhotoSession.state(this,it) }
         val before=state?.optInt("before",-1)?:-1
         val saved=state?.optJSONArray("saves")?.length()?:0
+        val pending=state?.optInt("pending",0)?:0
         val info="Thư mục nguồn: "+GamePhotoImport.sourceLabel(this)+
             (if(before>=0) "\nLượt gần nhất: "+run+
                 "\nSố ảnh trước lượt: "+before+
                 "\nSố thao tác Save Photo đã xác nhận: "+saved+
-                (if(state?.has("after")==true) "\nSố ảnh sau lượt: "+state.optInt("after") else "")
+                (if(state?.has("after")==true) "\nSố ảnh sau lượt: "+state.optInt("after") else "")+
+                (if(pending>0) "\nĐang chờ ảnh xuất hiện / đọc lại: "+pending else "")
              else "\nChưa có lượt tải ảnh gốc nào được ghi mốc.")+
             "\n\nApp tự phân loại theo mục đang thu thập: Quân cờ, chiêu, Phe, Nghề, Trang bị và ba nhóm Chúc Phúc. "+
             "Chỉ sao chép ảnh mới khớp thao tác lưu, không quét chép ảnh cũ trong Pictures."
