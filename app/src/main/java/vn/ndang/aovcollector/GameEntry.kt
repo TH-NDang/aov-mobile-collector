@@ -295,8 +295,8 @@ class GameEntry(private val screen:Screen,private val expectedUid:String?=null,p
         fun tap(x:Double,y:Double,then:(Boolean)->Unit)
         /** Taps the game's own back arrow at the top left. */
         fun back(then:(Boolean)->Unit)
-        /** Fills the Garena login page in front with the saved test account and submits it; false when it is not that page. */
-        fun signIn():Boolean
+        /** Fills the validated Garena form and delivers the tap result asynchronously. */
+        fun signIn(then:(Boolean)->Unit)
         fun later(ms:Long,then:()->Unit)
         fun now():Long
         /** Records a step in the run's events log. */
@@ -497,8 +497,11 @@ class GameEntry(private val screen:Screen,private val expectedUid:String?=null,p
         // The page shows the account typed in: kept as a decision only, without its screenshot.
         s.record("Trang Garena: điền tài khoản test và bấm Đăng Nhập Ngay",image=false); s.done(null)
         screen.note("Điền tài khoản test vào trang đăng nhập Garena"); screen.say("Đang đăng nhập tài khoản test…")
-        if(!screen.signIn()) return fail("Không điền được trang đăng nhập Garena (không thấy ô tài khoản, mật khẩu hoặc nút Đăng Nhập Ngay). Đăng nhập bằng tay rồi bấm Tiếp tục.")
-        signedInAt=now; switched=true; again(5000)
+        screen.signIn { submitted ->
+            if(!screen.alive) return@signIn
+            if(!submitted) return@signIn fail("Không nhấn được Đăng Nhập Ngay trên trang Garena. Hãy kiểm tra màn hình và đăng nhập bằng tay, rồi bấm Tiếp tục.")
+            signedInAt=screen.now(); switched=true; again(5000)
+        }
     }
     private fun profile(s:Shot,reading:GameScreens.Reading) {
         if(phase!=Phase.LOOKUP) return back(s,"Hồ sơ người chơi: quay lại sảnh")
