@@ -9,6 +9,8 @@ import android.graphics.*
 import android.graphics.drawable.Drawable
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
 import android.provider.Settings
@@ -19,6 +21,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.Executors
 
 class MainActivity : Activity() {
     private val captures by lazy { File(filesDir,"captures").apply { mkdirs() } }
@@ -31,6 +34,15 @@ class MainActivity : Activity() {
     private val scrollMemory=HashMap<String,Int>()
     private var historyScroll:ScrollView?=null
     private var shownKey="root"
+    private val historyQueries=HashMap<String,String>()
+    private val historyPages=HashMap<String,Int>()
+    private val historyTrail=ArrayList<File?>()
+    private val historySearchHandler=Handler(Looper.getMainLooper())
+    private val historySearchExecutor=Executors.newSingleThreadExecutor()
+    private var historySearchTask:Runnable?=null
+    private var historySearchToken=0
+    private var historyResultsKey=""
+    private var historyResults=emptyList<File>()
     private val thumbs=object:android.util.LruCache<String,Bitmap>(24*1024*1024) { override fun sizeOf(key:String,value:Bitmap)=value.byteCount }
     private fun thumb(file:File,sample:Int):Bitmap? { val key="${file.path}:${file.lastModified()}:$sample"
         return thumbs.get(key)?:BitmapFactory.decodeFile(file.path,BitmapFactory.Options().apply { inSampleSize=sample })?.also { thumbs.put(key,it) } }
@@ -147,16 +159,17 @@ class MainActivity : Activity() {
         CrashLog.install(this)
         if(!MacroStore.current(this).exists()) MacroStore.current(this).writeText(BuiltInMacros.create(""))
         folder=savedInstanceState?.getString("folder")?.let { File(it) }?.takeIf { it.isDirectory&&it.canonicalPath.startsWith(captures.canonicalPath+"/") }
+        savedInstanceState?.getString("history-search")?.let { historyQueries[(folder?:captures).path]=it }
         pendingExport=savedInstanceState?.getStringArrayList("export")?.map { File(it) }.orEmpty()
         window.statusBarColor=Ui.canvas;window.navigationBarColor=Ui.canvas
         window.decorView.systemUiVisibility=if(Ui.colors===Ui.DARK) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         showHistory()
         if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob()
     }
-    override fun onSaveInstanceState(out:Bundle) { super.onSaveInstanceState(out);out.putString("folder",folder?.path);out.putStringArrayList("export",ArrayList(pendingExport.map { it.path })) }
+    override fun onSaveInstanceState(out:Bundle) { super.onSaveInstanceState(out);out.putString("folder",folder?.path);out.putString("history-search",historyQueries[(folder?:captures).path].orEmpty());out.putStringArrayList("export",ArrayList(pendingExport.map { it.path })) }
     override fun onResume() { super.onResume();FileJob.screen=jobDone;if(historyRoot!=null) showHistory();crashNotice() }
     override fun onPause() { if(FileJob.screen===jobDone) FileJob.screen=null;super.onPause() }
-    override fun onDestroy() { progress?.close();super.onDestroy() }
+    override fun onDestroy() { historySearchToken++;historySearchTask?.let { historySearchHandler.removeCallbacks(it) };historySearchExecutor.shutdownNow();progress?.close();super.onDestroy() }
     override fun onNewIntent(intent:Intent) { super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob() }
     private fun crashNotice() {
         val log=CrashLog.file(this);if(!log.exists()) return
