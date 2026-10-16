@@ -76,7 +76,7 @@ object ChessWiki {
                 // OCR can miss names on decorative cards. Scan for the vivid circular portraits in each column.
                 for(x in cols) {
                     val peaks=(32..82 step 2).map { it/100.0 }.map { y -> y to score(b,x,y,.025) }
-                        .filter { it.second>23 }.sortedByDescending { it.second }
+                        .filter { it.second>30 && (it.first<.58 || it.second>35) }.sortedByDescending { it.second }
                     for((y,_) in peaks) if(spots.none { abs(it.first-x)<.025&&abs(it.second-y)<.17 })
                         spots.add(Triple(x,y,null))
                 }
@@ -85,12 +85,12 @@ object ChessWiki {
                 val cols=listOf(.324,.388,.453,.520,.586,.651)
                 // Four rows in the provided screenshot; subsequent pages use the same safe content area.
                 for(y in listOf(.24,.428,.613,.80)) for(x in cols)
-                    if(score(b,x,y,.019)>23) spots.add(Triple(x,y,null))
+                    if(score(b,x,y,.019)>35) spots.add(Triple(x,y,null))
             }
             "phe","nghe" -> {
                 val cols=(0..11).map { .236+.0562*it }
                 val rows=if(t.key=="phe") listOf(.297 to 12) else listOf(.547 to 12,.711 to 3)
-                for((y,n) in rows) for(x in cols.take(n)) if(score(b,x,y,.017)>14)
+                for((y,n) in rows) for(x in cols.take(n)) if(score(b,x,y,.017)>40)
                     spots.add(Triple(x,y,null))
             }
         }
@@ -193,7 +193,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         const val MAX_TILES=450
     }
     private val topics=options.topics()
-    private var completed=false;private var pages=0;private var items=0;private var navigation=0
+    private var completed=false;private var pages=0;private var items=0;private var navigation=0;private var selectedChess=false
     private val tried=HashSet<String>()
     fun start()=navigate()
     private fun end(out:Outcome) { if(!completed) { completed=true;finish(out) } }
@@ -238,7 +238,11 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
             (all.contains("trangchu")&&all.contains("colienquan")) ->
                 tap(words.firstOrNull { it.plain.contains("trangchu")&&it.x<.24 }?.x?:.102,
                     words.firstOrNull { it.plain.contains("trangchu")&&it.x<.24 }?.y?:.305,1800) { navigate() }
-            all.contains("chedogiaitri") && all.contains("batdau") ->
+            all.contains("chedogiaitri") && all.contains("colienquan") && !selectedChess -> {
+                selectedChess=true
+                tap(.507,.827,1100) { navigate() }
+            }
+            all.contains("chedogiaitri") && all.contains("colienquan") && all.contains("batdau") && selectedChess ->
                 tap(words.firstOrNull { it.plain=="batdau"&&it.x>.6 }?.x?:.862,
                     words.firstOrNull { it.plain=="batdau"&&it.x>.6 }?.y?:.688,3700) { navigate() }
             all.contains("chedogiaitri") && all.contains("colienquan") ->
