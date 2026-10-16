@@ -212,7 +212,24 @@ class CollectorService : AccessibilityService() {
         if(params!=null && view.isAttachedToWindow) try { wm.updateViewLayout(view,params) } catch(e:Exception) { CrashLog.record(this,"Không cập nhật được bảng nổi",e) }
     }
     private fun detach(view:View) { try { wm.removeView(view) } catch(e:Exception) { CrashLog.record(this,"Không gỡ được bảng nổi",e) } }
+    /** Native vector (SVG-style) icon shown on every panel action; only labels are optional. */
+    private fun panelButtonIcon(button:Button,icon:Int,caption:String,showLabels:Boolean,color:Int=Color.WHITE) {
+        val drawable=getDrawable(icon)?.mutate()?.apply {
+            setTint(color)
+            setBounds(0,0,dp(18),dp(18))
+        }
+        // With icon-only mode use the TOP drawable: it is centered instead of left-aligned.
+        button.setCompoundDrawables(if(showLabels) drawable else null,if(showLabels) null else drawable,null,null)
+        button.compoundDrawablePadding=if(showLabels) dp(5) else 0
+        button.text=if(showLabels) caption else ""
+        button.gravity=Gravity.CENTER
+        button.textSize=if(showLabels) 12f else 11f
+        button.setPadding(dp(6),0,dp(6),0)
+        button.contentDescription=caption
+        button.tooltipText=caption
+    }
     private fun rebuildPanel() {
+        val showLabels=uiPrefs.getBoolean("panelShowLabels",true)
         dismissMacroPicker()
         panel?.let { detach(it) }; panel=null
         label=null; primary=null; stopView=null; choose=null; taskLabel=null; taskDetail=null; progress=null; bubble=null
@@ -250,36 +267,103 @@ class CollectorService : AccessibilityService() {
             layout.addView(bubble); drag(bubble!!) { compact=false;rebuildPanel() }
         } else {
             val header=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
-            val title=Ui.text(this,"AOV  ·  KÉO ĐỂ DI CHUYỂN",10f,Color.rgb(220,224,237),true)
-            header.addView(title,LinearLayout.LayoutParams(0,dp(34),1f));drag(title)
-            val collapse=Ui.button(this,"−") { compact=true;rebuildPanel() }.apply { contentDescription="Thu gọn bảng nổi";setTextColor(Color.WHITE);background=Ui.shape(Color.rgb(47,52,74),dp(10)) }
-            header.addView(collapse,LinearLayout.LayoutParams(dp(38),dp(32)));layout.addView(header)
-            choose=Ui.button(this,"Chọn macro  ▾") { showTaskPicker() }.apply {
-                textSize=15f;gravity=Gravity.CENTER_VERTICAL or Gravity.START;setTextColor(Color.WHITE)
-                background=Ui.shape(Color.argb(165,63,53,104),dp(11),Color.argb(90,208,196,255))
-                contentDescription="Chọn macro, có tìm kiếm"
+            val title=Ui.text(this,"AOV · KÉO ĐỂ DI CHUYỂN",10f,Color.rgb(220,224,237),true)
+            header.addView(title,LinearLayout.LayoutParams(0,dp(32),1f));drag(title)
+            val labelsToggle=Ui.button(this,if(showLabels) "Ẩn chữ" else "Hiện chữ") {
+                uiPrefs.edit().putBoolean("panelShowLabels",!showLabels).apply()
+                rebuildPanel()
+            }.apply {
+                textSize=10f
+                setTextColor(Color.WHITE)
+                background=Ui.shape(Color.rgb(48,53,78),dp(9))
+                contentDescription=if(showLabels) "Ẩn chữ các thao tác" else "Hiện chữ các thao tác"
             }
-            layout.addView(choose,LinearLayout.LayoutParams(-1,dp(42)))
-            taskDetail=Ui.text(this,"",12f,Color.rgb(226,230,240)).apply { setPadding(0,dp(5),0,0);includeFontPadding=false;maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END };layout.addView(taskDetail)
-            progress=ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply { max=100;progressTintList=android.content.res.ColorStateList.valueOf(Color.rgb(159,139,255)) }
-            layout.addView(progress,LinearLayout.LayoutParams(-1,dp(8)).apply { topMargin=dp(10) })
-            label=Ui.text(this,"",12f,Color.rgb(205,211,225)).apply { setPadding(0,dp(3),0,dp(5));includeFontPadding=false;maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END };layout.addView(label)
+            header.addView(labelsToggle,LinearLayout.LayoutParams(dp(75),dp(32)).apply { marginEnd=dp(5) })
+            val collapse=Ui.button(this,"−") { compact=true;rebuildPanel() }.apply {
+                contentDescription="Thu gọn bảng nổi";setTextColor(Color.WHITE)
+                background=Ui.shape(Color.rgb(47,52,74),dp(10))
+            }
+            header.addView(collapse,LinearLayout.LayoutParams(dp(34),dp(32)))
+            layout.addView(header)
+
+            // Small macro selector ABOVE the status/actions. Its text always displays the current macro,
+            // including an imported JSON macro's own name, even when the action labels are hidden.
+            val macroRow=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
+            macroRow.addView(Ui.text(this,"MACRO",10f,Color.rgb(166,169,202),true).apply {
+                includeFontPadding=false;setPadding(0,0,dp(4),0)
+            },LinearLayout.LayoutParams(dp(49),dp(32)))
+            choose=Ui.button(this,"Chọn macro") { showTaskPicker() }.apply {
+                textSize=12f
+                gravity=Gravity.CENTER_VERTICAL or Gravity.START
+                setTextColor(Color.WHITE)
+                background=Ui.shape(Color.argb(165,63,53,104),dp(10),Color.argb(90,208,196,255))
+                setPadding(dp(10),0,dp(6),0)
+                maxLines=1
+                ellipsize=android.text.TextUtils.TruncateAt.END
+                contentDescription="Chọn macro, có tìm kiếm"
+                getDrawable(R.drawable.ic_panel_chevron)?.mutate()?.apply {
+                    setTint(Color.WHITE);setBounds(0,0,dp(14),dp(14))
+                }?.let { setCompoundDrawables(null,null,it,null) }
+            }
+            macroRow.addView(choose,LinearLayout.LayoutParams(0,dp(36),1f))
+            layout.addView(macroRow,LinearLayout.LayoutParams(-1,dp(38)).apply { topMargin=dp(5) })
+
+            if(showLabels) {
+                taskDetail=Ui.text(this,"",11f,Color.rgb(226,230,240)).apply {
+                    setPadding(0,dp(3),0,0);includeFontPadding=false
+                    maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END
+                }
+                layout.addView(taskDetail)
+            }
+            progress=ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply {
+                max=100
+                progressTintList=android.content.res.ColorStateList.valueOf(Color.rgb(159,139,255))
+            }
+            layout.addView(progress,LinearLayout.LayoutParams(-1,dp(7)).apply { topMargin=dp(8) })
+            label=Ui.text(this,"",11f,Color.rgb(205,211,225)).apply {
+                setPadding(0,dp(3),0,dp(4));includeFontPadding=false
+                maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END
+            }
+            layout.addView(label)
+
             val actions=LinearLayout(this)
             primary=Ui.button(this,"Chạy",true) {
-                when { running -> pause("Đã tạm dừng"); busy || manualBusy -> status("Đang hoàn tất thao tác hiện tại…"); ended() -> { reset();status("Lượt mới sẵn sàng. "+(selected()?.let { MacroStore.instruction(it) }?:"")) };else -> start() }
+                when {
+                    running -> pause("Đã tạm dừng")
+                    busy || manualBusy -> status("Đang hoàn tất thao tác hiện tại…")
+                    ended() -> { reset();status("Lượt mới sẵn sàng. "+(selected()?.let { MacroStore.instruction(it) }?:"")) }
+                    else -> start()
+                }
+            }.apply { background=Ui.shape(Color.rgb(96,75,209),dp(11)) }
+            actions.addView(primary,LinearLayout.LayoutParams(0,dp(42),1f))
+            val stopButton=Ui.button(this,"Dừng",dangerous=true) { stop() }.also { stopView=it }.apply {
+                setTextColor(Color.rgb(255,213,220))
+                background=Ui.shape(Color.argb(190,112,43,64),dp(11))
             }
-            actions.addView(primary,LinearLayout.LayoutParams(0,dp(45),1f))
-            val stopButton=Ui.button(this,"Dừng",dangerous=true) { stop() }.also { stopView=it }.apply { setTextColor(Color.rgb(255,213,220));background=Ui.shape(Color.argb(190,112,43,64),dp(12)) }
-            actions.addView(stopButton,LinearLayout.LayoutParams(dp(86),dp(45)).apply { leftMargin=dp(8) });layout.addView(actions)
-            val footer=LinearLayout(this)
-            fun foot(text:String,action:()->Unit) {
-                val b=Ui.button(this,text,action=action).apply { textSize=12f;setTextColor(Color.WHITE);background=Ui.shape(Color.argb(155,53,60,84),dp(10)) }
-                footer.addView(b,LinearLayout.LayoutParams(0,dp(38),1f).apply { topMargin=dp(8);if(footer.childCount>0) leftMargin=dp(6) })
-            }
-            foot("Chụp") { manualCapture() }
-            foot("Về app") { pause("Đã tạm dừng");hidePanel();startActivity(android.content.Intent(this,MainActivity::class.java).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP)) }
-            foot("Đóng") { pause("Đã tạm dừng");hidePanel() };layout.addView(footer)
+            actions.addView(stopButton,
+                if(showLabels) LinearLayout.LayoutParams(dp(86),dp(42)).apply { leftMargin=dp(7) }
+                else LinearLayout.LayoutParams(0,dp(42),1f).apply { leftMargin=dp(7) })
+            layout.addView(actions)
 
+            val footer=LinearLayout(this)
+            fun foot(caption:String,icon:Int,action:()->Unit) {
+                val b=Ui.button(this,caption,action=action).apply {
+                    setTextColor(Color.WHITE)
+                    background=Ui.shape(Color.argb(155,53,60,84),dp(10))
+                    panelButtonIcon(this,icon,caption,showLabels)
+                }
+                footer.addView(b,LinearLayout.LayoutParams(0,dp(39),1f).apply {
+                    topMargin=dp(7);if(footer.childCount>0) leftMargin=dp(6)
+                })
+            }
+            foot("Chụp",R.drawable.ic_panel_camera) { manualCapture() }
+            foot("Về app",R.drawable.ic_panel_home) {
+                pause("Đã tạm dừng");hidePanel()
+                startActivity(android.content.Intent(this,MainActivity::class.java)
+                    .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK or android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP))
+            }
+            foot("Đóng",R.drawable.ic_panel_close) { pause("Đã tạm dừng");hidePanel() }
+            layout.addView(footer)
         }
         if(shielded) layout.visibility=View.INVISIBLE
         try { wm.addView(layout,params) } catch(e:Exception) { CrashLog.record(this,"Không mở được bảng nổi",e); return }
@@ -296,12 +380,18 @@ class CollectorService : AccessibilityService() {
         val step=if(m!=null && prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
         taskLabel?.text=m?.let { MacroStore.title(it) }?:"Chọn tác vụ"
         taskDetail?.text=m?.let { MacroStore.description(it) }?:"Thông tin tướng, thống kê tướng hoặc Chiến khu"
-        choose?.text=(m?.let { MacroStore.title(it) }?:"Chọn macro")+"  ▾"
+        choose?.text=m?.let { MacroStore.title(it) }?:"Chọn macro"
+        choose?.tooltipText=m?.let { MacroStore.title(it) }?:"Chọn macro"
         choose?.isEnabled=!isWorking;choose?.alpha=if(isWorking) .45f else 1f
         progress?.progress=if(m!=null) step*100/maxOf(1,m.steps.length()) else 0
         label?.text=lastStatus
-        primary?.text=when { running -> "Tạm dừng";busy||manualBusy -> "Đang xử lý…";ended() -> "Tạo lượt mới";step>0 -> "Tiếp tục";else -> "Chạy" }
+        val caption=when { running -> "Tạm dừng";busy||manualBusy -> "Đang xử lý…";ended() -> "Tạo lượt mới";step>0 -> "Tiếp tục";else -> "Chạy" }
+        val glyph=when { running -> R.drawable.ic_panel_pause;busy||manualBusy -> R.drawable.ic_panel_check
+            ended() -> R.drawable.ic_panel_reset;else -> R.drawable.ic_panel_play }
+        val showLabels=uiPrefs.getBoolean("panelShowLabels",true)
+        primary?.let { panelButtonIcon(it,glyph,caption,showLabels) }
         primary?.isEnabled=running || (!busy && !manualBusy && m!=null)
+        stopView?.let { panelButtonIcon(it,R.drawable.ic_panel_stop,"Dừng",showLabels,Color.rgb(255,213,220)) }
         // Dừng ends a run: nothing to end before one starts or after it ended.
         val stoppable=canStop(); stopView?.isEnabled=stoppable; stopView?.alpha=if(stoppable) 1f else .4f
         bubble?.text=if(running) "AOV\n${progress?.progress ?: if(m!=null) step*100/maxOf(1,m.steps.length()) else 0}%" else "AOV"
