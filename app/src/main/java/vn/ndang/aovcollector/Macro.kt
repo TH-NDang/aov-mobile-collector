@@ -14,7 +14,7 @@ class Macro(val raw: String) {
     fun photos(i:Int):Int = steps.getJSONObject(i).let { s -> when(s.getString("type")) { "screenshot" -> 1; "skills" -> if(s.optBoolean("detailOnly")) 4 else 8; else -> 0 } }
     val photoTotal:Int by lazy { (0 until steps.length()).sumOf { photos(it) } }
     /** True when the photo count can grow at run time, as with a "skills" step. */
-    val photosVary:Boolean by lazy { (0 until steps.length()).any { steps.getJSONObject(it).getString("type") in setOf("skills","ranking","board") } }
+    val photosVary:Boolean by lazy { (0 until steps.length()).any { steps.getJSONObject(it).getString("type") in setOf("skills","ranking","board","chess") } }
     val hash = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray()).joinToString("") { "%02x".format(it) }
     init {
         require(name.matches(Regex("[a-zA-Z0-9_-]{1,64}"))) { "Tên macro chỉ dùng chữ, số, _ và -" }
@@ -42,6 +42,10 @@ class Macro(val raw: String) {
                     if(combos!=null) { require(combos.length()>0) { "ranking: chọn ít nhất một bảng" }
                         for(k in 0 until combos.length()) require(RankScreens.COMBOS.any { it.slug==combos.getString(k) }) { "ranking: bảng không hợp lệ" } } }
                 "skills" -> require(s.getString("prefix").matches(Regex("[a-zA-Z0-9_-]{1,40}"))) { "skills: prefix không hợp lệ" }
+                "chess" -> { require(json.optString("collectionMode")=="chess") { "chess: không đúng chế độ" }
+                    require(json.optJSONArray("chessTopics")?.length() in 1..ChessWiki.TOPICS.size) { "chess: phải chọn ít nhất một mục" }
+                    ChessWiki.Options((0 until json.getJSONArray("chessTopics").length()).map { json.getJSONArray("chessTopics").getString(it) }.toSet())
+                }
                 else -> error("Bước ${i+1}: type không hỗ trợ")
             }
         }
@@ -53,7 +57,7 @@ class Macro(val raw: String) {
 /** Coordinates calibrated from the user's 2400x1080 VN hero menu. */
 object BuiltInMacros {
     /** Bump when the generated steps change; selected built-in macros are then regenerated with the same settings. */
-    const val VERSION=4
+    const val VERSION=5
     /** "Tất cả": more cards than the game has; the run stops at the end of the list. */
     const val ALL=300
     /**
@@ -161,6 +165,30 @@ object BuiltInMacros {
             .put("openGame",openGame).put("checkAccount",openGame&&checkAccount).put("traceEntry",traceEntry)
             .put("builtinVersion",VERSION).put("steps",steps).toString(2)
     }
+    /** Selectable Cờ Liên Quân encyclopedia: no section is implicitly collected. */
+    fun chess(options:ChessWiki.Options):String {
+        val steps=org.json.JSONArray()
+        if(options.openGame) steps.put(JSONObject().put("type","enter").put("to","lobby"))
+        steps.put(JSONObject().put("type","wait").put("ms",if(options.openGame) 1000 else 1500))
+        steps.put(JSONObject().put("type","chess"))
+        return JSONObject().put("name","chess-wiki")
+            .put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
+            .put("collectionMode","chess").put("heroName","")
+            .put("chessTopics",org.json.JSONArray(options.topics().map { it.key }))
+            .put("chessAllPages",options.allPages).put("chessHeroDetails",options.heroDetails)
+            .put("chessSynergyDetails",options.synergyDetails).put("chessEquipmentDetails",options.equipmentDetails)
+            .put("openGame",options.openGame).put("checkAccount",options.openGame&&options.checkAccount)
+            .put("traceEntry",options.traceEntry).put("builtinVersion",VERSION)
+            .put("steps",steps).toString(2)
+    }
+    fun chessOptions(json:JSONObject):ChessWiki.Options {
+        val a=json.getJSONArray("chessTopics")
+        return ChessWiki.Options((0 until a.length()).map { a.getString(it) }.toSet(),
+            json.optBoolean("openGame"),json.optBoolean("checkAccount"),json.optBoolean("traceEntry",true),
+            json.optBoolean("chessAllPages",true),json.optBoolean("chessHeroDetails"),
+            json.optBoolean("chessSynergyDetails"),json.optBoolean("chessEquipmentDetails"))
+    }
+
     /** The tabs a Chiến khu macro or its step asks for, with their top players; the default when it names none. */
     fun boardWants(json:JSONObject):List<BoardScreens.Want> {
         val tabs=json.optJSONArray("boardTabs")?:json.optJSONArray("tabs")?:return BoardScreens.DEFAULT
