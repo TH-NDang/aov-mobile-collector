@@ -1,7 +1,7 @@
 name: Build APK
 on:
   push:
-    branches: [main]
+    branches: [main, codex/chess-encyclopedia-collector]
   workflow_dispatch:
 concurrency:
   group: collector-build-${{ github.ref }}
