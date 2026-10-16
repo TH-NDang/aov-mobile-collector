@@ -85,6 +85,20 @@ object ChessWiki {
         return sure?.let { it.x to it.y } ?: .393 to .57
     }
 
+    /** A partially recognized Save Photo prompt must be dismissed, not mistaken for a missing menu. */
+    fun nativeCancel(words:List<GameScreens.Word>):Pair<Double,Double>? {
+        val full=GameScreens.plain(words.joinToString(" ") { it.text })
+        if(!full.contains("savephoto")||!full.contains("cancel")) return null
+        val cancel=words.firstOrNull { it.plain=="cancel"&&it.x in .49.. .79&&it.y in .45.. .70 }
+        return cancel?.let { it.x to it.y } ?: .58 to .56
+    }
+
+    fun nativePromptVisible(words:List<GameScreens.Word>):Boolean {
+        val full=GameScreens.plain(words.joinToString(" ") { it.text })
+        return full.contains("savephoto") &&
+            (full.contains("sure")||full.contains("cancel"))
+    }
+
     /** Long-press the actual full-color pictograms, not their text or the category's background. */
     fun nativeTiles(topic:Topic,bitmap:Bitmap,words:List<GameScreens.Word>):List<Tile> {
         if(topic.section!="chuc-phuc") return tiles(topic,bitmap,words)
@@ -257,7 +271,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         fun tap(x:Double,y:Double,then:(Boolean)->Unit)
         fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit)
         /** Long press, identify Save Photo → Sure, and record its current group. */
-        fun nativeSave(group:String,item:String,x:Double,y:Double,then:(Boolean)->Unit) { then(false) }
+        fun nativeSave(group:String,item:String,x:Double,y:Double,
+                       preserveDetail:Boolean=false,then:(Boolean)->Unit) { then(false) }
         fun later(ms:Long,then:()->Unit)
         fun seen(id:String):Boolean
         fun finished(id:String)
@@ -429,7 +444,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         val nativeKey=originalGroup?.let { "native:"+it+":"+item.id }
         if(originalGroup==null || nativeKey==null || screen.seen(nativeKey)) return detail()
         screen.say(t.label+": lưu ảnh gốc "+(from+1)+"/"+tiles.size)
-        screen.nativeSave(originalGroup,item.label?:item.id,item.x,item.y) { saved ->
+        screen.nativeSave(originalGroup,item.label?:item.id,item.x,item.y,false) { saved ->
             if(saved) {
                 screen.finished(nativeKey)
                 screen.note("Ảnh gốc "+originalGroup+": "+(item.label?:item.id))
@@ -469,7 +484,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                 val key="native:chieu-quan-co:"+folder+":"+candidate.id
                 if(screen.seen(key)||!tried.add(key)) return nativeSkill(at+1,images,next)
                 screen.nativeSave("chieu-quan-co",folder+"-skill-"+candidate.id,
-                    candidate.x,candidate.y) { ok ->
+                    candidate.x,candidate.y,true) { ok ->
                     if(ok) screen.finished(key)
                     nativeSkill(at+1,images,next)
                 }
