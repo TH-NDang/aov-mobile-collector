@@ -549,6 +549,18 @@ class UiSmoke:Instrumentation() {
                 .any { it.isChecked }) { "Enabling account verification did not enable game entry" }
             snap("11-account-setup-enabled")
             click("Hủy")
+            click("Ảnh từ Pictures · Chọn thư mục để chép vào app ›")
+            for(label in listOf("Chọn / đổi thư mục Pictures","Đồng bộ các ảnh mới sau lượt thu thập",
+                "Mở ảnh gốc đã nhập trong Lịch sử")) {
+                check(nodes().flatMap { it.findAccessibilityNodeInfosByText(label) }
+                    .any { it.text?.toString()==label&&it.isVisibleToUser&&it.isEnabled }) {
+                    "Pictures actions are hidden behind the dialog message: $label"
+                }
+            }
+            snap("12-pictures-actions")
+            click("Mở ảnh gốc đã nhập trong Lịch sử")
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Chưa có ảnh gốc nào được sao chép.") }.isNotEmpty())
+            click("Đã hiểu")
             targetContext.getSharedPreferences("ui",0).edit().remove("theme").commit()
             result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
             finish(Activity.RESULT_OK,result)

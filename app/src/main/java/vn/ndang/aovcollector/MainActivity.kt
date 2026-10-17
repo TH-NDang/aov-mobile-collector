@@ -640,8 +640,14 @@ class MainActivity : Activity() {
             "Chỉ sao chép ảnh mới khớp thao tác lưu, không quét chép ảnh cũ trong Pictures."
         val options=arrayOf("Chọn / đổi thư mục Pictures",
             "Đồng bộ các ảnh mới sau lượt thu thập","Mở ảnh gốc đã nhập trong Lịch sử")
-        AlertDialog.Builder(this).setTitle("Ảnh gốc Cờ Liên Quân")
-            .setMessage(info).setItems(options) { _,i ->
+        // AlertDialog's message hides its item list. Use explicit buttons so source setup and
+        // the imported gallery remain reachable even with a long session summary.
+        val body=Ui.stack(this).apply { setPadding(dp(20),dp(4),dp(20),dp(12)) }
+        val dialog=AlertDialog.Builder(this).setTitle("Ảnh gốc Cờ Liên Quân")
+            .setView(ScrollView(this).apply { addView(body) }).setNegativeButton("Đóng",null).create()
+        options.forEachIndexed { i,label ->
+            body.addView(Ui.button(this,label,action={
+                dialog.dismiss()
                 when(i) {
                     0 -> {
                         try {
@@ -666,7 +672,10 @@ class MainActivity : Activity() {
                         } else message("Chưa có ảnh gốc nào được sao chép.")
                     }
                 }
-            }.setNegativeButton("Đóng",null).show()
+            }),LinearLayout.LayoutParams(-1,dp(52)).apply { topMargin=dp(8) })
+        }
+        body.addView(Ui.text(this,info,13f,Ui.muted).apply { setPadding(0,dp(12),0,0) })
+        dialog.show()
     }
 
     private fun importMenu() { AlertDialog.Builder(this).setTitle("Nhập file").setItems(arrayOf("Ảnh và thư mục từ ZIP","Macro từ JSON","Ảnh từ Pictures vào app")) { _,i ->
@@ -676,7 +685,7 @@ class MainActivity : Activity() {
             type=if(i==0) "application/zip" else "application/json";addCategory(Intent.CATEGORY_OPENABLE)
         },if(i==0) 12 else 10)
     }.show() }
-    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Lấy thông tin tướng → chọn Theo tên tướng, Các ô đầu danh sách hoặc Tướng đang mở → Chạy. Theo tên: tick các tướng đã lưu từ lượt trước hoặc gõ tên; app tới ô đã biết, đọc lại tên trên thẻ, sai thì dò danh sách. Với hai cách đầu, tick Tự mở game thì app đóng hẳn Liên Quân nếu còn chạy (Cài đặt → Buộc dừng), mở lại, đóng popup sự kiện và vào danh sách tướng. Thống kê tướng chụp hết Bảng Phân Bậc Tướng (2 bảng × 3 chế độ) từ mục Cộng đồng. Chiến khu chụp bảng xếp hạng người chơi của từng tướng (Đấu hạng → Chiến khu).\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080. Hàng chiêu được đọc khi chạy: 4 hoặc 5 biểu tượng, và tướng có nút ↻ được chụp thêm các chiêu đổi ở dạng khác. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nGiao diện: chọn Sáng, Tối hoặc Theo hệ thống ở nút Giao diện trên đầu màn hình.\n\nAOV Collector 0.8.0").setPositiveButton("Đã hiểu",null)
+    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Lấy thông tin tướng → chọn Theo tên tướng, Các ô đầu danh sách hoặc Tướng đang mở → Chạy. Theo tên: tick các tướng đã lưu từ lượt trước hoặc gõ tên; app tới ô đã biết, đọc lại tên trên thẻ, sai thì dò danh sách. Với hai cách đầu, tick Tự mở game thì app đóng hẳn Liên Quân nếu còn chạy (Cài đặt → Buộc dừng), mở lại, đóng popup sự kiện và vào danh sách tướng. Thống kê tướng chụp hết Bảng Phân Bậc Tướng (2 bảng × 3 chế độ) từ mục Cộng đồng. Chiến khu chụp bảng xếp hạng người chơi của từng tướng (Đấu hạng → Chiến khu).\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080. Hàng chiêu được đọc khi chạy: 4 hoặc 5 biểu tượng, và tướng có nút ↻ được chụp thêm các chiêu đổi ở dạng khác. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nGiao diện: chọn Sáng, Tối hoặc Theo hệ thống ở nút Giao diện trên đầu màn hình.\n\nAOV Collector 0.9.1").setPositiveButton("Đã hiểu",null)
         if(CrashLog.file(this).exists()) dialog.setNeutralButton("Nhật ký lỗi") { _,_ -> showLog("Nhật ký lỗi") };dialog.show() }
     /** Choose Pictures or any folder in Android Files. Copy originals without creating a ZIP. */
     private fun requestCopy(files:List<File>) {
