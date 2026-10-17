@@ -751,7 +751,13 @@ class MainActivity : Activity() {
         startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply { type="application/zip";addCategory(Intent.CATEGORY_OPENABLE);putExtra(Intent.EXTRA_TITLE,"aov-${System.currentTimeMillis()}.zip") },11)
     }
     @Deprecated("Legacy activity result API") override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
-        super.onActivityResult(requestCode,resultCode,data);if(resultCode!=RESULT_OK) return;val uri=data?.data?:return
+        super.onActivityResult(requestCode,resultCode,data)
+        if(resultCode!=RESULT_OK) {
+            if(requestCode==AfterRun.REQUEST_FOLDER||requestCode==AfterRun.REQUEST_ZIP)
+                AfterRunSettings.show(this) { showHistory() }
+            return
+        }
+        val uri=data?.data?:return
         if(requestCode==AfterRun.REQUEST_FOLDER||requestCode==AfterRun.REQUEST_ZIP) {
             try {
                 if(requestCode==AfterRun.REQUEST_FOLDER) AfterRun.choose(this,uri) else AfterRun.chooseZip(this,uri)

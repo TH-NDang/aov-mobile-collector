@@ -11,14 +11,16 @@ object AfterRunSettings {
     fun show(activity:Activity,onSaved:()->Unit={}) {
         val c=activity
         val options=AfterRun.config(c)
+        val preferences=c.getSharedPreferences("after-run",0)
+        fun clearDraft() { preferences.edit().remove("draft-enabled").remove("draft-chat").remove("draft-prompt").commit() }
         val body=Ui.stack(c).apply { setPadding(Ui.dp(c,20),0,Ui.dp(c,20),Ui.dp(c,12)) }
         fun check(label:String,value:Boolean)=CheckBox(c).apply {
             text=label;isChecked=value;setTextColor(Ui.ink);textSize=14f;body.addView(this)
         }
-        val enabled=check("Tự lưu kết quả lên Drive sau khi hoàn tất lượt",options.enabled)
+        val enabled=check("Tự lưu kết quả lên Drive sau khi hoàn tất lượt",preferences.getBoolean("draft-enabled",options.enabled))
         body.addView(Ui.text(c,"Lưu ZIP gồm ảnh chụp và ảnh gốc của lượt. Chọn ZIP đích: mỗi lượt cập nhật file đó. Chọn thư mục: tạo ZIP riêng mỗi lượt. Chỉ chạy khi lượt hoàn tất; tạm dừng hoặc bấm Dừng sẽ giữ kết quả trong app.",12f,Ui.muted))
-        val chat=check("Drive tải xong → mở ChatGPT → dot của bạn → gửi câu lệnh",options.chat)
-        val prompt=Ui.field(c,"Câu lệnh đã lưu",options.prompt).apply {
+        val chat=check("Drive tải xong → mở ChatGPT → dot của bạn → gửi câu lệnh",preferences.getBoolean("draft-chat",options.chat))
+        val prompt=Ui.field(c,"Câu lệnh đã lưu",preferences.getString("draft-prompt",options.prompt).orEmpty()).apply {
             isSingleLine=false;minLines=3;maxLines=7
             inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_MULTI_LINE
         }
@@ -27,10 +29,10 @@ object AfterRunSettings {
         body.addView(Ui.text(c,if(source==null) "Chưa chọn vị trí trên Drive" else
             (if(android.provider.DocumentsContract.isTreeUri(source)) "Thư mục Drive: " else "ZIP đích (cập nhật mỗi lượt): ")+AfterRun.destinationLabel(c),12f,if(source==null) Ui.warning else Ui.success))
         val dialog=AlertDialog.Builder(c).setTitle("Sau khi hoàn tất")
-            .setView(ScrollView(c).apply { addView(body) }).setPositiveButton("Lưu",null).setNegativeButton("Đóng",null).create()
+            .setView(ScrollView(c).apply { addView(body) }).setPositiveButton("Lưu",null).setNegativeButton("Đóng") { _,_ -> clearDraft() }.create()
         fun draft() {
-            c.getSharedPreferences("after-run",0).edit().putBoolean("enabled",enabled.isChecked)
-                .putBoolean("chat",chat.isChecked).putString("prompt",prompt.text.toString()).commit()
+            preferences.edit().putBoolean("draft-enabled",enabled.isChecked)
+                .putBoolean("draft-chat",chat.isChecked).putString("draft-prompt",prompt.text.toString()).commit()
         }
         body.addView(Ui.button(c,"Chọn ZIP đích trên Google Drive") {
             draft()
@@ -45,8 +47,7 @@ object AfterRunSettings {
             } catch(e:Exception) { AlertDialog.Builder(c).setMessage(e.message?:"Không mở được bộ chọn Drive").setPositiveButton("Đã hiểu",null).show() }
         })
         body.addView(Ui.button(c,"Chọn thư mục Drive (nếu có)") {
-            c.getSharedPreferences("after-run",0).edit().putBoolean("enabled",enabled.isChecked)
-                .putBoolean("chat",chat.isChecked).putString("prompt",prompt.text.toString()).commit()
+            draft()
             try {
                 activity.startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
@@ -72,9 +73,10 @@ object AfterRunSettings {
                 } catch(e:Exception) { AlertDialog.Builder(c).setMessage(e.message).setPositiveButton("Đã hiểu",null).show() }
             })
         }
+        dialog.setOnCancelListener { clearDraft() }
         dialog.show()
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            try { AfterRun.saveConfig(c,enabled.isChecked,chat.isChecked,prompt.text.toString());dialog.dismiss();onSaved() }
+            try { AfterRun.saveConfig(c,enabled.isChecked,chat.isChecked,prompt.text.toString());clearDraft();dialog.dismiss();onSaved() }
             catch(e:Exception) { prompt.error=e.message }
         }
     }

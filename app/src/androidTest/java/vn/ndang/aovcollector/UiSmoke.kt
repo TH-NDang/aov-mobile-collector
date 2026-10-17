@@ -194,7 +194,7 @@ class UiSmoke:Instrumentation() {
             var previousBytes=byteArrayOf()
             for(fixedRun in listOf("smoke-fixed-first","smoke-fixed-second")) {
                 File(targetContext.filesDir,"captures/$fixedRun").apply { mkdirs() }.resolve("result.txt").writeText(fixedRun)
-                AfterRun.finished(targetContext,fixedRun)
+                if(AfterRun.state(targetContext,fixedRun)==null) AfterRun.finished(targetContext,fixedRun)
                 awaitStage("waiting-drive",run=fixedRun)
                 val saved=AfterRun.state(targetContext,fixedRun)!!
                 check(saved.getString("uri")==fixed.toString()&&saved.getString("filename")=="aov-latest.zip")
@@ -217,9 +217,9 @@ class UiSmoke:Instrumentation() {
                 awaitStage("done",run=fixedRun)
                 File(targetContext.filesDir,"captures/$fixedRun").deleteRecursively()
             }
-            android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,fixedTreeUri)
             targetContext.contentResolver.releasePersistableUriPermission(fixed,
                 Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,fixedTreeUri)
             val interrupted="smoke-after-interrupted"
             AfterRun.finished(targetContext,interrupted)
             AfterRun.update(targetContext,interrupted,"sending","Simulate process death after send attempt")
@@ -664,7 +664,24 @@ class UiSmoke:Instrumentation() {
             check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Tự lưu kết quả lên Drive sau khi hoàn tất lượt") }.isNotEmpty())
             check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Drive tải xong → mở ChatGPT → dot của bạn → gửi câu lệnh") }.isNotEmpty())
             snap("13-after-run-settings")
-            click("Lưu")
+            click("Tự lưu kết quả lên Drive sau khi hoàn tất lượt")
+            val zipButton="Chọn ZIP đích trên Google Drive"
+            nodes().flatMap { it.findAccessibilityNodeInfosByText(zipButton) }.first { it.text?.toString()==zipButton }
+                .performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+            waitForIdleSync();SystemClock.sleep(300)
+            click(zipButton)
+            check(!AfterRun.config(targetContext).enabled) { "Picking a location applied an unsaved automation setting" }
+            fun afterSettingsVisible()=nodes().flatMap { it.findAccessibilityNodeInfosByText("Sau khi hoàn tất") }
+                .any { it.isVisibleToUser }
+            repeat(3) {
+                if(!afterSettingsVisible()) {
+                    automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+                    waitForIdleSync();SystemClock.sleep(450)
+                }
+            }
+            waitFor("Drive picker cancellation did not return to settings") { afterSettingsVisible() }
+            check(!AfterRun.config(targetContext).enabled) { "Cancelling the Drive picker enabled automation" }
+            click("Đóng")
             targetContext.getSharedPreferences("ui",0).edit().remove("theme").commit()
             result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
             finish(Activity.RESULT_OK,result)

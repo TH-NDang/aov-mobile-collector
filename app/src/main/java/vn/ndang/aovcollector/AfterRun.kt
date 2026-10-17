@@ -111,7 +111,7 @@ object AfterRun {
         val run=task.getString("run")
         if(task.optString("stage")!="queued") {
             if(task.optBoolean("chat")) CollectorService.current?.startAfterRunChat(run)
-            else update(c,run,"done","Đã tải lên Drive và xác nhận thành công")
+            else { update(c,run,"done","Đã tải lên Drive và xác nhận thành công");resume(c) }
             return
         }
         if(FileJob.running||CollectorService.libraryBusy||GamePhotoSync.busy) { resume(c);return }
