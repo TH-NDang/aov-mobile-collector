@@ -79,7 +79,12 @@ class AfterRunChat(private val service:CollectorService,val run:String,private v
         }
         val all=nodes(root).filter { it.isVisibleToUser }
         val dot=all.firstOrNull { AfterRunProtocol.dot(it.text?.toString().orEmpty())||AfterRunProtocol.dot(it.contentDescription?.toString().orEmpty()) }
+        val drawer=all.any { GameScreens.plain(it.text?.toString().orEmpty()) in
+            setOf("khonggian","dalenglich","tuychinh","khampha") }
         if(!choseDot) {
+            if(dot!=null&&!drawer&&all.count { it.isEditable&&it.isEnabled }==1) {
+                choseDot=true;later();return
+            }
             if(dot!=null) {
                 if(click(dot)) { choseDot=true;openedMenu=false }
             } else if(!openedMenu) {
@@ -96,8 +101,6 @@ class AfterRunChat(private val service:CollectorService,val run:String,private v
             later();return
         }
         // The destination heading must remain visible after the menu has closed.
-        val drawer=all.any { GameScreens.plain(it.text?.toString().orEmpty()) in
-            setOf("khonggian","dalenglich","tuychinh","khampha") }
         if(dot==null||drawer) { later();return }
         val edits=all.filter { it.isEditable&&it.isEnabled }
         if(edits.size!=1) { later();return }

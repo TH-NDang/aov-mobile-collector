@@ -18,6 +18,7 @@ import java.util.concurrent.Executors
 /** Durable post-run queue. A SAF write alone is never treated as a completed cloud upload. */
 object AfterRun {
     const val REQUEST_FOLDER=16
+    const val REQUEST_ZIP=17
     const val OPEN="after-run-settings"
     private const val PREFS="after-run"
     private val main=Handler(Looper.getMainLooper())
@@ -32,7 +33,7 @@ object AfterRun {
     fun saveConfig(c:Context,enabled:Boolean,chat:Boolean,prompt:String) {
         require(prompt.length<=12_000) { "Câu lệnh tối đa 12.000 ký tự" }
         if(enabled) {
-            require(folder(c)!=null) { "Chọn thư mục Google Drive trước khi bật" }
+            require(folder(c)!=null) { "Chọn ZIP đích hoặc thư mục Google Drive trước khi bật" }
             require(!chat||prompt.isNotBlank()) { "Nhập câu lệnh để gửi vào dot của bạn" }
         }
         require(c.getSharedPreferences(PREFS,0).edit().putBoolean("enabled",enabled)
@@ -47,10 +48,28 @@ object AfterRun {
         }
         c.contentResolver.takePersistableUriPermission(uri,
             Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-        require(c.getSharedPreferences(PREFS,0).edit().putString("tree",uri.toString()).commit()) {
+        require(c.getSharedPreferences(PREFS,0).edit().putString("tree",uri.toString()).putString("label",destinationName(c,uri)).commit()) {
             "Không lưu được thư mục Drive"
         }
     }
+    fun chooseZip(c:Context,uri:Uri) {
+        require(!DocumentsContract.isTreeUri(uri)&&uri.authority.orEmpty().startsWith("com.google.android.apps.docs.storage")) {
+            "Hãy mở Google Drive trong bộ chọn và tạo ZIP tại vị trí muốn lưu"
+        }
+        c.contentResolver.takePersistableUriPermission(uri,
+            Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+        require(c.getSharedPreferences(PREFS,0).edit().putString("tree",uri.toString()).putString("label",destinationName(c,uri)).commit()) {
+            "Không lưu được ZIP đích trên Drive"
+        }
+    }
+    fun destinationLabel(c:Context)=c.getSharedPreferences(PREFS,0).getString("label","Đã chọn vị trí trên Drive").orEmpty()
+    private fun destinationName(c:Context,uri:Uri):String=try {
+        val doc=if(DocumentsContract.isTreeUri(uri)) DocumentsContract.buildDocumentUriUsingTree(uri,
+            DocumentsContract.getTreeDocumentId(uri)) else uri
+        c.contentResolver.query(doc,arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),null,null,null)?.use {
+            if(it.moveToFirst()) it.getString(0) else null
+        }?:"Vị trí Drive đã chọn"
+    } catch(_:Exception) { "Vị trí Drive đã chọn" }
     private fun home(c:Context)=File(c.filesDir,"after-run").apply { mkdirs() }
     private fun file(c:Context,run:String):File {
         require(File(run).name==run&&run.isNotBlank()&&run!="."&&run!="..")
@@ -63,6 +82,9 @@ object AfterRun {
     }
     private fun states(c:Context)=home(c).listFiles().orEmpty().filter { it.extension=="json" }
         .mapNotNull { try { JSONObject(it.readText()) } catch(_:Exception) { null } }.sortedBy { it.optLong("created") }
+    private val activeStages=setOf("queued","writing","waiting-drive","drive-confirmed","chat-opening",
+        "prompt-filled","sending","chat-failed","send-uncertain")
+    fun active(c:Context):JSONObject?=states(c).firstOrNull { it.optString("stage") in activeStages }
     fun latest(c:Context):JSONObject?=states(c).lastOrNull()
     @Synchronized fun finished(c:Context,run:String) {
         val options=config(c)
@@ -82,7 +104,10 @@ object AfterRun {
     }
     private fun advance(c:Context) {
         if(writing||CollectorService.current?.isWorking==true) return
-        val task=states(c).firstOrNull { it.optString("stage") in setOf("queued","drive-confirmed","chat-opening","prompt-filled") }?:return
+        // Serialize batches: a fixed ZIP must not be overwritten by the next run before the
+        // current upload/command is confirmed or explicitly skipped.
+        val task=active(c)?:return
+        if(task.optString("stage") !in setOf("queued","drive-confirmed","chat-opening","prompt-filled")) return
         val run=task.getString("run")
         if(task.optString("stage")!="queued") {
             if(task.optBoolean("chat")) CollectorService.current?.startAfterRunChat(run)
@@ -95,7 +120,7 @@ object AfterRun {
             GamePhotoSync.request(c);resume(c);return
         }
         val tree=folder(c,task.optString("tree"))
-        if(tree==null) { update(c,run,"failed","Mất quyền thư mục Drive. Chọn lại thư mục rồi thử lại.");return }
+        if(tree==null) { update(c,run,"failed","Mất quyền vị trí Drive. Chọn lại ZIP đích hoặc thư mục rồi thử lại.");return }
         writing=true
         update(c,run,"writing","Đang ghi ZIP vào thư mục Drive")
         FileJob.start(c,"Đang lưu kết quả lên Drive","Lưu Drive sau lượt")
@@ -121,10 +146,12 @@ object AfterRun {
             .filter { it.isDirectory&&it.name==nativeRun }.flatMap { it.walkTopDown() }.filter { it.isFile }.toList()
         val files=(runDir.walkTopDown().filter { it.isFile }.toList()+native).filter { it.extension!="part" }.distinct()
         require(files.isNotEmpty()) { "Lượt chưa có dữ liệu để lưu" }
-        val parent=DocumentsContract.buildDocumentUriUsingTree(tree,DocumentsContract.getTreeDocumentId(tree))
         val task=state(c,run)?:error("Mất tiến độ lưu Drive")
-        val uri=DocumentsContract.createDocument(c.contentResolver,parent,"application/zip",task.getString("filename"))
-            ?:error("Drive không tạo được file")
+        val uri=if(DocumentsContract.isTreeUri(tree)) {
+            val parent=DocumentsContract.buildDocumentUriUsingTree(tree,DocumentsContract.getTreeDocumentId(tree))
+            DocumentsContract.createDocument(c.contentResolver,parent,"application/zip",task.getString("filename"))
+                ?:error("Drive không tạo được file")
+        } else tree // User explicitly created this dedicated latest-results ZIP during setup.
         val actual=c.contentResolver.query(uri,arrayOf(DocumentsContract.Document.COLUMN_DISPLAY_NAME),null,null,null)?.use {
             if(it.moveToFirst()) it.getString(0) else null
         }?:error("Không đọc được tên file Drive")
@@ -187,12 +214,14 @@ object AfterRun {
     @Synchronized fun cancel(c:Context,run:String) {
         val task=state(c,run)?:return
         val stage=task.optString("stage")
-        if(stage in setOf("done","send-uncertain","cancelled")) return
+        if(stage in setOf("done","cancelled")) return
         if(stage=="writing") FileJob.cancel()
         CollectorService.current?.cancelAfterRunChat(run)
         update(c,run,if(stage=="sending") "send-uncertain" else "cancelled",
             if(stage=="sending") "Đã dừng theo dõi lần gửi. Kiểm tra ChatGPT; app không gửi lại."
+            else if(stage=="send-uncertain") "Đã bỏ qua theo dõi lần gửi này; không tự gửi lại"
             else "Đã dừng thao tác sau lượt; dữ liệu trong app được giữ lại")
+        resume(c)
     }
     @Synchronized fun retry(c:Context,run:String) {
         val task=state(c,run)?:return

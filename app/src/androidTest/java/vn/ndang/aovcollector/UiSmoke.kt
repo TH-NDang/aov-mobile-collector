@@ -142,12 +142,12 @@ class UiSmoke:Instrumentation() {
             val savedCommand="Phân tích kết quả đã lưu trên Drive · smoke"
             AfterRun.saveConfig(targetContext,true,true,savedCommand)
             AfterRun.finished(targetContext,nativeRun)
-            fun awaitStage(wanted:String,timeout:Long=25_000) {
+            fun awaitStage(wanted:String,timeout:Long=25_000,run:String=nativeRun) {
                 val until=SystemClock.uptimeMillis()+timeout
-                while(AfterRun.state(targetContext,nativeRun)?.optString("stage")!=wanted&&SystemClock.uptimeMillis()<until)
+                while(AfterRun.state(targetContext,run)?.optString("stage")!=wanted&&SystemClock.uptimeMillis()<until)
                     SystemClock.sleep(150)
-                check(AfterRun.state(targetContext,nativeRun)?.optString("stage")==wanted) {
-                    "Post-run expected $wanted: ${AfterRun.state(targetContext,nativeRun)}"
+                check(AfterRun.state(targetContext,run)?.optString("stage")==wanted) {
+                    "Post-run expected $wanted: ${AfterRun.state(targetContext,run)}"
                 }
             }
             awaitStage("waiting-drive")
@@ -165,6 +165,61 @@ class UiSmoke:Instrumentation() {
             check(sentText=="dot\n"+savedCommand) { "Command went to the wrong destination: $sentText" }
             AfterRun.finished(targetContext,nativeRun)
             check(AfterRun.state(targetContext,nativeRun)!!.getString("stage")=="done")
+            // The next launch may resume an already open dot page, with a non-clickable heading.
+            val dotAgain="smoke-dot-already-open"
+            val nextCommand="Smoke · dot đã mở sẵn"
+            AfterRun.saveConfig(targetContext,true,true,nextCommand)
+            File(targetContext.filesDir,"captures/$dotAgain").apply { mkdirs() }.resolve("result.txt").writeText(dotAgain)
+            AfterRun.finished(targetContext,dotAgain);awaitStage("waiting-drive",run=dotAgain)
+            val nextUpload=AfterRun.state(targetContext,dotAgain)!!
+            AfterRun.driveNotification(targetContext,AfterRunProtocol.DRIVE,"Uploaded "+nextUpload.getString("filename"))
+            awaitStage("done",run=dotAgain)
+            val sentAgain=android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(
+                "run-as com.openai.chatgpt cat files/sent.txt")).use { it.bufferedReader().readText() }
+            check(sentAgain=="dot\n"+nextCommand) { "Already-open dot page was not handled: $sentAgain" }
+            android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,android.net.Uri.parse(nextUpload.getString("uri")))
+            File(targetContext.filesDir,"captures/$dotAgain").deleteRecursively()
+            // Google Drive can expose create-file without exposing folder selection. Persist a
+            // dedicated ZIP URI and overwrite only that explicitly chosen latest-results file.
+            val fixedTreeUri=android.provider.DocumentsContract.createDocument(targetContext.contentResolver,
+                photoRoot,"application/zip","aov-latest.zip")!!
+            val fixed=android.provider.DocumentsContract.buildDocumentUri("vn.ndang.aovcollector.test.photos","aov-latest.zip")
+            targetContext.startActivity(Intent(context,PhotoGrantActivity::class.java).setData(fixed)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            waitForIdleSync();SystemClock.sleep(700)
+            targetContext.contentResolver.takePersistableUriPermission(fixed,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            targetContext.getSharedPreferences("after-run",0).edit().putString("tree",fixed.toString()).commit()
+            AfterRun.saveConfig(targetContext,true,false,"")
+            var previousBytes=byteArrayOf()
+            for(fixedRun in listOf("smoke-fixed-first","smoke-fixed-second")) {
+                File(targetContext.filesDir,"captures/$fixedRun").apply { mkdirs() }.resolve("result.txt").writeText(fixedRun)
+                AfterRun.finished(targetContext,fixedRun)
+                awaitStage("waiting-drive",run=fixedRun)
+                val saved=AfterRun.state(targetContext,fixedRun)!!
+                check(saved.getString("uri")==fixed.toString()&&saved.getString("filename")=="aov-latest.zip")
+                val bytes=targetContext.contentResolver.openInputStream(fixed)!!.use { it.readBytes() }
+                check(bytes.isNotEmpty()&&!bytes.contentEquals(previousBytes)) { "Fixed Drive ZIP did not update" }
+                previousBytes=bytes
+                if(fixedRun=="smoke-fixed-first") {
+                    File(targetContext.filesDir,"captures/smoke-fixed-second").apply { mkdirs() }
+                        .resolve("result.txt").writeText("smoke-fixed-second")
+                    AfterRun.finished(targetContext,"smoke-fixed-second")
+                    SystemClock.sleep(1600)
+                    check(AfterRun.state(targetContext,"smoke-fixed-second")!!.getString("stage")=="queued") {
+                        "Next run overwrote a ZIP still waiting for Drive confirmation"
+                    }
+                    targetContext.contentResolver.openInputStream(fixed)!!.use { check(it.readBytes().contentEquals(bytes)) }
+                }
+                AfterRun.driveNotification(targetContext,AfterRunProtocol.DRIVE,"Uploaded aov-latest.zip",saved.getLong("uploadStarted")-1)
+                check(AfterRun.state(targetContext,fixedRun)!!.getString("stage")=="waiting-drive")
+                AfterRun.driveNotification(targetContext,AfterRunProtocol.DRIVE,"Uploaded aov-latest.zip")
+                awaitStage("done",run=fixedRun)
+                File(targetContext.filesDir,"captures/$fixedRun").deleteRecursively()
+            }
+            android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,fixedTreeUri)
+            targetContext.contentResolver.releasePersistableUriPermission(fixed,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             val interrupted="smoke-after-interrupted"
             AfterRun.finished(targetContext,interrupted)
             AfterRun.update(targetContext,interrupted,"sending","Simulate process death after send attempt")
@@ -398,14 +453,14 @@ class UiSmoke:Instrumentation() {
                         setOf("tat-ca-quan-co"),openGame=true,checkAccount=true,traceEntry=false))))
                     service!!.start()
                 }
-                check(window("Chưa có tài khoản đã lưu")!=null) { "Missing account silently disabled UID verification" }
+                waitFor("Missing account silently disabled UID verification") { window("Chưa có tài khoản đã lưu")!=null }
                 press("Chưa có tài khoản đã lưu","Hủy")
                 val a=Accounts.save(targetContext,"17514483308299377","a@example.com","password-a",label="Tài khoản A")
                 val b=Accounts.save(targetContext,"17514483308299378","b@example.com","password-b",label="Tài khoản B")
                 Accounts.select(targetContext,a)
                 runOnMainSync { service!!.start() }
                 val title="Chọn tài khoản cho lượt chạy"
-                check(window(title)!=null) { "Run did not offer the account picker" }
+                waitFor("Run did not offer the account picker") { window(title)!=null }
                 press(title,Accounts.list(targetContext).first { it.id==b }.caption)
                 snap("01d-account-picker")
                 press(title,"Chạy")
@@ -613,7 +668,24 @@ class UiSmoke:Instrumentation() {
             targetContext.getSharedPreferences("ui",0).edit().remove("theme").commit()
             result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
             finish(Activity.RESULT_OK,result)
-        } catch(t:Throwable) { result.putString("stream","SMOKE_FAILED: ${t.stackTraceToString()}\n");finish(Activity.RESULT_CANCELED,result) }
+        } catch(t:Throwable) {
+            try {
+                val auto=getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+                val out=File(targetContext.filesDir,"smoke").apply { mkdirs() }
+                auto.takeScreenshot()?.let { shot -> File(out,"failure.png").outputStream().use {
+                    shot.compress(Bitmap.CompressFormat.PNG,100,it)
+                };shot.recycle() }
+                val tree=StringBuilder()
+                fun visit(n:AccessibilityNodeInfo,depth:Int) {
+                    if(depth>24||tree.length>100_000) return
+                    tree.append("  ".repeat(depth)).append(n.className).append(" text=")
+                        .append(if(n.isPassword) "[password]" else n.text).append(" desc=").append(n.contentDescription).append('\n')
+                    for(i in 0 until n.childCount) n.getChild(i)?.let { visit(it,depth+1) }
+                }
+                auto.windows.mapNotNull { it.root }.forEach { visit(it,0) }
+                File(out,"failure-ui.txt").writeText(tree.toString())
+            } catch(_:Throwable) {}
+            result.putString("stream","SMOKE_FAILED: ${t.stackTraceToString()}\n");finish(Activity.RESULT_CANCELED,result) }
     }
 }
 

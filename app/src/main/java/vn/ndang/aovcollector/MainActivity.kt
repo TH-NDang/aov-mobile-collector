@@ -752,8 +752,11 @@ class MainActivity : Activity() {
     }
     @Deprecated("Legacy activity result API") override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
         super.onActivityResult(requestCode,resultCode,data);if(resultCode!=RESULT_OK) return;val uri=data?.data?:return
-        if(requestCode==AfterRun.REQUEST_FOLDER) {
-            try { AfterRun.choose(this,uri);AfterRunSettings.show(this) { showHistory() } }
+        if(requestCode==AfterRun.REQUEST_FOLDER||requestCode==AfterRun.REQUEST_ZIP) {
+            try {
+                if(requestCode==AfterRun.REQUEST_FOLDER) AfterRun.choose(this,uri) else AfterRun.chooseZip(this,uri)
+                AfterRunSettings.show(this) { showHistory() }
+            }
             catch(e:Exception) { message("Không chọn được Drive: "+(e.message?:"Lỗi quyền thư mục")) }
             return
         }

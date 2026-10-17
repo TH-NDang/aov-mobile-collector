@@ -13,7 +13,7 @@ import java.nio.file.Files;
 /** No network or accounts. Exercises navigation and sending in a separate application's real UI. */
 public class MainActivity extends Activity {
     private LinearLayout body;
-    @Override public void onCreate(Bundle state) { super.onCreate(state);home(); }
+    @Override public void onCreate(Bundle state) { super.onCreate(state);if(new File(getFilesDir(),"sent.txt").exists()) dot();else home(); }
     private void page(String heading) {
         body=new LinearLayout(this);body.setOrientation(LinearLayout.VERTICAL);body.setPadding(24,80,24,24);
         TextView title=new TextView(this);title.setText(heading);title.setTextSize(24);body.addView(title);setContentView(body);

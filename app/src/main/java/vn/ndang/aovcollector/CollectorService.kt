@@ -178,7 +178,8 @@ class CollectorService : AccessibilityService() {
             val notification=event.parcelableData as? android.app.Notification
             if(notification==null||notification.flags and android.app.Notification.FLAG_ONGOING_EVENT==0) {
                 AfterRun.driveNotification(this,AfterRunProtocol.DRIVE,
-                    event.text.joinToString("\n")+"\n"+AfterRun.notificationText(notification))
+                    event.text.joinToString("\n")+"\n"+AfterRun.notificationText(notification),
+                    notification?.`when`?:0L)
             }
         }
         if (running && event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
