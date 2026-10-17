@@ -1,6 +1,6 @@
 # Thu thập Bách khoa Cờ Liên Quân
 
-Nhánh triển khai: `codex/chess-encyclopedia-collector`, phát triển từ `claude/dark-theme`.
+Nhánh triển khai: `codex/chess-hero-row-capture-fix`, phát triển từ `codex/chess-encyclopedia-collector`.
 
 ## Bắt đầu
 
@@ -26,6 +26,8 @@ Nếu không tự mở game, hãy mở sẵn sảnh Cờ Liên Quân hoặc Bác
 Các tùy chọn **độc lập**:
 - **Luôn kéo và chụp đến cuối**: mỗi tab hoặc chi tiết được chọn sẽ tự động cuộn và lưu từng trang cho đến khi nội dung không di chuyển. Không có tùy chọn bật/tắt việc này.
 - **Mở từng quân cờ**: chỉ áp dụng cho tab **Tất cả quân cờ**, mở thẻ quân cờ và chụp chi tiết (có thể kéo).
+- **Ảnh mỗi hàng quân cờ (luôn bật)**: ngoài ảnh toàn trang, lưu thêm một ảnh PNG *cắt riêng phần hàng có chân dung/tên/thuộc tính* trong thư mục \`quan-co/tat-ca-quan-co/hang/\`, trước khi mở bất kỳ tướng nào trên hàng; kể cả khi không chọn **Mở từng quân cờ**.
+- **Thứ tự duyệt**: xác định tên và hàng từ ảnh chụp hiện tại; mở theo *trái → phải*, hết hàng mới xuống dưới. Sau khi kéo trang mới, không click lại ảnh hoặc chữ còn sót của hàng trước.
 - **Mở từng phe và nghề**: chỉ áp dụng cho **Tương tác → Phe/Nghề**.
 - **Mở từng trang bị**: chỉ áp dụng cho **Trang bị**.
 - Tự mở game, xác minh UID, và lưu ảnh lịch sử đăng nhập có thể bật/tắt riêng.
@@ -45,10 +47,15 @@ captures/
     │   ├── tat-ca-quan-co/
     │   │   ├── 0003-chess__quan-co__tat-ca-quan-co__trang__001.png
     │   │   ├── 0003-chess__quan-co__tat-ca-quan-co__trang__002.png
+    │   │   ├── hang/
+    │   │   │   ├── 0003-chess__quan-co__tat-ca-quan-co__hang__001-violet-xxxxxxxxxx.png
+    │   │   │   └── 0003-chess__quan-co__tat-ca-quan-co__hang__002-fennik-xxxxxxxxxx.png
     │   │   └── tuong/
-    │   │       └── violet-xxxxxxxx/
-    │   │           ├── ...__001.png
-    │   │           └── ...__002.png
+    │   │       ├── violet/
+    │   │       │   ├── ...__001.png
+    │   │       │   └── ...__002.png
+    │   │       └── fennik/
+    │   │           └── ...__001.png
     │   └── phe-nghe/
     │       └── ...__001.png
     └── trang-bi/
@@ -59,22 +66,22 @@ captures/
                     └── ...__001.png
 ```
 
-Tên item lấy từ OCR ở phần tiêu đề popup khi có thể; hậu tố fingerprint giúp tránh đụng tên khi một tên OCR không được nhận ra. Tất cả ảnh giữ nguyên bản gốc PNG. Xuất ZIP tại Lịch sử giống các macro khác; ZIP chứa các thư mục lồng nhau.
+**Đối với quân cờ:** tên thư mục là **tên tướng** chuẩn hoá thành slug (ví dụ \`violet\`, \`fennik\`, \`darcy\`), không phải tên kỹ năng, không thêm mã fingerprint sau tên. Ưu tiên tên ở phần đầu bảng chi tiết, dự phòng bằng tên đọc ngay trên thẻ quân cờ. Nếu tên đọc từ thẻ khác tên bảng chi tiết, tác vụ dừng để tránh gán ảnh sai; không đoán tên từ mô tả/chiêu. Mỗi hàng có một ảnh PNG riêng trong \`hang/\`, ngoài ảnh toàn trang. Các mục khác giữ quy tắc đặt tên cũ. Xuất ZIP tại Lịch sử giống các macro khác; ZIP chứa các thư mục lồng nhau.
 
-**Tạm dừng / Dừng / Tiếp tục** dùng chung bảng nổi. Những mục và tab đã hoàn tất được lưu vào `chess-progress.json`. Khi tiếp tục, ứng dụng tìm lại Bách khoa, bỏ qua các mục đã hoàn tất. Nếu dừng ở giữa tab, chương trình có thể phải kéo lại từ đầu tab nhưng không chủ động đánh dấu lại item đã hoàn tất.
+**Tạm dừng / Dừng / Tiếp tục** dùng chung bảng nổi. Những mục và tab đã hoàn tất được lưu vào `chess-progress.json`. Khi tiếp tục, ứng dụng tìm lại Bách khoa, bỏ qua các mục đã hoàn tất. Quân cờ được đánh dấu bằng tên thẻ (không bằng fingerprint pixel dễ đổi sau cuộn); hàng được đánh dấu bằng tập tên trong hàng. Nếu dừng ở giữa tab, chương trình có thể phải kéo lại từ đầu tab nhưng không chủ động đánh dấu lại item đã hoàn tất.
 
 ## Giới hạn và kiểm thử
 
 - Tọa độ đã hiệu chỉnh từ ảnh giao diện 2048 × 921 do người dùng cung cấp. UI update, độ phân giải khác, DPI, popup bất ngờ hoặc màn hình chưa load có thể khiến thao tác sai.
 - Khi chụp ảnh, bảng nổi được ẩn và Android giới hạn tốc độ ảnh. Bước dài có thể bị ngắt ngay khi tạm dừng.
 - Chụp đến cuối được xác định bằng độ khác nhau của phần nội dung, thử kéo bổ sung khi không đổi; giới hạn an toàn 65 trang/tab, 16 ảnh/chi tiết. Trường hợp chưa đến cuối mà chạm giới hạn phải kiểm tra bằng tay.
-- Danh sách có ảnh động hoặc popup có giao diện mới có thể khiến nhận diện thẻ, đóng popup hoặc xác định điểm cuối không đầy đủ; ảnh chụp toàn trang vẫn được lưu.
+- Danh sách có ảnh động hoặc popup có giao diện mới có thể khiến nhận diện thẻ, đóng popup hoặc xác định điểm cuối không đầy đủ; ảnh chụp toàn trang vẫn được lưu. Thuật toán xác nhận phần chữ tên màu trắng trên thẻ và chân dung tương ứng; nếu OCR không thấy tên, hàng đó cần kiểm tra từ ảnh toàn trang. Không dùng tên chiêu làm tên thư mục.
 - Nên thử **Quân cờ → Tất cả quân cờ** và tắt mở chi tiết trước để kiểm tra khả năng cuộn/chụp trên điện thoại; sau đó mới bật thêm chi tiết quân cờ.
 - Không dùng tài khoản Liên Quân trên trình giả lập nếu việc đăng nhập có nguy cơ khóa tài khoản. GitHub Actions chỉ build/test app Android; **không thể xác nhận thao tác game thật** khi không có thiết bị/game được đăng nhập.
 
 ## Kiểm thử CI
 
-Workflow Build APK chạy unit test, lint, build universal/ARM64 và Android emulator UI smoke test. Unit test kiểm tra lựa chọn tab, tên file theo folder và máy trạng thái giả lập. Kiểm thử đầu-cuối trên app Liên Quân thật vẫn cần thao tác thủ công trên điện thoại.
+Workflow Build APK chạy unit test, lint, build universal/ARM64 và Android emulator UI smoke test. Unit test kiểm tra lựa chọn tab, tên file theo folder, thứ tự trái-phải từng hàng, nhận diện riêng hàng 2 sau cuộn, tránh trùng tên, ảnh từng hàng và máy trạng thái giả lập. Kiểm thử đầu-cuối trên app Liên Quân thật vẫn cần thao tác thủ công trên điện thoại.
 
 
 ## Ảnh gốc của game từ Pictures (tùy chọn)
