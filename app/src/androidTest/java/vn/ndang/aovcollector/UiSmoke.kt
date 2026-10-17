@@ -443,7 +443,7 @@ class UiSmoke:Instrumentation() {
                     .firstOrNull { it.findAccessibilityNodeInfosByText(title).isNotEmpty() }
                 fun press(title:String,text:String) {
                     waitForIdleSync()
-                    val node=window(title)?.findAccessibilityNodeInfosByText(text)?.firstOrNull { it.text?.toString()==text }
+                    val node=window(title)?.findAccessibilityNodeInfosByText(text)?.firstOrNull { it.text?.toString()?.equals(text,true)==true }
                         ?:error("Missing $text in $title")
                     check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK)||node.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK)==true)
                     waitForIdleSync();SystemClock.sleep(350)
