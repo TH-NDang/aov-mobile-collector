@@ -642,6 +642,9 @@ class UiSmoke:Instrumentation() {
             val closePreviewBounds=Rect().also { closePreviewNode.getBoundsInScreen(it) }
             check(closePreviewBounds.width()>=Ui.dp(targetContext,60)) { "Preview close button is clipped: $closePreviewBounds" }
             fun previewAction(label:String) {
+                waitFor("Missing preview action $label") { nodes().any { root ->
+                    root.findAccessibilityNodeInfosByText(label).any { it.contentDescription?.toString()==label }
+                } }
                 val node=nodes().flatMap { it.findAccessibilityNodeInfosByText(label) }
                     .firstOrNull { it.contentDescription?.toString()==label }?:error("Missing preview action $label")
                 check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK));waitForIdleSync()
@@ -724,7 +727,8 @@ class UiSmoke:Instrumentation() {
                 click("Đã hiểu")
             } finally { removeMonitor(exportMonitor) }
             android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,chosenZip)
-            runOnMainSync { service!!.showPanel() };click("Ảnh")
+            runOnMainSync { service!!.showPanel() }
+            previewAction("Mở hoặc đóng tiến trình ảnh")
             waitFor("Current images did not return after export") { nodes().any { it.findAccessibilityNodeInfosByText(savedRow.name).isNotEmpty() } }
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT };SystemClock.sleep(1000)
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1000)
