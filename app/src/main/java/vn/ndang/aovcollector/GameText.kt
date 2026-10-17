@@ -19,6 +19,30 @@ object GameText {
             GameScreens.Word(line.text,b.left.toDouble()/w,b.top.toDouble()/h,b.right.toDouble()/w,b.bottom.toDouble()/h) } }
     }
     /**
+     * Read ONLY the white hero title at the top of a Chess Encyclopedia detail drawer.
+     * The large skill heading is below y=.38; cropping before OCR prevents mistaking
+     * "Pháo đại" for "Violet" on the same popup. Called only on ambiguous full-screen OCR.
+     */
+    fun chessHeroTitle(screen:Bitmap):String? {
+        if(screen.width<=screen.height) return null
+        val x0=(screen.width*.345).toInt()
+        val y0=(screen.height*.16).toInt()
+        val width=(screen.width*.32).toInt().coerceAtMost(screen.width-x0)
+        val height=(screen.height*.19).toInt().coerceAtMost(screen.height-y0)
+        val crop=Bitmap.createBitmap(screen,x0,y0,width,height)
+        val enlarged=Bitmap.createScaledBitmap(crop,width*2,height*2,true)
+        crop.recycle()
+        val text=ocr(enlarged)?:return null
+        val located=text.textBlocks.flatMap { it.lines }.mapNotNull { line ->
+            val b=line.boundingBox?:return@mapNotNull null
+            GameScreens.Word(line.text,
+                (x0+b.left/2.0)/screen.width,(y0+b.top/2.0)/screen.height,
+                (x0+b.right/2.0)/screen.width,(y0+b.bottom/2.0)/screen.height)
+        }
+        return ChessWiki.modalHeroTitle(located)
+    }
+
+    /**
      * The account UID the game prints faintly at the bottom centre of most screens ("UID: 1751448330…"), or null.
      * The line is small and dim: it is read cut out, three times larger, as black on white.
      */

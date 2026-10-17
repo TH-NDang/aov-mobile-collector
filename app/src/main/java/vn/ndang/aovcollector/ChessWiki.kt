@@ -204,14 +204,23 @@ object ChessWiki {
     }
 
     /** Hero's name lives at the top of the detail drawer; the skill title is lower down. */
-    fun modalHeroTitle(words:List<GameScreens.Word>):String? =
-        words.asSequence().filter { it.y in .215.. .335 && it.x in .355.. .66 }
-            .map { it.text.trim().replace(Regex("\\s+\\d+$"),"").trim() }
-            .firstOrNull { name ->
+    fun modalHeroTitle(words:List<GameScreens.Word>,expected:String?=null):String? {
+        // A skill title can be OCR'd before the actual hero name. Restrict candidates
+        // to the heading strip ABOVE faction labels and choose the expected card name first.
+        val candidates=words.asSequence()
+            .filter { it.x in .345.. .67 && it.y in .175.. .345 }
+            .map { word -> word to word.text.trim().replace(Regex("\\s+\\d+$"),"").trim() }
+            .filter { (_,name) ->
                 name.length in 2..35 && name.count { it.isLetter() }>=2 &&
                 GameScreens.plain(name) !in NON_HERO_NAMES &&
                 !name.contains('…') && !name.contains("...")
-            }
+            }.toList()
+        if(expected!=null) candidates.firstOrNull {
+            safeName(it.second)==safeName(expected)
+        }?.let { return it.second }
+        return candidates.minWithOrNull(compareBy<Pair<GameScreens.Word,String>>(
+            { abs(it.first.y-.245) }, { it.first.x }))?.second
+    }
 
     /**
      * White title letters distinguish the hero's NAME from cyan faction/job labels.
@@ -352,6 +361,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         /** Long press, identify Save Photo → Sure, and record its current group. */
         fun nativeSave(group:String,item:String,x:Double,y:Double,
                        preserveDetail:Boolean=false,then:(Boolean)->Unit) { then(false) }
+        /** Re-read only the hero heading strip when full-screen OCR is ambiguous. */
+        fun readHeroTitle(then:(String?)->Unit) { then(null) }
         fun later(ms:Long,then:()->Unit)
         fun seen(id:String):Boolean
         fun finished(id:String)
@@ -559,26 +570,52 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                             " tại "+item.x+","+item.y+". Ảnh hàng đã lưu.")
                         return@look collect(at,page,signature,tiles,from+1)
                     }
-                    val header=if(kind=="tuong") ChessWiki.modalHeroTitle(l.words) else
+                    val header=if(kind=="tuong") ChessWiki.modalHeroTitle(l.words,item.label) else
                         l.words.firstOrNull { it.y in .215.. .335 &&
                             it.x in .35.. .79 && it.plain.length in 2..35 &&
                             !it.plain.contains("colienquan") }?.text
-                    // NEVER use a skill name to label a hero directory.
-                    if(kind=="tuong" && header!=null && item.label!=null &&
-                       ChessWiki.safeName(header)!=ChessWiki.safeName(item.label)) {
-                        l.discard()
-                        return@look fail("Ô quân cờ "+item.label+" mở nhầm popup "+header+
-                            ". Đã dừng để tránh lưu ảnh vào sai thư mục.")
+                    fun capture(verified:String?) {
+                        if(!screen.alive||completed) { l.discard();return }
+                        val title=verified?:item.label
+                        if(kind=="tuong"&&title==null) {
+                            l.discard()
+                            return fail("Không đọc được tên quân cờ trong thẻ hoặc vùng tiêu đề. Ảnh hàng vẫn được giữ.")
+                        }
+                        val slug=ChessWiki.safeName(title?:"muc")
+                        val folder=if(kind=="tuong") slug else slug+"-"+item.id.take(8)
+                        modal(at,page,signature,tiles,from,item,kind,folder,1,l,null,0)
                     }
-                    val title=header?:item.label
-                    if(kind=="tuong" && title==null) {
-                        l.discard()
-                        return@look fail("Không nhận dạng được tên quân cờ trong thẻ hoặc popup. "+
-                            "Ảnh hàng đã lưu, tránh lấy tên chiêu làm tên thư mục.")
+                    if(kind!="tuong") return@look capture(header)
+                    if(item.label!=null&&header!=null &&
+                       ChessWiki.safeName(header)==ChessWiki.safeName(item.label))
+                        return@look capture(item.label)
+
+                    // The full-screen pass sometimes reads a skill as the hero's title.
+                    // Do not conclude "wrong hero" from that unverified OCR result.
+                    screen.note("Tên popup chưa chắc chắn: thẻ="+(item.label?:"?")+
+                        ", OCR toàn màn hình="+(header?:"không thấy")+
+                        ". Đọc lại riêng vùng tên tướng.")
+                    fun verify(attempt:Int) {
+                        screen.readHeroTitle { precise ->
+                            if(!screen.alive||completed) { l.discard();return@readHeroTitle }
+                            if(precise!=null && (item.label==null ||
+                               ChessWiki.safeName(precise)==ChessWiki.safeName(item.label))) {
+                                screen.note("Đã xác minh tên quân cờ bằng OCR vùng tiêu đề: "+precise)
+                                capture(item.label?:precise)
+                            } else if(precise==null&&attempt<2) {
+                                screen.later(600) { verify(attempt+1) }
+                            } else {
+                                l.discard()
+                                if(precise==null) fail("Không đọc được tên quân cờ "+
+                                    (item.label?:"?")+" trong vùng tiêu đề sau 2 lần. "+
+                                    "Ảnh hàng vẫn được giữ; chưa lấy tên chiêu làm tên tướng.")
+                                else fail("Ô quân cờ "+(item.label?:"?")+" có tiêu đề popup là "+
+                                    precise+" (đã đọc riêng vùng tên tướng). "+
+                                    "Dừng để tránh lưu nhầm tướng.")
+                            }
+                        }
                     }
-                    val slug=ChessWiki.safeName(title?:"muc")
-                    val folder=if(kind=="tuong") slug else slug+"-"+item.id.take(8)
-                    modal(at,page,signature,tiles,from,item,kind,folder,1,l,null,0)
+                    verify(1)
                 }
             }
         }

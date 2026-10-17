@@ -843,6 +843,25 @@ class CollectorService : AccessibilityService() {
                     } } catch(e:Exception) { b.recycle();then(null) }
                 }
             }
+            override fun readHeroTitle(then:(String?)->Unit) {
+                grab(anyApp=true) { shot ->
+                    if(shot==null) return@grab then(null)
+                    try {
+                        io.execute {
+                            val title=try { GameText.chessHeroTitle(shot) }
+                                catch(e:Throwable) {
+                                    CrashLog.record(this@CollectorService,"Lỗi đọc riêng tiêu đề tướng Cờ Liên Quân",e)
+                                    null
+                                }
+                            shot.recycle()
+                            handler.post { if(alive()) then(title) }
+                        }
+                    } catch(e:Exception) {
+                        shot.recycle()
+                        then(null)
+                    }
+                }
+            }
             override fun tap(x:Double,y:Double,then:(Boolean)->Unit) {
                 touchGame(tapAt(x,y),true,then)
             }
