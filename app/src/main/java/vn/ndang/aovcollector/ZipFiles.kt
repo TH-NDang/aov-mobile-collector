@@ -28,6 +28,11 @@ object ZipFiles {
     /** The most an entry can take in a part: its data, which deflate grows by under 0.1% at worst, and its local
      *  header, data descriptor and central directory record, each with the name and room for extra fields. */
     private fun cost(file:File,name:String)=file.length()+file.length()/1000+256+2L*name.toByteArray().size
+    private fun relative(file:File,root:File):String {
+        val base=root.canonicalFile;val image=file.canonicalFile
+        require(image.path.startsWith(base.path+File.separator)) { "File ngoài thư mục ảnh" }
+        return image.relativeTo(base).invariantSeparatorsPath
+    }
 
     /**
      * Deals [files] out to parts: folders in alphabetical order, files by name within a folder, each folder whole
@@ -35,8 +40,7 @@ object ZipFiles {
      * folder, for example "01_aleister_elsu.zip".
      */
     fun plan(files:List<File>,root:File,limit:Long=PART_LIMIT):List<Part> {
-        val base=root.canonicalPath+File.separator
-        val names=files.associateWith { require(it.canonicalPath.startsWith(base)) { "File ngoài thư mục ảnh" };it.relativeTo(root).invariantSeparatorsPath }
+        val names=files.associateWith { relative(it,root) }
         val folders=files.groupBy { names.getValue(it).split('/').dropLast(1) }.toSortedMap(byFolder).values.map { it.sortedWith(compareBy(byName) { f -> f.name }) }
         val budget=limit-END_BYTES
         val parts=ArrayList<MutableList<File>>();var used=0L
@@ -71,7 +75,7 @@ object ZipFiles {
                 ZipOutputStream(counter.buffered(256*1024)).use { zip ->
                     for(file in part.files) {
                         number++
-                        val name=file.relativeTo(root).invariantSeparatorsPath
+                        val name=relative(file,root)
                         zip.setLevel(if(file.extension.equals("png",true)) Deflater.NO_COMPRESSION else Deflater.DEFAULT_COMPRESSION)
                         zip.putNextEntry(ZipEntry(name))
                         file.inputStream().use { input ->
@@ -100,3 +104,4 @@ object ZipFiles {
         override fun close() { flush() }
     }
 }
+

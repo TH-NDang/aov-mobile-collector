@@ -1,4 +1,4 @@
-# AOV Mobile Collector — v0.3
+# AOV Mobile Collector — v0.13.0
 
 App thử nghiệm Android 11+ để chụp dữ liệu menu Liên Quân VN bằng macro. Ảnh lưu trên máy, OCR chạy ngoại tuyến; app không có quyền Internet.
 
@@ -8,7 +8,7 @@ App thử nghiệm Android 11+ để chụp dữ liệu menu Liên Quân VN bằ
 3. Mở danh sách macro trên bảng nổi; tìm tên có dấu hoặc không dấu.
 4. Chọn **Lấy thông tin tướng**, rồi chọn cách lấy: **Theo tên tướng** (tick các tướng đã lưu hoặc gõ tên), **Các ô đầu danh sách** (số ô cần thu thập) hoặc **Tướng đang mở**. Với hai cách đầu, tick **Tự mở game** để app tự mở Liên Quân, đóng popup sự kiện và vào danh sách tướng.
 5. Bấm **Chạy**. Nút đổi thành **Tạm dừng**, rồi **Tiếp tục**. **Dừng** kết thúc lượt và giữ ảnh.
-6. **Chụp** lưu ảnh thủ công. **Về app** tạm dừng và mở lịch sử. **Đóng** tạm dừng và ẩn bảng. Dấu **−** thu gọn, vẫn chạy.
+6. **Chụp** lưu ảnh thủ công. Nút **Ảnh** có icon lịch sử mở bảng tiến trình bên phải: ảnh thu nhỏ của lượt hiện tại theo thứ tự, tên như violet-1, violet-2, trạng thái đang lưu/đã lưu/lỗi và tiến độ ảnh gốc, Drive. Bấm ảnh để mở lớn, dùng Trước/Sau hoặc vuốt để đổi ảnh, +/− hoặc chụm hai ngón để phóng to. Chép ảnh để dán sang app khác. Chọn nhiều ảnh → Xuất để lưu ZIP. Kéo tiêu đề để di chuyển, × để đóng riêng. Bảng có ước lượng thời gian từ các lượt đã hoàn tất cùng tác vụ. [Chi tiết bảng tiến trình](docs/CAPTURE_PROGRESS.md). **Về app** tạm dừng và mở lịch sử. **Đóng** tạm dừng và ẩn bảng. Dấu **−** thu gọn, vẫn chạy.
 7. Trong lịch sử, mở thư mục để xem ảnh; bấm **Chọn** hoặc nhấn giữ để chọn nhiều, **Lưu ZIP** hoặc **Xóa**. Menu từng mục có đổi tên. File ZIP lưu ra chứa các ZIP nhỏ dưới 450 MB, xếp theo chữ cái.
 8. **Nhập** trên header nhận ZIP đã xuất (cả dạng ZIP chứa ZIP nhỏ lẫn ZIP cũ) hoặc macro JSON. Macro JSON xuất hiện trong ô tìm của bảng nổi.
 
@@ -251,13 +251,21 @@ Mở rộng tùy chọn **Tự mở game** của v0.4.7 với các màn bạn g�
   - ML Kit có sẵn trong máy, đọc trên ảnh thu nhỏ một nửa;
   - cây trợ năng của Android, đọc được trang web và form.
 
-### Tài khoản test
+### Nhiều tài khoản (v0.9.0)
 
-- **Mục Tài khoản trên header của app:** nhập UID, tài khoản Garena và mật khẩu.
+- Mở **Tài khoản (N)** trên đầu app để **Thêm tài khoản**, **Sửa**, **Xóa từng tài khoản** hoặc chọn **Mặc định**. Mỗi tài khoản có tên gợi nhớ, UID, tên đăng nhập Garena và mật khẩu riêng. Khi sửa, để trống mật khẩu sẽ giữ mật khẩu cũ nếu còn đọc được.
+- Trong tác vụ, bật **Kiểm tra UID · chọn tài khoản khi bấm Chạy**. Tùy chọn này tự bật **Tự mở game**; thiếu tài khoản vẫn cho thiết lập và có nút **Quản lý tài khoản** hướng dẫn thêm tài khoản, thay vì khóa ô chọn.
+- Khi bắt đầu lượt mới có kiểm tra UID, app hiện **Chọn tài khoản cho lượt chạy**. Tài khoản đó được gắn với lượt và dùng cho cả UID cần kiểm tra lẫn thông tin đăng nhập Garena. Đổi tài khoản mặc định không đổi tài khoản của lượt đang dở. Tiếp tục lượt dùng đúng tài khoản đã chọn; nếu tài khoản bị xóa hoặc UID bị sửa thì app dừng và hướng dẫn sửa/tạo lượt mới, không tự chuyển sang tài khoản khác.
+- Tài khoản đơn từ phiên bản cũ tự chuyển sang danh sách mới, giữ nguyên dữ liệu mã hóa. Nếu dữ liệu còn UID nhưng khóa/mật khẩu không đọc được, tài khoản vẫn hiện với trạng thái **cần nhập lại mật khẩu** để sửa. Không thể khôi phục thông tin đã bị xóa khỏi dữ liệu ứng dụng. Lượt cũ đã qua bước vào game nhưng chưa gắn tài khoản cần tạo lượt mới để xác minh đúng tài khoản; ảnh cũ được giữ.
+- Tên đăng nhập và mật khẩu tiếp tục được mã hóa AES-GCM bằng Android Keystore, không ghi vào macro, nhật ký hoặc file ZIP. Lựa chọn tài khoản của lượt chỉ nằm trong dữ liệu riêng của app. App không có quyền Internet.
+
+### Kiểm tra UID trong game
+
+- **Mục Tài khoản trên header của app:** lưu các tài khoản và chọn tài khoản muốn dùng khi chạy.
   - Mật khẩu (và tên tài khoản) được mã hóa AES-GCM bằng khóa nằm trong Android Keystore của máy, không lấy ra được.
   - Mật khẩu không nằm trong file ZIP, không ghi vào nhật ký, và không hiện lại (chỉ Lưu lại hoặc Xóa).
   - App vẫn không có quyền Internet.
-- **Tùy chọn "Kiểm tra UID là tài khoản test"** trong tác vụ Danh sách tướng, dùng cùng Tự mở game.
+- **Tùy chọn "Kiểm tra UID · chọn tài khoản khi bấm Chạy"** trong các tác vụ có Tự mở game: Danh sách tướng, Thống kê tướng, Chiến khu và Cờ Liên Quân.
   - **Đọc UID:**
     - Ở sảnh, app đọc dòng "UID: …" mờ ở cuối màn hình. Dòng này được cắt riêng, chuyển chữ đen nền trắng và phóng to 3 lần cho dễ đọc.
     - Đọc không được 3 lần thì app mở **hồ sơ** (avatar) → **UID** → đọc số trong hộp "Xem UID" → bấm X → quay lại sảnh.
@@ -656,3 +664,8 @@ Các tùy chọn chạy nhanh, chỉ chụp Chi tiết, chuyển thẳng giữa 
 
 - **Trên máy ảo CI**, UiSmoke chọn giao diện Tối rồi chụp màn Lịch sử, danh sách tác vụ và form Lấy thông tin tướng. Nó kiểm tra độ sáng trung bình của màn hình là tối.
 - Toàn bộ kiểm tra cũ vẫn chạy với tên mục mới trong danh sách tác vụ.
+
+
+Ảnh gốc Cờ Liên Quân: chọn **Ảnh từ Pictures → Chọn / đổi thư mục Pictures → Bộ nhớ trong/Pictures** một lần, rồi bật các nhóm tải ảnh trong macro Cờ. Sau **Save Photo → Sure**, ảnh được tự chép vào thư viện app theo nhóm; file xuất hiện chậm được tự thử lại. Mở ảnh tại **Ảnh từ Pictures → Mở ảnh gốc đã nhập trong Lịch sử**.
+
+Sau mỗi lượt hoàn tất, có thể tự lưu vào ZIP đích hoặc thư mục Google Drive và gửi câu lệnh đã lưu trong ChatGPT → **dot của bạn**. Cấu hình tại **Sau khi hoàn tất** trên màn hình chính. App xác minh nội dung ZIP đọc lại và đợi thông báo tải thành công từ Drive có đúng tên file trước khi mở ChatGPT. Cần bật thông báo Drive và giữ dịch vụ Trợ năng hoạt động. Nếu Drive không phát thông báo xác nhận đúng tên ZIP, trạng thái giữ ở chờ và chưa gửi lệnh. Chưa xác nhận được lần gửi thì app không tự gửi trùng.

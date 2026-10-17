@@ -71,6 +71,21 @@ class ZipFilesTest {
         assertEquals(1,written.size)
         assertEquals("01_airi_zata.zip",written[0].name)
     }
+    @Test fun canonicalFilesAndAnAliasedRootKeepSafeRelativeZipPaths() {
+        val alias=File(root.parentFile,"alias-"+root.name)
+        Files.createSymbolicLink(alias.toPath(),root.toPath())
+        try {
+            for((i,pair) in listOf(flat.canonicalFile to alias,File(alias,flat.relativeTo(root).path) to root).withIndex()) {
+                val out=File(root,"alias-export-$i.zip")
+                out.outputStream().use { ZipFiles.export(listOf(pair.first),pair.second,it,{ false }) { _,_,_,_,_-> } }
+                ZipFile(parts(out).single().second).use { zip ->
+                    val entries=zip.entries().toList()
+                    assertEquals(listOf("run-1/0002-page-01-list.png"),entries.map { it.name })
+                    assertTrue(zip.getInputStream(entries.single()).readBytes().contentEquals(flat.readBytes()))
+                }
+            }
+        } finally { Files.deleteIfExists(alias.toPath()) }
+    }
 
     @Test fun splitsAFolderLargerThanAPartByFile() {
         val big=(1..5).map { image("run-2/arum/000$it-hero-007-shot.png",30_000) }
@@ -93,3 +108,4 @@ class ZipFilesTest {
         ZipFiles.export(listOf(outside),root,ByteArrayOutputStream(),{ false }) { _,_,_,_,_ -> }
     }
 }
+

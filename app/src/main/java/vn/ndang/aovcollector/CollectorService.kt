@@ -39,6 +39,9 @@ class CollectorService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private var panel: LinearLayout? = null
+    private val captureProgress by lazy { CaptureProgressPanel(this,{ swallowed=true },{ exportCaptureHistory(it) }) { runId.ifBlank { manualRunId } to listOf(lastStatus,timingSummary()).filter { it.isNotBlank() }.joinToString("\n") } }
+    internal val captureProgressView:View? get()=captureProgress.view
+    internal val capturePreviewView:View? get()=captureProgress.previewView
     private var label: TextView? = null
     private var macro: Macro? = null
     private var index = 0
@@ -46,12 +49,16 @@ class CollectorService : AccessibilityService() {
     private var busy = false
     private var generation = 0
     private var runId = ""
+    private var manualRunId=""
+    private var runAccountId:String?=null
+    private var runAccountUid:String?=null
     private var manualBusy = false
+    private var afterRunChat:AfterRunChat?=null
     private var stopped = false
     private var pendingSaves = 0
     private val saveWaiters = ArrayDeque<()->Unit>()
-    val isWorking: Boolean get() = running || busy || manualBusy || pendingSaves>0
-    fun prepareEdit(): Boolean { if(running) pause("Tạm dừng để quản lý dữ liệu"); return !busy && !manualBusy && pendingSaves==0 }
+    val isWorking: Boolean get() = running || busy || manualBusy || pendingSaves>0 || afterRunChat!=null
+    fun prepareEdit(): Boolean { if(running) pause("Tạm dừng để quản lý dữ liệu"); return !busy && !manualBusy && pendingSaves==0 && afterRunChat==null }
     // Collection time of the current run, pauses excluded.
     private var activeMs=0L
     private var segmentStart=0L
@@ -111,6 +118,19 @@ class CollectorService : AccessibilityService() {
     /** Kept times of Chiến khu runs are per hero, for the same tabs and depths. */
     private fun boardKey(wanted:List<BoardScreens.Want>)="time:board:"+wanted.joinToString(",") { "${it.tab.slug}${it.top}" }
     private fun heroKey(m:Macro)=RunTimes.hero(m.json.optString("collectionMode") in LISTED,m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills"))
+    private fun timingSummary():String {
+        val m=selected()?:return ""
+        val estimate=RunTimes.get(uiPrefs,RunTimes.task(m.timingHash))?:return "Ước lượng: cần một lượt hoàn tất trước"
+        val matching=prefs.getString("hash","")==m.hash
+        if(matching&&(stopped||index>=m.steps.length())) return ""
+        val spent=if(matching) elapsed()/1000.0 else 0.0
+        val learned="theo ${RunTimes.taskSamples(uiPrefs,m.timingHash).size} lượt gần đây"
+        return when {
+            spent<=0 -> "Ước tính thu thập ~${clock((estimate*1000).toLong())} · $learned"
+            spent<estimate -> "Đã chạy ${clock((spent*1000).toLong())} · còn ~${clock(((estimate-spent)*1000).toLong())} · $learned"
+            else -> "Đã chạy ${clock((spent*1000).toLong())} · lâu hơn các lượt trước"
+        }
+    }
     /** Time the way into the game took in this run, from its start; part of no hero. */
     private var entryMs=0L
     /**
@@ -119,6 +139,7 @@ class CollectorService : AccessibilityService() {
      */
     private fun recordTimes(m:Macro,heroes:Int) {
         if(!prefs.getBoolean("clean",false)) return
+        RunTimes.recordTask(uiPrefs,m.timingHash,elapsed()/1000.0)
         val spent=(elapsed()-entryMs)/1000.0
         when(m.json.optString("collectionMode")) {
             "all","pick" -> if(heroes>0) RunTimes.record(uiPrefs,heroKey(m),spent/heroes)
@@ -148,7 +169,23 @@ class CollectorService : AccessibilityService() {
             prefs.edit().putBoolean("clean",false).commit()
             prefs.edit().putBoolean("running",false).commit(); save(); lastStatus="Lượt trước bị gián đoạn ở bước ${index+1}. Mở đúng màn hình rồi bấm Tiếp tục."
         }
+        GamePhotoSync.request(this)
+        io.execute { try { CaptureHistory.recover(this) } catch(e:Exception) { CrashLog.record(this,"Chưa khôi phục được nhật ký ảnh",e) } }
+        AfterRun.recover(this)
         if(uiPrefs.getBoolean("panel",false)) handler.post { if(current===this && panel==null) showPanel() }
+    }
+    fun cancelAfterRunChat(run:String) { if(afterRunChat?.run==run) afterRunChat?.cancel() }
+    fun startAfterRunChat(run:String) {
+        if(isWorking) return
+        hidePanel()
+        val runner=AfterRunChat(this,run) {
+            afterRunChat=null
+            lastStatus=AfterRun.state(this,run)?.optString("message").orEmpty()
+            refreshPanel()
+            AfterRun.resume(this)
+        }
+        afterRunChat=runner
+        runner.start()
     }
     private val awayCheck=Runnable { val p=foreground(); if(running&&!entering&&p!=null&&p!=GAME&&p!=packageName) pause("Đã rời game (đang mở ${appName(p)}) — tạm dừng") }
     /** While the run opens the game itself ([GameEntry]), another app in front is expected. */
@@ -156,6 +193,14 @@ class CollectorService : AccessibilityService() {
     /** Steps that start outside the game or on its web pages, where another app in front is expected. */
     private fun entryStep(m:Macro,i:Int)=i<m.steps.length()&&m.steps.getJSONObject(i).optString("type") in setOf("enter","ranking","board","chess")
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if(event?.eventType==AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED&&event.packageName?.toString()==AfterRunProtocol.DRIVE) {
+            val notification=event.parcelableData as? android.app.Notification
+            if(notification==null||notification.flags and android.app.Notification.FLAG_ONGOING_EVENT==0) {
+                AfterRun.driveNotification(this,AfterRunProtocol.DRIVE,
+                    event.text.joinToString("\n")+"\n"+AfterRun.notificationText(notification),
+                    notification?.`when`?:0L)
+            }
+        }
         if (running && event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val p = event.packageName?.toString()
             // Notifications, keyboards and game boosters report window changes too; only pause if another app stays in front.
@@ -163,7 +208,7 @@ class CollectorService : AccessibilityService() {
         }
     }
     override fun onInterrupt() { pause("Dịch vụ bị ngắt") }
-    override fun onDestroy() { if(running) { setRunning(false); save() }; generation++; handler.removeCallbacksAndMessages(null); hidePanel(); current = null; io.shutdown(); super.onDestroy() }
+    override fun onDestroy() { afterRunChat?.cancel();afterRunChat=null;if(running) { setRunning(false); save() }; generation++; handler.removeCallbacksAndMessages(null); hidePanel();captureProgress.destroy(); current = null; io.shutdown(); super.onDestroy() }
     private var compact=false
     private var panelParams:WindowManager.LayoutParams?=null
     private var taskLabel:TextView?=null
@@ -193,6 +238,7 @@ class CollectorService : AccessibilityService() {
     override fun onConfigurationChanged(newConfig:Configuration) {
         super.onConfigurationChanged(newConfig)
         if(panel!=null) { dismissMacroPicker();rebuildPanel() }
+        captureProgress.rotate()
     }
     private var shielded=false
     private var shieldSession=0
@@ -205,6 +251,7 @@ class CollectorService : AccessibilityService() {
     private fun shield(on:Boolean) {
         if(on==shielded) return
         shielded=on
+        captureProgress.shield(on)
         val params=panelParams
         if(params!=null) params.flags=if(on) params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
         val view=panel?:return
@@ -267,8 +314,16 @@ class CollectorService : AccessibilityService() {
             layout.addView(bubble); drag(bubble!!) { compact=false;rebuildPanel() }
         } else {
             val header=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
-            val title=Ui.text(this,"AOV · KÉO ĐỂ DI CHUYỂN",10f,Color.rgb(220,224,237),true)
+            val title=Ui.text(this,"AOV · KÉO ĐỂ DI CHUYỂN",10f,Color.rgb(220,224,237),true).apply {
+                maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END
+            }
             header.addView(title,LinearLayout.LayoutParams(0,dp(32),1f));drag(title)
+            val history=Ui.button(this,"Ảnh") { captureProgress.toggle() }.apply {
+                panelButtonIcon(this,R.drawable.ic_panel_history,"Ảnh")
+                contentDescription="Mở hoặc đóng tiến trình ảnh";setTextColor(Color.WHITE)
+                background=Ui.shape(Color.rgb(47,52,74),dp(10))
+            }
+            header.addView(history,LinearLayout.LayoutParams(dp(62),dp(32)).apply { rightMargin=dp(5) })
             val collapse=Ui.button(this,"−") { compact=true;rebuildPanel() }.apply {
                 contentDescription="Thu gọn bảng nổi";setTextColor(Color.WHITE)
                 background=Ui.shape(Color.rgb(47,52,74),dp(10))
@@ -310,7 +365,7 @@ class CollectorService : AccessibilityService() {
             layout.addView(progress,LinearLayout.LayoutParams(-1,dp(7)).apply { topMargin=dp(8) })
             label=Ui.text(this,"",11f,Color.rgb(205,211,225)).apply {
                 setPadding(0,dp(3),0,dp(4));includeFontPadding=false
-                maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END
+                maxLines=3;ellipsize=android.text.TextUtils.TruncateAt.END
             }
             layout.addView(label)
 
@@ -369,8 +424,12 @@ class CollectorService : AccessibilityService() {
         choose?.text=if(macroPicker!=null) "Đóng danh sách ▲" else m?.let { MacroStore.title(it) }?:"Chọn macro"
         choose?.tooltipText=m?.let { MacroStore.title(it) }?:"Chọn macro"
         choose?.isEnabled=!isWorking;choose?.alpha=if(isWorking) .45f else 1f
-        progress?.progress=if(m!=null) step*100/maxOf(1,m.steps.length()) else 0
-        label?.text=lastStatus
+        // Chess discovers heroes while scrolling; macro step count is not collection progress.
+        val unknownChessTotal=m!=null&&m.json.optString("collectionMode")=="chess"&&step<m.steps.length()
+        progress?.isIndeterminate=unknownChessTotal&&running
+        progress?.visibility=if(unknownChessTotal&&!running) View.GONE else View.VISIBLE
+        progress?.progress=if(unknownChessTotal) 0 else if(m!=null) step*100/maxOf(1,m.steps.length()) else 0
+        label?.text=listOf(lastStatus,timingSummary()).filter { it.isNotBlank() }.joinToString("\n")
         val caption=when { running -> "Tạm dừng";busy||manualBusy -> "Đang xử lý…";ended() -> "Tạo lượt mới";step>0 -> "Tiếp tục";else -> "Chạy" }
         val glyph=when { running -> R.drawable.ic_panel_pause;busy||manualBusy -> R.drawable.ic_panel_check
             ended() -> R.drawable.ic_panel_reset;else -> R.drawable.ic_panel_play }
@@ -379,7 +438,8 @@ class CollectorService : AccessibilityService() {
         stopView?.let { panelButtonIcon(it,R.drawable.ic_panel_stop,"Dừng",Color.rgb(255,213,220)) }
         // Dừng ends a run: nothing to end before one starts or after it ended.
         val stoppable=canStop(); stopView?.isEnabled=stoppable; stopView?.alpha=if(stoppable) 1f else .4f
-        bubble?.text=if(running) "AOV\n${progress?.progress ?: if(m!=null) step*100/maxOf(1,m.steps.length()) else 0}%" else "AOV"
+        bubble?.text=if(running&&unknownChessTotal) "AOV\nĐang chạy" else if(running)
+            "AOV\n${progress?.progress ?: if(m!=null) step*100/maxOf(1,m.steps.length()) else 0}%" else "AOV"
     }
     /** This service in the look chosen in "Giao diện", for the views and dialogs it shows over the game. */
     private fun themed():android.content.Context { Ui.use(this); return ContextThemeWrapper(this,Ui.windowTheme(this)) }
@@ -388,6 +448,39 @@ class CollectorService : AccessibilityService() {
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         dialog.setOnDismissListener { activeDialog=null;refreshPanel() };dialog.show()
+    }
+    private fun manageAccounts() {
+        hidePanel()
+        startActivity(Intent(this,MainActivity::class.java).putExtra(Accounts.OPEN,true)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
+    }
+    private fun accountHelp(c:android.content.Context,body:LinearLayout) {
+        val all=Accounts.list(this)
+        body.addView(Ui.text(c,Accounts.problem(this)?:if(all.isEmpty())
+            "Chưa có tài khoản. Thêm tài khoản bên dưới; khi bấm Chạy, app sẽ cho chọn tài khoản cần kiểm tra."
+            else "Đã lưu ${all.size} tài khoản. Kiểm tra UID sẽ bật Tự mở game và cho chọn tài khoản khi bắt đầu lượt.",12f,Ui.muted))
+        body.addView(Ui.button(c,"Quản lý tài khoản") { manageAccounts() })
+    }
+    private fun chooseRunAccount() {
+        val all=Accounts.list(this)
+        if(all.isEmpty()) {
+            display(AlertDialog.Builder(themed()).setTitle("Chưa có tài khoản đã lưu")
+                .setMessage(Accounts.problem(this)?:"Vào Quản lý tài khoản để thêm UID và tài khoản Garena, rồi chọn lại khi bấm Chạy.")
+                .setPositiveButton("Quản lý tài khoản") { _,_ -> manageAccounts() }.setNegativeButton("Hủy",null).create())
+            return
+        }
+        var selected=all.indexOfFirst { it.id==Accounts.selectedId(this) }.coerceAtLeast(0)
+        val dialog=AlertDialog.Builder(themed()).setTitle("Chọn tài khoản cho lượt chạy")
+            .setSingleChoiceItems(all.map { it.caption }.toTypedArray(),selected) { _,which -> selected=which }
+            .setPositiveButton("Chạy",null).setNegativeButton("Hủy",null)
+            .setNeutralButton("Quản lý tài khoản") { _,_ -> manageAccounts() }.create()
+        display(dialog)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val account=all[selected]
+            if(Accounts.load(this,account.id)==null) {
+                Toast.makeText(this,"Tài khoản này cần nhập lại thông tin. Chọn Quản lý tài khoản → Sửa.",Toast.LENGTH_LONG).show()
+            } else { dialog.dismiss();handler.post { startWithAccount(account.id) } }
+        }
     }
     fun showTaskPicker() {
         val c=themed()
@@ -508,8 +601,8 @@ class CollectorService : AccessibilityService() {
         val directSkills=option("Chuyển thẳng giữa các chiêu: bấm sang chiêu kế tiếp khi bảng chiêu còn mở, chỉ đóng sau chiêu cuối","directSkills")
         body.addView(Ui.section(c,"Vào game"))
         val openGame=option("Tự mở game và vào Danh sách tướng: đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện, rồi bấm Tướng ở sảnh","openGame")
-        val savedUid=Accounts.uid(this)
-        val checkAccount=option(if(savedUid!=null) "Kiểm tra UID là tài khoản test ($savedUid); khác thì đăng xuất và đăng nhập tài khoản test" else "Kiểm tra UID tài khoản test (lưu tài khoản ở mục Tài khoản trong app trước)","checkAccount").apply { if(savedUid==null) { isChecked=false;isEnabled=false } }
+        val checkAccount=option("Kiểm tra UID · chọn tài khoản khi bấm Chạy","checkAccount")
+        accountHelp(c,body)
         val traceEntry=CheckBox(c).apply { text="Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)";textSize=14f;isChecked=uiPrefs.getBoolean("traceEntry",true) }.also { body.addView(it) }
         var known=emptyList<HeroIndex.Entry>()
         val chosen=LinkedHashSet(uiPrefs.getString("pickNames","").orEmpty().split('\n').map { it.trim() }.filter { it.isNotEmpty() })
@@ -518,7 +611,9 @@ class CollectorService : AccessibilityService() {
         /** The heroes a by-name run would take: those ticked, else the name typed. */
         fun picked()=chosen.toList().ifEmpty { listOfNotNull(typed().takeIf { it.count { c -> c.isLetter() }>=2 }) }
         // The way into the game, the account check and the trace: only for runs that start on the list.
-        fun follow() { val list=mode()<2; openGame.isEnabled=list; val on=list&&openGame.isChecked; checkAccount.isEnabled=on&&savedUid!=null; traceEntry.isEnabled=on }
+        fun follow() { val list=mode()<2; openGame.isEnabled=list; val on=list&&openGame.isChecked
+            checkAccount.isEnabled=list;if(!on) checkAccount.isChecked=false;traceEntry.isEnabled=on }
+        checkAccount.setOnCheckedChangeListener { _,on -> if(on) openGame.isChecked=true }
         val shot=averageShot(); val total=uiPrefs.getInt("heroTotal",0).takeIf { it>0 }
         fun updateEstimate() {
             val m=mode(); val batch=m<2
@@ -608,10 +703,11 @@ class CollectorService : AccessibilityService() {
         fun option(text:String,key:String,default:Boolean=false)=check(text,uiPrefs.getBoolean(key,default)).also { body.addView(it) }
         body.addView(Ui.section(c,"Vào game"))
         val openGame=option("Tự mở game và vào sảnh: đóng game còn chạy, đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện","rankOpenGame")
-        val savedUid=Accounts.uid(this)
-        val checkAccount=option(if(savedUid!=null) "Kiểm tra UID là tài khoản test ($savedUid)" else "Kiểm tra UID tài khoản test (lưu tài khoản ở mục Tài khoản trong app trước)","checkAccount").apply { if(savedUid==null) { isChecked=false;isEnabled=false } }
+        val checkAccount=option("Kiểm tra UID · chọn tài khoản khi bấm Chạy","checkAccount")
+        accountHelp(c,body)
         val traceEntry=option("Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)","traceEntry",true)
-        fun follow() { checkAccount.isEnabled=openGame.isChecked&&savedUid!=null; traceEntry.isEnabled=openGame.isChecked }
+        fun follow() { if(!openGame.isChecked) checkAccount.isChecked=false;traceEntry.isEnabled=openGame.isChecked }
+        checkAccount.setOnCheckedChangeListener { _,on -> if(on) openGame.isChecked=true }
         fun updateEstimate() {
             val n=chosen().size
             if(n==0) { estimate.text="Chọn ít nhất một bảng và một chế độ.";estimate.setTextColor(Ui.danger);return }
@@ -662,10 +758,11 @@ class CollectorService : AccessibilityService() {
         val deep=check("Kéo hết danh sách các bảng đã chọn (lâu hơn nhiều)",uiPrefs.getBoolean("boardDeep",false))
         body.addView(Ui.section(c,"Vào game"))
         val openGame=check("Tự mở game và vào sảnh: đóng game còn chạy, đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện",uiPrefs.getBoolean("boardOpenGame",false))
-        val savedUid=Accounts.uid(this)
-        val checkAccount=check(if(savedUid!=null) "Kiểm tra UID là tài khoản test ($savedUid)" else "Kiểm tra UID tài khoản test (lưu tài khoản ở mục Tài khoản trong app trước)",uiPrefs.getBoolean("checkAccount",false)).apply { if(savedUid==null) { isChecked=false;isEnabled=false } }
+        val checkAccount=check("Kiểm tra UID · chọn tài khoản khi bấm Chạy",uiPrefs.getBoolean("checkAccount",false))
+        accountHelp(c,body)
         val traceEntry=check("Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)",uiPrefs.getBoolean("traceEntry",true))
-        fun follow() { checkAccount.isEnabled=openGame.isChecked&&savedUid!=null; traceEntry.isEnabled=openGame.isChecked }
+        fun follow() { if(!openGame.isChecked) checkAccount.isChecked=false;traceEntry.isEnabled=openGame.isChecked }
+        checkAccount.setOnCheckedChangeListener { _,on -> if(on) openGame.isChecked=true }
         fun chosen()=order.filter { tabs.getValue(it).isChecked }.map { BoardScreens.Want(it,if(deep.isChecked&&it!=BoardScreens.Tab.TOP) BoardScreens.ALL else BoardScreens.defaultTop(it)) }
         fun updateEstimate() {
             val asked=count.text.toString().toIntOrNull()?.coerceIn(0,BuiltInMacros.ALL)?:0
@@ -725,6 +822,8 @@ class CollectorService : AccessibilityService() {
         body.addView(quick)
         fun check(text:String,on:Boolean)=CheckBox(c).apply { this.text=text;textSize=14f;isChecked=on }.also { body.addView(it) }
         body.addView(Ui.section(c,"Thu thập nội dung"))
+        val fast=check("Chạy nhanh: tốc độ như Lấy thông tin tướng · Chạy nhanh",
+            uiPrefs.getBoolean("chessFast",true))
         val heroDetails=check("Mở từng quân cờ trong Tất cả quân cờ; chụp thuộc tính, kỹ năng và kéo chi tiết",
             uiPrefs.getBoolean("chessHeroDetails",false))
         val synergyDetails=check("Mở từng biểu tượng phe và nghề trong Tương tác",
@@ -734,7 +833,7 @@ class CollectorService : AccessibilityService() {
         body.addView(Ui.section(c,"Tải ảnh gốc từ game (tùy chọn)"))
         body.addView(Ui.text(c,
             "Game lưu ảnh bằng Save Photo → Sure vào Pictures. App ghi số ảnh trước lượt, " +
-            "ghi loại ảnh theo mục đang chụp, rồi khi về app chỉ sao chép ảnh mới tương ứng. " +
+            "tự chép ảnh mới vào thư viện app sau Sure và phân loại theo mục đang chụp. " +
             "Các ảnh cũ và ảnh không xác định sẽ không bị lấy.",12f,Ui.muted))
         body.addView(Ui.text(c,if(GamePhotoImport.hasSource(this))
             "Đã chọn nguồn: "+GamePhotoImport.sourceLabel(this)
@@ -749,13 +848,12 @@ class CollectorService : AccessibilityService() {
         body.addView(Ui.section(c,"Bắt đầu và an toàn"))
         val openGame=check("Tự mở game tới sảnh trước khi vào Cờ Liên Quân",
             uiPrefs.getBoolean("chessOpenGame",true))
-        val uid=Accounts.uid(this)
-        val checkAccount=check(if(uid!=null) "Xác minh UID tài khoản thử nghiệm ("+uid+")" else
-            "Xác minh UID (hãy lưu UID trong mục Tài khoản trước)",uiPrefs.getBoolean("chessCheckAccount",false))
+        val checkAccount=check("Kiểm tra UID · chọn tài khoản khi bấm Chạy",uiPrefs.getBoolean("chessCheckAccount",false))
+        accountHelp(c,body)
         val trace=check("Lưu ảnh các bước đăng nhập / vào sảnh",uiPrefs.getBoolean("chessTraceEntry",true))
-        fun update() { checkAccount.isEnabled=openGame.isChecked&&uid!=null
-            if(!checkAccount.isEnabled) checkAccount.isChecked=false
+        fun update() { if(!openGame.isChecked) checkAccount.isChecked=false
             trace.isEnabled=openGame.isChecked }
+        checkAccount.setOnCheckedChangeListener { _,on -> if(on) openGame.isChecked=true }
         openGame.setOnCheckedChangeListener { _,_ -> update() };update()
         body.addView(Ui.text(c,
             "Nếu bỏ Tự mở game, hãy mở sẵn sảnh Cờ Liên Quân hoặc Bách khoa trước khi bấm Chạy. " +
@@ -773,10 +871,11 @@ class CollectorService : AccessibilityService() {
             val selected=checks.filterValues { it.isChecked }.keys.toSet()+ChessWiki.topicsForNative(native)
             if(selected.isEmpty()) { status("Chọn ít nhất một mục Bách khoa hoặc nhóm ảnh gốc");return@setOnClickListener }
             val options=ChessWiki.Options(selected,openGame.isChecked,checkAccount.isChecked&&checkAccount.isEnabled,
-                trace.isChecked,heroDetails.isChecked,synergyDetails.isChecked,equipmentDetails.isChecked,native)
+                trace.isChecked,heroDetails.isChecked,synergyDetails.isChecked,equipmentDetails.isChecked,native,fast.isChecked)
             uiPrefs.edit().putString("chessTopics",selected.joinToString(","))
                 .putString("chessNativeGroups",native.joinToString(","))
                 .putBoolean("chessHeroDetails",heroDetails.isChecked)
+                .putBoolean("chessFast",fast.isChecked)
                 .putBoolean("chessSynergyDetails",synergyDetails.isChecked).putBoolean("chessEquipmentDetails",equipmentDetails.isChecked)
                 .putBoolean("chessOpenGame",openGame.isChecked).putBoolean("chessCheckAccount",checkAccount.isChecked)
                 .putBoolean("chessTraceEntry",trace.isChecked).apply()
@@ -792,10 +891,12 @@ class CollectorService : AccessibilityService() {
         val stamp="%04d".format(index+1)
         val ledger=File(filesDir,"captures/"+runId+"/chess-progress.json")
         val doneIds=try { val array=JSONObject(ledger.readText()).optJSONArray("finished")
-            (0 until (array?.length()?:0)).map { array!!.getString(it) }.toMutableSet()
+            (0 until (array?.length()?:0)).map { ChessWiki.heroIdentity(array!!.getString(it)) }.toMutableSet()
         } catch(_:Exception) { mutableSetOf<String>() }
+        val timing=ChessWiki.Timing(BuiltInMacros.chessOptions(readMacro().json).fast)
         val screen=object:ChessWikiReader.Screen {
             override val alive get()=alive()
+            override val completedHeroes get()=doneIds.count { it.startsWith("item:tat-ca-quan-co:hero-") }
             override fun look(words:Boolean,then:(ChessWikiReader.Look?)->Unit) {
                 if(filesDir.usableSpace<30L*1024*1024) { note("Không đủ dung lượng trống");return then(null) }
                 grab(anyApp=true) { b ->
@@ -867,14 +968,14 @@ class CollectorService : AccessibilityService() {
             }
             override fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit) {
                 if(kotlin.math.abs(x-toX)<.003) {
-                    touchGame(drag(x,y,toY,700,400),false,then)
+                    touchGame(drag(x,y,toY,timing.move,timing.hold),false,then)
                 } else {
                     val b=screen()
                     val path=Path().apply {
                         moveTo((x*(b.width()-1)).toFloat(),(y*(b.height()-1)).toFloat())
                         lineTo((toX*(b.width()-1)).toFloat(),(toY*(b.height()-1)).toFloat())
                     }
-                    val gesture=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path,0,700)).build()
+                    val gesture=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path,0,timing.move)).build()
                     touchGame(gesture,false,then)
                 }
             }
@@ -939,7 +1040,9 @@ class CollectorService : AccessibilityService() {
                                                     }
                                                     else {
                                                         val marked=try {
-                                                            GamePhotoSession.mark(this@CollectorService,runId,group,item);true
+                                                            GamePhotoSession.mark(this@CollectorService,runId,group,item)
+                                                            GamePhotoSync.request(this@CollectorService)
+                                                            true
                                                         } catch(e:Throwable) {
                                                             CrashLog.record(this@CollectorService,"Không ghi được ảnh gốc đã lưu",e);false
                                                         }
@@ -1026,7 +1129,7 @@ class CollectorService : AccessibilityService() {
             .setPositiveButton("Bỏ thao tác") { _,_ -> if(!isWorking&&!stopped) { index++;save();status("Đã bỏ thao tác. Bấm Tiếp tục.") } }
             .setNegativeButton("Hủy",null).create())
     }
-    private fun hidePanel() { dismissMacroPicker();activeDialog?.dismiss();panel?.let { detach(it) };panel=null;label=null;primary=null;stopView=null;choose=null;progress=null;bubble=null;uiPrefs.edit().putBoolean("panel",false).apply() }
+    private fun hidePanel() { captureProgress.close();dismissMacroPicker();activeDialog?.dismiss();panel?.let { detach(it) };panel=null;label=null;primary=null;stopView=null;choose=null;progress=null;bubble=null;uiPrefs.edit().putBoolean("panel",false).apply() }
     private fun status(s:String) { lastStatus=s;refreshPanel();Toast.makeText(this,s,Toast.LENGTH_SHORT).show() }
     private fun ready(m:Macro):Boolean {
         val p=foreground()
@@ -1036,19 +1139,44 @@ class CollectorService : AccessibilityService() {
         return true
     }
     private fun readMacro() = Macro(File(filesDir,"macro.json").readText())
-    fun start() {
+    fun start()=startWithAccount(null)
+    private fun startWithAccount(pickedAccount:String?) {
+        if(afterRunChat!=null) { status("Đang gửi câu lệnh sau lượt trong ChatGPT");return }
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
         if(running || busy || manualBusy || activeDialog!=null || macroPicker!=null) return
         upgradeBuiltIn()
         try {
             val m=readMacro()
-            val at=if(prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
+            val same=prefs.getString("hash","")==m.hash
+            val at=if(same) prefs.getInt("step",0) else 0
+            val existing=same&&!prefs.getString("run","").isNullOrBlank()
+            val checking=m.json.optBoolean("checkAccount")
+            if(same&&prefs.getBoolean("stopped",false)) { status("Lượt đã kết thúc. Bấm Tạo lượt mới.");return }
+            if(at>=m.steps.length()) { status("Đã hoàn tất. Bấm Tạo lượt mới.");return }
+            val pinned=if(existing) prefs.getString("accountId",null)?:pickedAccount else pickedAccount
+            var selectedUid:String?=null
+            if(checking) {
+                if(!m.json.optBoolean("openGame")) { status("Bật Tự mở game để kiểm tra tài khoản trước khi thu thập.");return }
+                if(existing&&pinned==null&&at>0) {
+                    display(AlertDialog.Builder(themed()).setTitle("Chọn tài khoản cho lượt mới")
+                        .setMessage("Lượt cũ chưa ghi tài khoản đã chọn. Tạo lượt mới để kiểm tra đúng UID trước khi chạy; ảnh của lượt cũ được giữ lại.")
+                        .setPositiveButton("Tạo lượt mới") { _,_ -> reset();handler.post { start() } }.setNegativeButton("Hủy",null).create())
+                    return
+                }
+                if(pinned==null) { chooseRunAccount();return }
+                val account=Accounts.load(this,pinned)
+                if(account==null) { status("Tài khoản của lượt đã bị xóa hoặc cần nhập lại mật khẩu. Vào Quản lý tài khoản để sửa.");return }
+                val oldUid=if(existing) prefs.getString("accountUid",null) else null
+                if(oldUid!=null&&oldUid!=account.uid) { status("UID tài khoản của lượt đã thay đổi. Bấm Dừng → Tạo lượt mới để chọn lại.");return }
+                selectedUid=account.uid
+            }
             if(!entryStep(m,at)&&!ready(m)) return
             macro=m
             stopped=prefs.getString("hash","")==m.hash && prefs.getBoolean("stopped",false)
             if(stopped) { status("Lượt đã kết thúc. Bấm Tạo lượt mới."); return }
             if(prefs.getString("hash","")==m.hash) { index=prefs.getInt("step",0); runId=prefs.getString("run","")?:""; entryMs=prefs.getLong("entryMs",0L) } else { index=0; runId="" }
             if(index>=m.steps.length()) { status("Đã hoàn tất. Bấm Tạo lượt mới."); return }
+            runAccountId=if(checking) pinned else null;runAccountUid=selectedUid
             if(runId.isEmpty()) {
                 val mode=m.json.optString("collectionMode","custom")
                 val slug=m.json.optString("heroName","").replace(Regex("[^a-zA-Z0-9_-]"),"-").take(40)
@@ -1060,7 +1188,25 @@ class CollectorService : AccessibilityService() {
             setRunning(true); generation++; save(); note(if(index==0) "Bắt đầu lượt" else "Tiếp tục"); next(generation)
         } catch(e:Exception) { pause("Lỗi macro: ${e.message}") }
     }
-    fun reset() { if(busy || manualBusy) { status("Chờ bước hiện tại xong"); return }; setRunning(false); activeMs=0L; listTotal=null; generation++; stopped=false; index=0; runId=""; macro=null; listRef=null; prefs.edit().clear().commit(); upgradeBuiltIn(); status("Sẵn sàng lượt mới") }
+    fun reset() { if(busy || manualBusy) { status("Chờ bước hiện tại xong"); return }; setRunning(false); activeMs=0L; listTotal=null; generation++; stopped=false; index=0; runId="";manualRunId="";captureProgress.resetSession(); runAccountId=null;runAccountUid=null;macro=null; listRef=null; prefs.edit().clear().commit(); upgradeBuiltIn(); status("Sẵn sàng lượt mới") }
+    private fun exportCaptureHistory(entries:List<CaptureHistory.Entry>) {
+        if(libraryBusy||FileJob.running||GamePhotoSync.busy||afterRunChat!=null) { status("Đang xử lý dữ liệu; chờ xong rồi xuất ảnh");return }
+        if(running) pause("Tạm dừng để xuất ảnh đã chọn")
+        val token=generation
+        fun open(attempt:Int) {
+            if(token!=generation||running) return
+            if(busy||manualBusy||pendingSaves>0) {
+                if(attempt<30) handler.postDelayed({ open(attempt+1) },200)
+                else status("Thao tác chụp chưa xong; ảnh đã chọn được giữ lại")
+                return
+            }
+            try {
+                val intent=CaptureActions.exportIntent(this,entries)
+                hidePanel();startActivity(intent)
+            } catch(e:Exception) { status(e.message?:"Không xuất được ảnh đã chọn") }
+        }
+        open(0)
+    }
     /**
      * A built-in macro selected before an app update keeps its old steps in macro.json. Regenerate it with the
      * same settings unless a run of it is still unfinished, so a new run always uses the current steps.
@@ -1101,7 +1247,8 @@ class CollectorService : AccessibilityService() {
     }
     private fun save() {
         val m=macro ?: return
-        prefs.edit().putString("hash",m.hash).putInt("step",index).putString("run",runId).putBoolean("stopped",stopped).putBoolean("running",running).putLong("activeMs",elapsed()).commit()
+        prefs.edit().putString("hash",m.hash).putInt("step",index).putString("run",runId).putString("accountId",runAccountId)
+            .putString("accountUid",runAccountUid).putBoolean("stopped",stopped).putBoolean("running",running).putLong("activeMs",elapsed()).commit()
         if(runId.isNotEmpty()) try {
             val dir=File(filesDir,"captures/$runId"); dir.mkdirs()
             if(!File(dir,"macro.json").exists()) File(dir,"macro.json").writeText(m.raw)
@@ -1117,7 +1264,7 @@ class CollectorService : AccessibilityService() {
     private fun next(token:Int,away:Int=0) {
         val m=macro ?: return
         if(!running || token!=generation) return
-        if(index>=m.steps.length()) { afterSaves { if(token==generation&&running) { setRunning(false); save(); note("Hoàn tất · ${clock(elapsed())}"); recordTimes(m,m.json.optInt("heroCount",1)); status("Đã chụp xong · ${photosTaken(m)} ảnh · ${clock(elapsed())}") } }; return }
+        if(index>=m.steps.length()) { afterSaves { if(token==generation&&running) { setRunning(false); save(); note("Hoàn tất · ${clock(elapsed())}"); recordTimes(m,m.json.optInt("heroCount",1)); status("Đã chụp xong · ${photosTaken(m)} ảnh · ${clock(elapsed())}");AfterRun.finished(this,runId) } }; return }
         val front=foreground()
         val opening=entryStep(m,index)
         if(!opening&&front!=null&&front!=m.target) {
@@ -1144,7 +1291,7 @@ class CollectorService : AccessibilityService() {
         fun listEnded(collected:Int) {
             if(finished || token!=generation) return
             finished=true; busy=false; cancelStep=null; shield(false)
-            index=m.steps.length(); setRunning(false); save(); note("Hết danh sách · $collected tướng · ${clock(elapsed())}"); recordTimes(m,collected); status("Đã hết danh sách · lấy xong $collected tướng · ${clock(elapsed())}")
+            index=m.steps.length(); setRunning(false); save(); note("Hết danh sách · $collected tướng · ${clock(elapsed())}"); recordTimes(m,collected); status("Đã hết danh sách · lấy xong $collected tướng · ${clock(elapsed())}");val completedRun=runId;afterSaves { AfterRun.finished(this,completedRun) }
         }
         try {
             val type=s.getString("type")
@@ -1438,7 +1585,11 @@ class CollectorService : AccessibilityService() {
     private fun enterGame(toLobby:Boolean,alive:()->Boolean,finish:(GameEntry.Outcome)->Unit) {
         val stamp="%04d".format(index+1)
         val m=macro
-        val expected=if(m?.json?.optBoolean("checkAccount")==true) Accounts.uid(this) else null
+        val account=if(m?.json?.optBoolean("checkAccount")==true) Accounts.load(this,runAccountId) else null
+        if(m?.json?.optBoolean("checkAccount")==true&&(account==null||account.uid!=runAccountUid)) {
+            finish(GameEntry.Outcome.Failed("Không đọc được tài khoản đã chọn cho lượt. Hãy lưu lại tài khoản trước khi chạy."));return
+        }
+        val expected=account?.uid
         val trace=if(m?.json?.optBoolean("traceEntry",true)!=false) File(filesDir,"captures/$runId/${GameEntry.TRACE_DIR}") else null
         var traced=trace?.listFiles()?.count { it.extension=="jpg" }?:0
         /** One line of the trace, with the screenshot [small] scaled down when there is one; it is recycled here. */
@@ -1552,7 +1703,7 @@ class CollectorService : AccessibilityService() {
      * is never typed anywhere else, as into a chat box.
      */
     private fun signInGarena(then:(Boolean)->Unit) {
-        val account=Accounts.load(this)?:return then(false)
+        val account=Accounts.load(this,runAccountId)?.takeIf { it.uid==runAccountUid }?:return then(false)
         val root=try { rootInActiveWindow } catch(_:Exception) { null }?:return then(false)
         if(root.packageName==packageName) return then(false)
         val all=nodes(root)
@@ -1618,7 +1769,8 @@ class CollectorService : AccessibilityService() {
         if(busy || running || manualBusy) { status("Tạm dừng trước khi chụp riêng"); return }
         try { if(!ready(readMacro())) return } catch(e:Exception) { status(e.message?:"Lỗi macro"); return }
         manualBusy=true;refreshPanel()
-        capture("capture-${System.currentTimeMillis()}","manual",wait=true) { manualBusy=false; status(if(it) "Đã lưu ảnh" else failure?:"Chụp ảnh thất bại") }
+        if(runId.isBlank()&&manualRunId.isBlank()) manualRunId="manual-${System.currentTimeMillis()}"
+        capture("capture-${System.currentTimeMillis()}",runId.ifBlank { manualRunId },wait=true) { manualBusy=false; status(if(it) "Đã lưu ảnh" else failure?:"Chụp ảnh thất bại") }
     }
     private fun photoDirectory(folder:String,name:String,bitmap:Bitmap):File {
         val base=File(filesDir,"captures/$folder").apply { mkdirs() }
@@ -1671,7 +1823,7 @@ class CollectorService : AccessibilityService() {
     }
     private var lastShotAt=0L
     /** Takes a screenshot with the panel hidden; [done] gets a software bitmap to recycle, or null. */
-    private fun grab(anyApp:Boolean=false,done:(Bitmap?)->Unit) {
+    internal fun grab(anyApp:Boolean=false,done:(Bitmap?)->Unit) {
         val session=++shieldSession; shield(true)
         val finish={ b:Bitmap? -> if(session==shieldSession) shield(false); done(b) }
         fun shoot(retry:Boolean) {
@@ -1718,13 +1870,24 @@ class CollectorService : AccessibilityService() {
     }
     private fun afterSaves(then:()->Unit) { if(pendingSaves==0) then() else saveWaiters.addLast { afterSaves(then) } }
     /** Writes [bitmap] as PNG off the main thread and recycles it. */
-    private fun store(bitmap:Bitmap,folder:String,name:String,done:(Boolean)->Unit) {
+    internal fun store(bitmap:Bitmap,folder:String,name:String,done:(Boolean)->Unit) {
         try {
             io.execute {
-                val ok=try { val dir=photoDirectory(folder,name,bitmap); File(dir,"$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) } } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không lưu được ảnh $name",e); false }
+                var record:Long?=null
+                val ok=try {
+                    val dir=photoDirectory(folder,name,bitmap);val target=File(dir,"$name.png")
+                    record=try { CaptureHistory.begin(this,folder,target) } catch(_:Exception) { null }
+                    val part=File(dir,"$name.png.part")
+                    try {
+                        require(part.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) })
+                        require(part.length()>0&&part.renameTo(target));true
+                    } finally { part.delete() }
+                } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không lưu được ảnh $name",e); false }
+                record?.let { try { CaptureHistory.finish(this,it,ok) } catch(_:Exception) {} }
                 bitmap.recycle()
                 handler.post { done(ok) }
             }
         } catch(e:Exception) { bitmap.recycle(); done(false) }
     }
 }
+

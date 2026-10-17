@@ -184,6 +184,8 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility=if(Ui.colors===Ui.DARK) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         showHistory()
         if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob()
+        if(intent.getBooleanExtra(Accounts.OPEN,false)) { intent.removeExtra(Accounts.OPEN);accountDialog() }
+        acceptCaptureExport()
     }
     override fun onSaveInstanceState(out:Bundle) { super.onSaveInstanceState(out);out.putString("folder",folder?.path);out.putString("history-search",historyQueries[(folder?:captures).path].orEmpty());out.putStringArrayList("export",ArrayList(pendingExport.map { it.path }));out.putStringArrayList("copy",ArrayList(pendingCopy.map { it.path })) }
     override fun onResume() {
@@ -191,11 +193,22 @@ class MainActivity : Activity() {
         if(historyRoot!=null) showHistory()
         crashNotice()
         // Returning from the game: fetch exactly the photos marked by Save Photo in the last run.
-        historySearchHandler.postDelayed({ maybeSyncNewGamePhotos() },450)
+        GamePhotoSync.request(this)
+        AfterRun.recover(this)
+        photoRevision=GamePhotoSync.revision
+        historySearchHandler.postDelayed(photoRefresh,1500)
     }
-    override fun onPause() { if(FileJob.screen===jobDone) FileJob.screen=null;super.onPause() }
+    override fun onPause() { historySearchHandler.removeCallbacks(photoRefresh);if(FileJob.screen===jobDone) FileJob.screen=null;super.onPause() }
     override fun onDestroy() { historySearchToken++;historySearchTask?.let { historySearchHandler.removeCallbacks(it) };historySearchExecutor.shutdownNow();progress?.close();super.onDestroy() }
-    override fun onNewIntent(intent:Intent) { super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob() }
+    override fun onNewIntent(intent:Intent) { super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob()
+        if(intent.getBooleanExtra(Accounts.OPEN,false)) { intent.removeExtra(Accounts.OPEN);accountDialog() };acceptCaptureExport() }
+    private fun acceptCaptureExport() {
+        val token=intent.getStringExtra(CaptureActions.EXPORT)?:return
+        intent.removeExtra(CaptureActions.EXPORT)
+        val files=CaptureActions.takeExport(token)
+        if(files.isNullOrEmpty()) { message("Lựa chọn xuất ảnh đã hết hạn; chọn lại ảnh trong bảng tiến trình.");return }
+        requestExport(files)
+    }
     private fun crashNotice() {
         val log=CrashLog.file(this);if(!log.exists()) return
         val prefs=getPreferences(MODE_PRIVATE);if(log.lastModified()<=prefs.getLong("crash-seen",0L)) return
@@ -224,7 +237,7 @@ class MainActivity : Activity() {
         val connected=CollectorService.current!=null
         headerAction(row,"access",if(connected) "Đã bật Trợ năng" else "Bật Trợ năng",if(connected) Ui.success else Ui.accent) { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         headerAction(row,"import","Nhập file",Ui.accent) { importMenu() }
-        headerAction(row,"account",if(Accounts.uid(this)!=null) "Tài khoản test" else "Tài khoản",Ui.accent) { accountDialog() }
+        headerAction(row,"account","Tài khoản ("+Accounts.list(this).size+")",Ui.accent) { accountDialog() }
         headerAction(row,"theme","Giao diện",Ui.accent) { themeDialog() }
         headerAction(row,"float","Bảng nổi",Ui.accent) { val service=CollectorService.current;if(service==null) message("Bấm Bật Trợ năng, bật AOV Collector rồi quay lại.") else { service.showPanel();Toast.makeText(this,"Mở game, bấm Chọn macro trên bảng nổi để chọn cách chụp.",Toast.LENGTH_LONG).show() } }
         top.addView(row)
@@ -234,6 +247,10 @@ class MainActivity : Activity() {
             setPadding(dp(6),dp(8),dp(6),dp(5))
             contentDescription="Đồng bộ ảnh đã lưu trong Pictures vào app"
             setOnClickListener { gamePhotosDialog() }
+        })
+        top.addView(Ui.text(this,"Sau khi hoàn tất · Drive → dot của bạn ›",12f,Ui.accent,true).apply {
+            setPadding(dp(6),dp(8),dp(6),dp(5))
+            setOnClickListener { AfterRunSettings.show(this@MainActivity) { showHistory() } }
         })
         root.addView(top)
     }
@@ -530,7 +547,7 @@ class MainActivity : Activity() {
             .setNeutralButton("Sao chép") { _,_ -> (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("AOV Collector",text));Toast.makeText(this,"Đã sao chép nhật ký",Toast.LENGTH_SHORT).show() }.show()
     }
     private fun editable():Boolean {
-        if(CollectorService.libraryBusy) {
+        if(CollectorService.libraryBusy||GamePhotoSync.busy) {
             if(FileJob.running&&FileJob.dialog==null) AlertDialog.Builder(this).setMessage("${FileJob.title} ở nền. Vui lòng chờ hoàn tất.")
                 .setPositiveButton("Xem tiến độ") { _,_ -> showJob() }.setNegativeButton("Đóng",null).show()
             else message("Đang xử lý file. Vui lòng chờ hoàn tất.")
@@ -574,12 +591,16 @@ class MainActivity : Activity() {
             } catch(e:Exception) { field.error=e.message }
         }
     }
-    /** Normally no tap is needed: coming back to the app triggers a classified import once per batch. */
-    private fun maybeSyncNewGamePhotos() {
-        if(isFinishing||FileJob.running||CollectorService.libraryBusy||
-            CollectorService.current?.isWorking==true||!GamePhotoImport.hasSource(this)) return
-        val run=GamePhotoSession.pendingRun(this)?:return
-        syncGamePhotoRun(run)
+    private var photoRevision=0L
+    private val photoRefresh=object:Runnable {
+        override fun run() {
+            if(isFinishing||isDestroyed) return
+            if(photoRevision!=GamePhotoSync.revision) {
+                photoRevision=GamePhotoSync.revision
+                if(!FileJob.running&&!selecting) showHistory()
+            }
+            historySearchHandler.postDelayed(this,1500)
+        }
     }
 
     /** Import only files newly created by confirmed Cờ Liên Quân Save Photo actions in a run. */
@@ -601,7 +622,7 @@ class MainActivity : Activity() {
                         " ảnh mới không khớp thao tác Save Photo được xác nhận." else "")+
                     (if(stats.errors>0) " Lỗi đọc "+stats.errors+" ảnh." else "")+
                     (if(stats.pending>0) " Còn "+stats.pending+
-                        " lần lưu chưa thấy ảnh tương ứng trong Pictures; app sẽ thử lại khi quay về." else "")+
+                        " lần lưu chưa thấy ảnh tương ứng trong Pictures; app sẽ tự thử lại." else "")+
                     (if(stats.cancelled) " Đã hủy giữa chừng, có thể đồng bộ lại." else "")+
                     " Ảnh cá nhân trong Pictures vẫn giữ nguyên."
             } catch(e:Exception) {
@@ -609,6 +630,7 @@ class MainActivity : Activity() {
                     ". Bạn có thể chọn lại thư mục nguồn và thử lại; ảnh gốc không bị xóa."
             }
             FileJob.finish(result)
+            GamePhotoSync.request(this)
         }.start()
     }
 
@@ -619,10 +641,11 @@ class MainActivity : Activity() {
         val before=state?.optInt("before",-1)?:-1
         val saved=state?.optJSONArray("saves")?.length()?:0
         val pending=state?.optInt("pending",0)?:0
-        val info="Thư mục nguồn: "+GamePhotoImport.sourceLabel(this)+
+        val info="Game lưu tại /storage/emulated/0/Pictures. Hãy chọn đúng thư mục Pictures trong Bộ nhớ trong.\n\nThư mục nguồn: "+GamePhotoImport.sourceLabel(this)+
             (if(before>=0) "\nLượt gần nhất: "+run+
                 "\nSố ảnh trước lượt: "+before+
                 "\nSố thao tác Save Photo đã xác nhận: "+saved+
+                "\nĐã có trong app: "+(state?.optInt("imported",0)?:0)+
                 (if(state?.has("after")==true) "\nSố ảnh sau lượt: "+state.optInt("after") else "")+
                 (if(pending>0) "\nĐang chờ ảnh xuất hiện / đọc lại: "+pending else "")
              else "\nChưa có lượt tải ảnh gốc nào được ghi mốc.")+
@@ -630,12 +653,20 @@ class MainActivity : Activity() {
             "Chỉ sao chép ảnh mới khớp thao tác lưu, không quét chép ảnh cũ trong Pictures."
         val options=arrayOf("Chọn / đổi thư mục Pictures",
             "Đồng bộ các ảnh mới sau lượt thu thập","Mở ảnh gốc đã nhập trong Lịch sử")
-        AlertDialog.Builder(this).setTitle("Ảnh gốc Cờ Liên Quân")
-            .setMessage(info).setItems(options) { _,i ->
+        // AlertDialog's message hides its item list. Use explicit buttons so source setup and
+        // the imported gallery remain reachable even with a long session summary.
+        val body=Ui.stack(this).apply { setPadding(dp(20),dp(4),dp(20),dp(12)) }
+        val dialog=AlertDialog.Builder(this).setTitle("Ảnh gốc Cờ Liên Quân")
+            .setView(ScrollView(this).apply { addView(body) }).setNegativeButton("Đóng",null).create()
+        options.forEachIndexed { i,label ->
+            body.addView(Ui.button(this,label,action={
+                dialog.dismiss()
                 when(i) {
                     0 -> {
                         try {
                             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                                putExtra(DocumentsContract.EXTRA_INITIAL_URI,android.net.Uri.parse(
+                                    "content://com.android.externalstorage.documents/document/primary%3APictures"))
                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or
                                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
                                     Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
@@ -654,7 +685,10 @@ class MainActivity : Activity() {
                         } else message("Chưa có ảnh gốc nào được sao chép.")
                     }
                 }
-            }.setNegativeButton("Đóng",null).show()
+            }),LinearLayout.LayoutParams(-1,dp(52)).apply { topMargin=dp(8) })
+        }
+        body.addView(Ui.text(this,info,13f,Ui.muted).apply { setPadding(0,dp(12),0,0) })
+        dialog.show()
     }
 
     private fun importMenu() { AlertDialog.Builder(this).setTitle("Nhập file").setItems(arrayOf("Ảnh và thư mục từ ZIP","Macro từ JSON","Ảnh từ Pictures vào app")) { _,i ->
@@ -664,7 +698,7 @@ class MainActivity : Activity() {
             type=if(i==0) "application/zip" else "application/json";addCategory(Intent.CATEGORY_OPENABLE)
         },if(i==0) 12 else 10)
     }.show() }
-    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Lấy thông tin tướng → chọn Theo tên tướng, Các ô đầu danh sách hoặc Tướng đang mở → Chạy. Theo tên: tick các tướng đã lưu từ lượt trước hoặc gõ tên; app tới ô đã biết, đọc lại tên trên thẻ, sai thì dò danh sách. Với hai cách đầu, tick Tự mở game thì app đóng hẳn Liên Quân nếu còn chạy (Cài đặt → Buộc dừng), mở lại, đóng popup sự kiện và vào danh sách tướng. Thống kê tướng chụp hết Bảng Phân Bậc Tướng (2 bảng × 3 chế độ) từ mục Cộng đồng. Chiến khu chụp bảng xếp hạng người chơi của từng tướng (Đấu hạng → Chiến khu).\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080. Hàng chiêu được đọc khi chạy: 4 hoặc 5 biểu tượng, và tướng có nút ↻ được chụp thêm các chiêu đổi ở dạng khác. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nGiao diện: chọn Sáng, Tối hoặc Theo hệ thống ở nút Giao diện trên đầu màn hình.\n\nAOV Collector 0.8.0").setPositiveButton("Đã hiểu",null)
+    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Lấy thông tin tướng → chọn Theo tên tướng, Các ô đầu danh sách hoặc Tướng đang mở → Chạy. Theo tên: tick các tướng đã lưu từ lượt trước hoặc gõ tên; app tới ô đã biết, đọc lại tên trên thẻ, sai thì dò danh sách. Với hai cách đầu, tick Tự mở game thì app đóng hẳn Liên Quân nếu còn chạy (Cài đặt → Buộc dừng), mở lại, đóng popup sự kiện và vào danh sách tướng. Thống kê tướng chụp hết Bảng Phân Bậc Tướng (2 bảng × 3 chế độ) từ mục Cộng đồng. Chiến khu chụp bảng xếp hạng người chơi của từng tướng (Đấu hạng → Chiến khu).\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy. Nút Ảnh ở đầu bảng mở tiến trình ảnh bên phải: xem ảnh theo thứ tự, tên như violet-1 và trạng thái lưu; bấm ảnh để xem lớn, dùng Trước/Sau hoặc vuốt để đổi nhanh; +/− hoặc chụm hai ngón để phóng to; Chép ảnh để dán sang app khác. Lịch sử chỉ có ảnh trong lượt hiện tại; Chọn → Xuất để lưu ZIP những ảnh đã chọn. Kéo tiêu đề để di chuyển; × đóng riêng bảng ảnh.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080. Hàng chiêu được đọc khi chạy: 4 hoặc 5 biểu tượng, và tướng có nút ↻ được chụp thêm các chiêu đổi ở dạng khác. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nGiao diện: chọn Sáng, Tối hoặc Theo hệ thống ở nút Giao diện trên đầu màn hình.\n\nAOV Collector 0.13.0").setPositiveButton("Đã hiểu",null)
         if(CrashLog.file(this).exists()) dialog.setNeutralButton("Nhật ký lỗi") { _,_ -> showLog("Nhật ký lỗi") };dialog.show() }
     /** Choose Pictures or any folder in Android Files. Copy originals without creating a ZIP. */
     private fun requestCopy(files:List<File>) {
@@ -725,10 +759,24 @@ class MainActivity : Activity() {
         startActivityForResult(Intent(Intent.ACTION_CREATE_DOCUMENT).apply { type="application/zip";addCategory(Intent.CATEGORY_OPENABLE);putExtra(Intent.EXTRA_TITLE,"aov-${System.currentTimeMillis()}.zip") },11)
     }
     @Deprecated("Legacy activity result API") override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
-        super.onActivityResult(requestCode,resultCode,data);if(resultCode!=RESULT_OK) return;val uri=data?.data?:return
+        super.onActivityResult(requestCode,resultCode,data)
+        if(resultCode!=RESULT_OK) {
+            if(requestCode==AfterRun.REQUEST_FOLDER||requestCode==AfterRun.REQUEST_ZIP)
+                AfterRunSettings.show(this) { showHistory() }
+            return
+        }
+        val uri=data?.data?:return
+        if(requestCode==AfterRun.REQUEST_FOLDER||requestCode==AfterRun.REQUEST_ZIP) {
+            try {
+                if(requestCode==AfterRun.REQUEST_FOLDER) AfterRun.choose(this,uri) else AfterRun.chooseZip(this,uri)
+                AfterRunSettings.show(this) { showHistory() }
+            }
+            catch(e:Exception) { message("Không chọn được Drive: "+(e.message?:"Lỗi quyền thư mục")) }
+            return
+        }
         if(!editable()) return
         if(requestCode==GamePhotoImport.REQUEST_FOLDER) {
-            try { GamePhotoImport.choose(this,uri);gamePhotosDialog() }
+            try { GamePhotoImport.choose(this,uri);GamePhotoSync.request(this);showHistory();gamePhotosDialog() }
             catch(e:Exception) { message("Không chọn được thư mục ảnh: "+(e.message?:"Lỗi quyền truy cập")) }
             return
         }
@@ -800,20 +848,46 @@ class MainActivity : Activity() {
      * password is encrypted by the phone's keystore and never shown again; only the UID and account name are.
      */
     private fun accountDialog() {
-        val saved=Accounts.uid(this)
+        val accounts=Accounts.list(this)
         val body=Ui.stack(this).apply { setPadding(dp(22),dp(6),dp(22),0) }
-        body.addView(Ui.text(this,if(saved!=null) "Đã lưu: UID $saved · tài khoản ${Accounts.user(this)?:"?"}" else "Chưa lưu tài khoản test.",13f,Ui.muted))
-        body.addView(Ui.text(this,"Khi Lấy thông tin tướng từ danh sách có Tự mở game và Kiểm tra UID, app đọc UID trong game. Khác UID này thì app đăng xuất và đăng nhập tài khoản dưới đây trên trang Garena, mỗi lượt một lần. Mật khẩu được mã hóa trong máy, không nằm trong file ZIP và không hiện lại.",12f,Ui.muted).apply { setPadding(0,dp(6),0,dp(6)) })
-        val uid=Ui.field(this,"UID (xem trong game: hồ sơ → UID)",saved?:"",true)
-        val user=Ui.field(this,"Tài khoản Garena, email hoặc số điện thoại",Accounts.user(this)?:"")
+        body.addView(Ui.text(this,Accounts.problem(this)?:if(accounts.isEmpty()) "Chưa có tài khoản đã lưu. Bấm Thêm tài khoản để thiết lập."
+            else "Đã lưu ${accounts.size} tài khoản. Chọn tài khoản muốn dùng mỗi khi bắt đầu lượt có Kiểm tra UID.",13f,Ui.muted))
+        val dialog=AlertDialog.Builder(this).setTitle("Tài khoản đã lưu")
+            .setView(ScrollView(this).apply { addView(body) }).setPositiveButton("Thêm tài khoản",null).setNegativeButton("Đóng",null).create()
+        for(account in accounts) {
+            body.addView(Ui.text(this,account.caption+
+                if(account.id==Accounts.selectedId(this)) " · mặc định" else "",14f,Ui.ink,true).apply { setPadding(0,dp(14),0,0) })
+            val actions=LinearLayout(this)
+            fun action(label:String,then:()->Unit) { actions.addView(Ui.button(this,label,action=then),LinearLayout.LayoutParams(0,dp(44),1f)) }
+            action("Mặc định") { try { Accounts.select(this,account.id);dialog.dismiss();showHistory();accountDialog() }
+                catch(e:Exception) { Toast.makeText(this,e.message,Toast.LENGTH_SHORT).show() } }
+            action("Sửa") { dialog.dismiss();accountEditor(account) }
+            action("Xóa") { AlertDialog.Builder(this).setTitle("Xóa tài khoản đã lưu?")
+                .setMessage(account.caption).setPositiveButton("Xóa") { _,_ ->
+                    try { Accounts.remove(this,account.id);dialog.dismiss();showHistory();accountDialog() }
+                    catch(e:Exception) { Toast.makeText(this,e.message,Toast.LENGTH_SHORT).show() }
+                }.setNegativeButton("Giữ lại",null).show() }
+            body.addView(actions)
+        }
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { dialog.dismiss();accountEditor(null) }
+    }
+    private fun accountEditor(account:Accounts.Summary?) {
+        val body=Ui.stack(this).apply { setPadding(dp(22),dp(6),dp(22),0) }
+        body.addView(Ui.text(this,"Bật Kiểm tra UID và Tự mở game trong tác vụ. Khi bấm Chạy, chọn tài khoản muốn dùng; app kiểm tra UID và đăng nhập Garena nếu cần. Mật khẩu được mã hóa trong máy và không xuất vào ZIP.",12f,Ui.muted))
+        val label=Ui.field(this,"Tên gợi nhớ (tùy chọn)",account?.label?:"")
+        val uid=Ui.field(this,"UID (xem trong game: hồ sơ → UID)",account?.uid?:"",true)
+        val user=Ui.field(this,"Tài khoản Garena, email hoặc số điện thoại",account?.user?:"")
         val password=Ui.field(this,"Mật khẩu","").apply { inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD }
-        listOf(uid,user,password).forEach { body.addView(it) }
-        val dialog=AlertDialog.Builder(this).setTitle("Tài khoản test").setView(body).setPositiveButton("Lưu",null).setNegativeButton("Đóng",null)
-            .apply { if(saved!=null) setNeutralButton("Xóa") { _,_ -> Accounts.clear(this@MainActivity);showHistory();Toast.makeText(this@MainActivity,"Đã xóa tài khoản test",Toast.LENGTH_SHORT).show() } }.create()
+        if(account?.ready==true) password.hint="Mật khẩu (để trống để giữ mật khẩu cũ)"
+        listOf(label,uid,user,password).forEach { body.addView(it) }
+        if(account!=null&&!account.ready) body.addView(Ui.text(this,"Tài khoản cũ vẫn còn UID; hãy nhập lại tên đăng nhập và mật khẩu để dùng tiếp.",12f,Ui.warning))
+        val dialog=AlertDialog.Builder(this).setTitle(if(account==null) "Thêm tài khoản" else "Sửa tài khoản")
+            .setView(ScrollView(this).apply { addView(body) }).setPositiveButton("Lưu",null).setNegativeButton("Hủy",null).create()
         dialog.show()
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            try { Accounts.save(this,uid.text.toString().trim(),user.text.toString(),password.text.toString());dialog.dismiss();showHistory()
-                Toast.makeText(this,"Đã lưu tài khoản test",Toast.LENGTH_SHORT).show() }
+            try { Accounts.save(this,uid.text.toString().trim(),user.text.toString(),password.text.toString(),account?.id,label.text.toString())
+                dialog.dismiss();showHistory();accountDialog();Toast.makeText(this,"Đã lưu tài khoản",Toast.LENGTH_SHORT).show() }
             catch(e:Exception) { password.error=e.message?:"Không lưu được" }
         }
     }
@@ -869,3 +943,4 @@ class MainActivity : Activity() {
         override fun setAlpha(alpha:Int) {} override fun setColorFilter(filter:ColorFilter?) {} @Deprecated("Deprecated API") override fun getOpacity()=PixelFormat.TRANSLUCENT
     }
 }
+

@@ -16,6 +16,8 @@ class Macro(val raw: String) {
     /** True when the photo count can grow at run time, as with a "skills" step. */
     val photosVary:Boolean by lazy { (0 until steps.length()).any { steps.getJSONObject(it).getString("type") in setOf("skills","ranking","board","chess") } }
     val hash = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray()).joinToString("") { "%02x".format(it) }
+    /** Timing ignores formatting and a learned card-position hint, which change between identical tasks. */
+    val timingHash:String by lazy { RunTimes.profile(json) }
     init {
         require(name.matches(Regex("[a-zA-Z0-9_-]{1,64}"))) { "Tên macro chỉ dùng chữ, số, _ và -" }
         require(target == "com.garena.game.kgvn") { "V1 chỉ hỗ trợ Liên Quân VN" }
@@ -174,6 +176,7 @@ object BuiltInMacros {
         return JSONObject().put("name","chess-wiki")
             .put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
             .put("collectionMode","chess").put("heroName","")
+            .put("fast",options.fast)
             .put("chessTopics",org.json.JSONArray(options.topics().map { it.key }))
             .put("chessHeroDetails",options.heroDetails)
             .put("chessSynergyDetails",options.synergyDetails).put("chessEquipmentDetails",options.equipmentDetails)
@@ -188,7 +191,8 @@ object BuiltInMacros {
             json.optBoolean("openGame"),json.optBoolean("checkAccount"),json.optBoolean("traceEntry",true),
             json.optBoolean("chessHeroDetails"),
             json.optBoolean("chessSynergyDetails"),json.optBoolean("chessEquipmentDetails"),
-            (json.optJSONArray("chessNativeGroups")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet()))
+            (json.optJSONArray("chessNativeGroups")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet()),
+            json.optBoolean("fast",true))
     }
 
     /** The tabs a Chiến khu macro or its step asks for, with their top players; the default when it names none. */
@@ -213,3 +217,4 @@ object BuiltInMacros {
                 "skills" -> SkillReader.seconds(SkillReader.Options(detailOnly,directSkills,fast)); else -> 0.0 } }
     }
 }
+

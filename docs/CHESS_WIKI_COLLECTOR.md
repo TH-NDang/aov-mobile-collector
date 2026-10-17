@@ -1,6 +1,6 @@
 # Thu thập Bách khoa Cờ Liên Quân
 
-Nhánh triển khai: `codex/chess-hero-row-capture-fix`, phát triển từ `codex/chess-encyclopedia-collector`.
+Nhánh sửa mới nhất: `codex/chess-verified-title-progress`, phát triển từ `codex/chess-hero-row-capture-fix`.
 
 ## Bắt đầu
 
@@ -66,9 +66,17 @@ captures/
                     └── ...__001.png
 ```
 
-**Đối với quân cờ:** tên thư mục là **tên tướng** chuẩn hoá thành slug (ví dụ \`violet\`, \`fennik\`, \`darcy\`), không phải tên kỹ năng, không thêm mã fingerprint sau tên. Ưu tiên tên ở phần đầu bảng chi tiết, dự phòng bằng tên đọc ngay trên thẻ quân cờ. Nếu tên đọc từ thẻ khác tên bảng chi tiết, tác vụ dừng để tránh gán ảnh sai; không đoán tên từ mô tả/chiêu. Mỗi hàng có một ảnh PNG riêng trong \`hang/\`, ngoài ảnh toàn trang. Các mục khác giữ quy tắc đặt tên cũ. Xuất ZIP tại Lịch sử giống các macro khác; ZIP chứa các thư mục lồng nhau.
+**Đối với quân cờ:** tên thư mục là **tên tướng** chuẩn hoá thành slug (ví dụ \`violet\`, \`fennik\`, \`darcy\`), không phải tên kỹ năng, không thêm mã fingerprint sau tên. Không dùng nhãn nghề bị OCR thêm ký tự biểu tượng, ví dụ **A Đấu sĩ**, làm tên tướng. Nếu thiếu tên thẻ, dùng vị trí nhãn nghề để mở chân dung, rồi xác minh tên từ popup. Nếu tên thẻ khác tên popup, đọc riêng vùng tiêu đề: hai lần liên tiếp cùng tên sẽ xác nhận tên popup và sửa nhãn thẻ, ví dụ **A Đấu sĩ → Arduin**, rồi tiếp tục. Chỉ tạm dừng khi chưa xác minh được tên sau ba lần đọc; không lấy tên chiêu làm tên tướng. Tên đã xác minh dùng cho cả thư mục và dấu hoàn tất để không lưu trùng khi tên thẻ bị OCR khác ở trang sau. Mỗi hàng có một ảnh PNG riêng trong \`hang/\`, ngoài ảnh toàn trang. Các mục khác giữ quy tắc đặt tên cũ. Xuất ZIP tại Lịch sử giống các macro khác; ZIP chứa các thư mục lồng nhau.
 
-**Tạm dừng / Dừng / Tiếp tục** dùng chung bảng nổi. Những mục và tab đã hoàn tất được lưu vào `chess-progress.json`. Khi tiếp tục, ứng dụng tìm lại Bách khoa, bỏ qua các mục đã hoàn tất. Quân cờ được đánh dấu bằng tên thẻ (không bằng fingerprint pixel dễ đổi sau cuộn); hàng được đánh dấu bằng tập tên trong hàng. Nếu dừng ở giữa tab, chương trình có thể phải kéo lại từ đầu tab nhưng không chủ động đánh dấu lại item đã hoàn tất.
+**Tiến trình:** trong khi dò danh sách, chỉ hiện **đã lưu N tướng · tổng chưa xác định** và tên đang mở. Số đã lưu tính theo quân cờ đã hoàn tất, kể cả các quân cờ đã lưu trước khi tạm dừng. Thanh chạy thể hiện đang xử lý; bảng nổi và nút thu gọn không hiện phần trăm từ số bước macro hay coi số ô trên trang hiện tại là tổng tướng.
+
+**Từ v0.8.2:** các dòng phe bị cắt ngắn như **4 Giai Điệu H.**, **9 Giai Điệu H..** được loại khỏi danh sách tướng; chữ phe màu xanh không được coi là tên màu trắng chỉ vì có biểu tượng trắng bên cạnh. Sau 5 quân cờ hàng đầu, tác vụ kéo khoảng một hàng thẻ (60% chiều cao màn hình) để đưa tên hàng 2 vào vùng nhìn rõ. Nhật ký ghi rõ số ô nhận diện và mỗi lần kéo danh sách. Giá vàng bị OCR ghép vào tên (**Arduin1**, **Violet O1**, **Violet 01**) được tách bỏ; khi tiếp tục lượt cũ, dấu hoàn tất **violet-o1** được tính cùng **violet**, không cộng thành hai tướng. Ảnh cũ vẫn được giữ.
+
+**Chạy nhanh** mặc định bật trong tùy chọn Cờ Liên Quân, dùng cùng thời gian chờ sau chạm **600 ms** và chuyển tab **450 ms** như chế độ Chạy nhanh của Lấy thông tin tướng; thao tác kéo và giữ cuối kéo cũng ngắn hơn. Có thể bỏ chọn để dùng nhịp chậm hơn. Macro cũ chưa có trường `fast` dùng nhịp nhanh khi chạy bản này. Giới hạn chụp màn hình của Android vẫn được giữ. Nút **Tạo lượt mới** dùng biểu tượng khởi động lại nét liền, giữ nguyên thao tác tạo lượt mới.
+
+**Từ v0.9.0:** lưu nhiều tài khoản tại **Tài khoản (N)** trong app. Bật **Kiểm tra UID · chọn tài khoản khi bấm Chạy** để tự bật Tự mở game và chọn tài khoản cho từng lượt mới. Nút **Quản lý tài khoản** trong form dẫn đến danh sách Thêm/Sửa/Xóa; không khóa ô kiểm tra chỉ vì chưa có UID. Lượt đang dở giữ tài khoản đã chọn, kể cả khi đổi tài khoản mặc định. Tài khoản cũ được chuyển sang danh sách mới; nếu không đọc được mật khẩu thì vẫn giữ UID để nhập lại. Lượt cũ chưa gắn tài khoản và đã qua bước vào game cần tạo lượt mới để xác minh đúng UID; ảnh cũ được giữ.
+
+**Tạm dừng / Dừng / Tiếp tục** dùng chung bảng nổi. Những mục và tab đã hoàn tất được lưu vào `chess-progress.json`. Khi tiếp tục, ứng dụng tìm lại Bách khoa, bỏ qua các mục đã hoàn tất. Quân cờ được đánh dấu bằng tên popup đã xác minh (không bằng fingerprint pixel dễ đổi sau cuộn); hàng được đánh dấu bằng tập tên trong hàng. Nếu dừng ở giữa tab, chương trình có thể phải kéo lại từ đầu tab nhưng không chủ động đánh dấu lại item đã hoàn tất.
 
 ## Giới hạn và kiểm thử
 
@@ -88,14 +96,15 @@ Workflow Build APK chạy unit test, lint, build universal/ARM64 và Android emu
 
 Mục này **khác** ảnh chụp màn hình. Game có hộp **Save Photo** với hai nút **Sure** và **CANCEL** khi nhấn giữ hình phù hợp. Tác vụ ảnh gốc chỉ nhấn Sure sau khi nhận ra đầy đủ hộp thoại này; nếu màn hình không khớp, sẽ bỏ qua và ghi nhật ký thay vì chạm bừa.
 
-1. Trong **AOV Collector → Nhập file → Ảnh từ Pictures vào app**, chọn thư mục Pictures (hoặc thư mục con ảnh game) để cấp quyền đọc một lần bằng bộ chọn thư mục Android.
+1. Trong **AOV Collector → Nhập file → Ảnh từ Pictures vào app**, chọn đúng **Bộ nhớ trong → Pictures** (`/storage/emulated/0/Pictures`, theo ảnh thực tế; game lưu tên như `caYyujwz.png (1).jpg`) để cấp quyền đọc một lần bằng bộ chọn thư mục Android.
 2. Chọn macro **Cờ Liên Quân · Bách khoa**. Ở mục **Tải ảnh gốc từ game**, tick riêng các nhóm muốn tải: quân cờ, chiêu quân cờ, phe, nghề, trang bị và 3 loại Chúc Phúc. Đây là **chọn phạm vi**, không phải phân loại từng ảnh: app tự gán nhóm theo tab đang thu thập.
 3. Khi bắt đầu bước Bách khoa, app **đếm và ghi dấu toàn bộ mã tài liệu hiện có** trong thư mục được cấp quyền, lưu vào \`captures/<run-id>/pictures-session.json\`.
-4. Khi game xác nhận Save Photo, app ghi thời điểm và nhóm tương ứng. Sau khi bạn bấm **Về app**, ứng dụng tự quét lại Pictures và nhận diện ảnh **mới xuất hiện kể từ mốc đầu lượt**.
-5. App sao chép các ảnh mới tương ứng vào \`captures/anh-goc-co-lien-quan/<nhóm>/<lượt>/\`. Ảnh ngoài thời gian lưu hoặc không khớp nhóm không được tự gán. Không xóa/sửa ảnh trong Pictures. Có thể chọn **Đồng bộ ảnh mới** để quét lại sau đó.
+4. Khi game xác nhận Save Photo, app ghi thời điểm và nhóm tương ứng. Ứng dụng tự quét lại Pictures ngay sau Sure trên luồng nền riêng và nhận diện ảnh **mới xuất hiện kể từ mốc đầu lượt**.
+5. Trong app, bấm **Ảnh từ Pictures** → **Mở ảnh gốc đã nhập trong Lịch sử** để xem ảnh theo nhóm. Thư viện tự cập nhật khi đang mở. App sao chép các ảnh mới tương ứng vào \`captures/anh-goc-co-lien-quan/<nhóm>/<lượt>/\`. Ảnh ngoài thời gian lưu hoặc không khớp nhóm không được tự gán. Không xóa/sửa ảnh trong Pictures. Ảnh chưa xuất hiện được tự thử lại sau 30 giây khi tiến trình app còn hoạt động; khi mở lại app/dịch vụ cũng tiếp tục từ mốc đã lưu. Có thể chọn **Đồng bộ ảnh mới** để quét lại thủ công.
 
 Kết quả cho biết **trước lượt bao nhiêu ảnh, sau lượt bao nhiêu, số ảnh mới, số ảnh đã sao chép, số ảnh trùng và số ảnh chưa xác định**. File được lưu dưới tên có mã hash để tránh trùng, và sổ theo dõi giúp không nhập lại khi bạn đồng bộ nhiều lần.
 
 **Giới hạn và an toàn:** Nếu bạn đồng thời tạo ảnh cá nhân trong vài giây quanh một lần Save Photo của game, chỉ dùng thời điểm và số lượng không thể xác minh tuyệt đối ảnh nào thuộc game. Vì vậy nên tránh lưu ảnh khác trong lúc macro chạy, hoặc chọn thư mục con chỉ chứa ảnh game. File thiếu thời gian sửa và thuộc nhiều nhóm sẽ không được tự phân loại. Khi bố cục icon thay đổi, thao tác nhấn giữ có thể không mở hộp Save Photo; khi đó app lưu screenshot bình thường và nhật ký để hiệu chỉnh, không giả vờ ảnh gốc đã được lưu.
 
 Thư viện Lịch sử, tìm kiếm và xuất ZIP hỗ trợ PNG, JPEG và WebP đã sao chép. GitHub Actions kiểm thử nhận diện nhóm, đối chiếu trước/sau và nhận diện hộp xác nhận bằng các kịch bản giả lập; thao tác tải thực tế cần kiểm thử trên thiết bị đã đăng nhập Liên Quân.
+

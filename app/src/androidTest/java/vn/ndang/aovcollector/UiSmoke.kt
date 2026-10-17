@@ -46,6 +46,222 @@ class UiSmoke:Instrumentation() {
             val qiLog=ArrayList<String>();val qiName=HeroNames.read(qi) { qiLog+=it };qi.recycle()
             File(targetContext.filesDir,"smoke").apply { mkdirs() }.resolve("ocr-qi.txt").writeText("$qiName\n"+qiLog.joinToString("\n"))
             check(qiName=="Qi") { "OCR read $qiName for Qi: ${qiLog.joinToString("; ")}" }
+            // User regression: the popup is Arduin even though card OCR read "A Đấu sĩ".
+            context.assets.open("chess-arduin-role-ocr.jpg").use { input ->
+                val shot=BitmapFactory.decodeStream(input)
+                val title=try { GameText.chessHeroTitle(shot) } finally { shot.recycle() }
+                check(title!=null&&HeroNames.slug(title)=="arduin") { "Chess heading OCR read $title for Arduin" }
+            }
+            // ZIP regression: exactly five heroes, not another row made from truncated cyan factions.
+            context.assets.open("chess-first-row.png").use { input ->
+                val shot=BitmapFactory.decodeStream(input)
+                try {
+                    val topic=ChessWiki.TOPICS.first { it.key=="tat-ca-quan-co" }
+                    val words=GameText.words(shot)
+                    val cards=ChessWiki.tiles(topic,shot,words)
+                    File(targetContext.filesDir,"smoke/ocr-chess.txt").writeText(
+                        cards.joinToString { it.label?:"?" }+"\n"+
+                        words.joinToString("\n") { "%.3f %.3f %s".format(it.x,it.y,it.text) })
+                    check(cards.map { it.label }==listOf("Violet","Arduin","Hayate","Raz","Lumburr")) {
+                        "Chess first row has false/missing cards: $cards"
+                    }
+                    // A white faction icon beside cyan letters is not a white hero title.
+                    val injected=words+GameScreens.Word("Unknown faction",.218,.672,.326,.709)
+                    check(ChessWiki.tiles(topic,shot,injected).size==5) { "Cyan faction became another hero row" }
+                } finally { shot.recycle() }
+            }
+            context.assets.open("chess-violet-price.png").use { input ->
+                val shot=BitmapFactory.decodeStream(input)
+                val title=try { GameText.chessHeroTitle(shot) } finally { shot.recycle() }
+                check(title=="Violet") { "Violet's gold price became part of her name: $title" }
+            }
+            context.assets.open("chess-save-photo-sure.jpg").use { input ->
+                val screenshot=BitmapFactory.decodeStream(input)
+                val sure=try { ChessWiki.nativeConfirm(GameText.words(screenshot)) } finally { screenshot.recycle() }
+                check(sure!=null&&sure.first in .30.. .45&&sure.second in .48.. .65) {
+                    "Real Save Photo dialog did not locate Sure: $sure"
+                }
+            }
+            // User ZIP: a text tab has more content below its first screenshot.
+            context.assets.open("chess-round-bottom.jpg").use { input ->
+                val before=BitmapFactory.decodeStream(input)
+                val moved=before.copy(Bitmap.Config.ARGB_8888,true)
+                val region=Rect((before.width*.24).toInt(),(before.height*.25).toInt(),(before.width*.92).toInt(),(before.height*.97).toInt())
+                val source=Rect(region).apply { top+=12 }
+                val target=Rect(region).apply { bottom-=12 }
+                Canvas(moved).drawBitmap(before,source,target,null)
+                check(ChessWiki.changed(ChessWiki.signature(before),ChessWiki.signature(moved))) { "Real text scroll was treated as the end of the tab" }
+                check(!ChessWiki.changed(ChessWiki.signature(moved),ChessWiki.signature(moved)))
+                before.recycle();moved.recycle()
+            }
+            // Native Save Photo exports go through a real SAF provider, then appear in app history.
+            val photoTree=android.provider.DocumentsContract.buildTreeDocumentUri(
+                "vn.ndang.aovcollector.test.photos","Pictures")
+            targetContext.startActivity(Intent(context,PhotoGrantActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            waitForIdleSync();SystemClock.sleep(700)
+            GamePhotoImport.choose(targetContext,photoTree)
+            val photoRoot=android.provider.DocumentsContract.buildDocumentUriUsingTree(photoTree,"Pictures")
+            fun nativeFile(name:String):android.net.Uri {
+                val uri=android.provider.DocumentsContract.createDocument(targetContext.contentResolver,
+                    photoRoot,"image/jpeg",name)!!
+                // Valid bytes from the bundled screenshot; the game can use .png (1).jpg names.
+                context.assets.open("chess-arduin-role-ocr.jpg").use { input ->
+                    targetContext.contentResolver.openOutputStream(uri)!!.use { output -> input.copyTo(output) }
+                }
+                return uri
+            }
+            val personal=nativeFile("personal-before.jpg")
+            val nativeRun="smoke-native-save"
+            check(GamePhotoSession.begin(targetContext,nativeRun)==1)
+            GamePhotoSession.mark(targetContext,nativeRun,"quan-co","Violet")
+            val waiting=GamePhotoSession.importNew(targetContext,nativeRun)
+            check(waiting.pending==1&&waiting.copied==0) { "Sure without a visible file was acknowledged" }
+            val violet=nativeFile("caYyujwz.png (1).jpg")
+            val copied=GamePhotoSession.importNew(targetContext,nativeRun)
+            check(copied.copied==1&&copied.pending==0) { "Late Pictures image was not imported: $copied" }
+            val imported=File(targetContext.filesDir,"captures/"+GamePhotoImport.ROOT)
+            val violetCopy=imported.walkTopDown().first { it.isFile&&it.name.startsWith("violet-") }
+            check(violetCopy.extension=="jpg"&&violetCopy.path.contains("quan-co/anh-quan-co"))
+            targetContext.contentResolver.openInputStream(violet)!!.use {
+                check(it.readBytes().contentEquals(violetCopy.readBytes())) { "Native image bytes changed" }
+            }
+            // A later different category cannot rename/reassign the already imported Violet.
+            SystemClock.sleep(50)
+            GamePhotoSession.mark(targetContext,nativeRun,"chieu-quan-co","Violet-skill")
+            val skill=nativeFile("skill.png (1).jpg")
+            val second=GamePhotoSession.importNew(targetContext,nativeRun)
+            check(second.copied==1&&second.already==1&&second.pending==0)
+            check(violetCopy.isFile&&imported.walkTopDown().count { GamePhotoImport.isImage(it) }==2)
+            check(GamePhotoSession.importNew(targetContext,nativeRun).copied==0) { "Sync duplicated native photos" }
+            violetCopy.delete()
+            check(GamePhotoSession.importNew(targetContext,nativeRun).copied==1) { "Deleted internal image cannot be restored" }
+            SystemClock.sleep(50)
+            GamePhotoSession.mark(targetContext,nativeRun,"phe","Doa-lac-gia")
+            val faction=nativeFile("faction.png (1).jpg")
+            val oldRevision=GamePhotoSync.revision
+            GamePhotoSync.request(targetContext)
+            val copyDeadline=SystemClock.uptimeMillis()+10_000
+            while((GamePhotoSync.revision==oldRevision||GamePhotoSync.busy)&&SystemClock.uptimeMillis()<copyDeadline)
+                SystemClock.sleep(100)
+            check(GamePhotoSync.revision>oldRevision&&!GamePhotoSync.busy) { "After-Sure background sync did not finish" }
+            check(imported.walkTopDown().any { it.isFile&&it.path.contains("tuong-tac/phe") })
+            check(GamePhotoImport.scan(targetContext,photoTree).size==4) { "Original Pictures files changed" }
+            // Full post-run pipeline: real SAF ZIP/read-back, no ChatGPT before Drive proof,
+            // then navigate a separate fixture app's drawer -> dot -> composer -> Send.
+            targetContext.contentResolver.takePersistableUriPermission(photoTree,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            targetContext.getSharedPreferences("after-run",0).edit().putString("tree",photoTree.toString()).commit()
+            val savedCommand="Phân tích kết quả đã lưu trên Drive · smoke"
+            AfterRun.saveConfig(targetContext,true,true,savedCommand)
+            AfterRun.finished(targetContext,nativeRun)
+            fun awaitStage(wanted:String,timeout:Long=25_000,run:String=nativeRun) {
+                val until=SystemClock.uptimeMillis()+timeout
+                while(AfterRun.state(targetContext,run)?.optString("stage")!=wanted&&SystemClock.uptimeMillis()<until)
+                    SystemClock.sleep(150)
+                check(AfterRun.state(targetContext,run)?.optString("stage")==wanted) {
+                    "Post-run expected $wanted: ${AfterRun.state(targetContext,run)}"
+                }
+            }
+            awaitStage("waiting-drive")
+            val upload=AfterRun.state(targetContext,nativeRun)!!
+            check(upload.optBoolean("verified")&&!upload.optBoolean("driveProof"))
+            val zipName=upload.getString("filename")
+            AfterRun.driveNotification(targetContext,AfterRunProtocol.DRIVE,"Đang tải lên $zipName")
+            check(AfterRun.state(targetContext,nativeRun)!!.getString("stage")=="waiting-drive")
+            AfterRun.driveNotification(targetContext,AfterRunProtocol.DRIVE,"Đã tải lên other.zip")
+            check(AfterRun.state(targetContext,nativeRun)!!.getString("stage")=="waiting-drive")
+            AfterRun.driveNotification(targetContext,AfterRunProtocol.DRIVE,"Đã tải lên $zipName")
+            awaitStage("done")
+            val sentText=android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(
+                "run-as com.openai.chatgpt cat files/sent.txt")).use { it.bufferedReader().readText() }
+            check(sentText=="dot\n"+savedCommand) { "Command went to the wrong destination: $sentText" }
+            AfterRun.finished(targetContext,nativeRun)
+            check(AfterRun.state(targetContext,nativeRun)!!.getString("stage")=="done")
+            // The next launch may resume an already open dot page, with a non-clickable heading.
+            val dotAgain="smoke-dot-already-open"
+            val nextCommand="Smoke · dot đã mở sẵn"
+            AfterRun.saveConfig(targetContext,true,true,nextCommand)
+            File(targetContext.filesDir,"captures/$dotAgain").apply { mkdirs() }.resolve("result.txt").writeText(dotAgain)
+            AfterRun.finished(targetContext,dotAgain);awaitStage("waiting-drive",run=dotAgain)
+            val nextUpload=AfterRun.state(targetContext,dotAgain)!!
+            AfterRun.driveNotification(targetContext,AfterRunProtocol.DRIVE,"Uploaded "+nextUpload.getString("filename"))
+            awaitStage("done",run=dotAgain)
+            val sentAgain=android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(
+                "run-as com.openai.chatgpt cat files/sent.txt")).use { it.bufferedReader().readText() }
+            check(sentAgain=="dot\n"+nextCommand) { "Already-open dot page was not handled: $sentAgain" }
+            android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,android.net.Uri.parse(nextUpload.getString("uri")))
+            File(targetContext.filesDir,"captures/$dotAgain").deleteRecursively()
+            // Google Drive can expose create-file without exposing folder selection. Persist a
+            // dedicated ZIP URI and overwrite only that explicitly chosen latest-results file.
+            val fixedTreeUri=android.provider.DocumentsContract.createDocument(targetContext.contentResolver,
+                photoRoot,"application/zip","aov-latest.zip")!!
+            val fixed=android.provider.DocumentsContract.buildDocumentUri("vn.ndang.aovcollector.test.photos","aov-latest.zip")
+            targetContext.startActivity(Intent(context,PhotoGrantActivity::class.java).setData(fixed)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            waitForIdleSync();SystemClock.sleep(700)
+            targetContext.contentResolver.takePersistableUriPermission(fixed,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            targetContext.getSharedPreferences("after-run",0).edit().putString("tree",fixed.toString()).commit()
+            AfterRun.saveConfig(targetContext,true,false,"")
+            var previousBytes=byteArrayOf()
+            for(fixedRun in listOf("smoke-fixed-first","smoke-fixed-second")) {
+                File(targetContext.filesDir,"captures/$fixedRun").apply { mkdirs() }.resolve("result.txt").writeText(fixedRun)
+                if(AfterRun.state(targetContext,fixedRun)==null) AfterRun.finished(targetContext,fixedRun)
+                awaitStage("waiting-drive",run=fixedRun)
+                val saved=AfterRun.state(targetContext,fixedRun)!!
+                check(saved.getString("uri")==fixed.toString()&&saved.getString("filename")=="aov-latest.zip")
+                val bytes=targetContext.contentResolver.openInputStream(fixed)!!.use { it.readBytes() }
+                check(bytes.isNotEmpty()&&!bytes.contentEquals(previousBytes)) { "Fixed Drive ZIP did not update" }
+                previousBytes=bytes
+                if(fixedRun=="smoke-fixed-first") {
+                    File(targetContext.filesDir,"captures/smoke-fixed-second").apply { mkdirs() }
+                        .resolve("result.txt").writeText("smoke-fixed-second")
+                    AfterRun.finished(targetContext,"smoke-fixed-second")
+                    SystemClock.sleep(1600)
+                    check(AfterRun.state(targetContext,"smoke-fixed-second")!!.getString("stage")=="queued") {
+                        "Next run overwrote a ZIP still waiting for Drive confirmation"
+                    }
+                    targetContext.contentResolver.openInputStream(fixed)!!.use { check(it.readBytes().contentEquals(bytes)) }
+                }
+                AfterRun.driveNotification(targetContext,AfterRunProtocol.DRIVE,"Uploaded aov-latest.zip",saved.getLong("uploadStarted")-1)
+                check(AfterRun.state(targetContext,fixedRun)!!.getString("stage")=="waiting-drive")
+                AfterRun.driveNotification(targetContext,AfterRunProtocol.DRIVE,"Uploaded aov-latest.zip")
+                awaitStage("done",run=fixedRun)
+                File(targetContext.filesDir,"captures/$fixedRun").deleteRecursively()
+            }
+            targetContext.contentResolver.releasePersistableUriPermission(fixed,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,fixedTreeUri)
+            val interrupted="smoke-after-interrupted"
+            AfterRun.finished(targetContext,interrupted)
+            AfterRun.update(targetContext,interrupted,"sending","Simulate process death after send attempt")
+            AfterRun.recover(targetContext)
+            check(AfterRun.state(targetContext,interrupted)!!.getString("stage")=="send-uncertain")
+            AfterRun.retry(targetContext,interrupted)
+            check(AfterRun.state(targetContext,interrupted)!!.getString("stage")=="send-uncertain")
+            val cancelled="smoke-after-cancelled"
+            AfterRun.finished(targetContext,cancelled);AfterRun.cancel(targetContext,cancelled)
+            check(AfterRun.state(targetContext,cancelled)!!.getString("stage")=="cancelled")
+            File(targetContext.filesDir,"smoke/after-run.txt").writeText("zip-readback=verified; wait-for-drive=ok; dot-navigation=ok; sent-once=ok")
+            android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,android.net.Uri.parse(upload.getString("uri")))
+            targetContext.getSharedPreferences("after-run",0).edit().clear().commit()
+            File(targetContext.filesDir,"after-run").deleteRecursively()
+            File(targetContext.filesDir,"smoke/native-photos.txt").writeText("late-indexed=ok; bytes=identical; classified=ok; dedup=ok; restore=ok")
+            listOf(personal,violet,skill,faction).forEach { android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,it) }
+            targetContext.contentResolver.releasePersistableUriPermission(photoTree,Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            targetContext.getSharedPreferences("game-photo-source",0).edit().clear().commit()
+            File(targetContext.filesDir,"captures/$nativeRun").deleteRecursively()
+            imported.deleteRecursively()
+            File(targetContext.filesDir,"pictures-copy-ledger.json").delete()
+            val chessOptions=ChessWiki.Options(setOf("tat-ca-quan-co"),openGame=false,heroDetails=true)
+            val legacyChess=JSONObject(BuiltInMacros.chess(chessOptions)).apply { remove("fast") }
+            check(BuiltInMacros.chessOptions(legacyChess).fast) { "Old chess macro did not default to fast mode" }
+            for(fast in listOf(false,true)) {
+                val selected=chessOptions.copy(fast=fast)
+                check(BuiltInMacros.chessOptions(JSONObject(BuiltInMacros.chess(selected)))==selected) {
+                    "Chess speed setting did not survive save/load"
+                }
+            }
             // The way into the game: a list run that opens the game starts with the entry step, and a popup shot on
             // the user's phone, fading in, is read on Android as in the unit tests.
             check(Macro(BuiltInMacros.create("",2,true,openGame=true)).steps.getJSONObject(0).getString("type")=="enter") { "Tự vào game should start with the entry step" }
@@ -120,6 +336,38 @@ class UiSmoke:Instrumentation() {
             val account=Accounts.load(targetContext)
             check(account!=null&&account.user=="test@example.com"&&account.password=="p@ss word"&&Accounts.uid(targetContext)=="17514483308299377") { "Test account did not survive saving" }
             check(!targetContext.getSharedPreferences("test-account",0).all.values.joinToString().contains("p@ss")) { "The password is stored in clear" }
+            val accountPrefs=targetContext.getSharedPreferences("test-account",0)
+            val firstRow=org.json.JSONArray(accountPrefs.getString("accounts-v2","[]")).getJSONObject(0)
+            // Recreate v0.8.2's single-account layout with the original encrypted fields.
+            accountPrefs.edit().clear().putString("uid",firstRow.getString("uid"))
+                .putString("user",firstRow.getString("user")).putString("password",firstRow.getString("password")).commit()
+            val migrated=Accounts.list(targetContext).single()
+            check(migrated.ready&&Accounts.load(targetContext,migrated.id)?.password=="p@ss word") { "Legacy account migration lost credentials" }
+            check(!accountPrefs.contains("uid")) { "Legacy fields were not atomically migrated" }
+            val secondAccount=Accounts.save(targetContext,"17514483308299378","second@example.com","second-password",label="Tài khoản B")
+            check(Accounts.list(targetContext).size==2) { "Saving account B overwrote account A" }
+            Accounts.select(targetContext,migrated.id)
+            check(Accounts.load(targetContext,secondAccount)?.user=="second@example.com") { "Explicit account selection fell back to default" }
+            Accounts.save(targetContext,migrated.uid,"test@example.com","",migrated.id,"Tài khoản A")
+            check(Accounts.load(targetContext,migrated.id)?.password=="p@ss word") { "Blank edit erased the old password" }
+            // A damaged/lost key must leave an account visible so its password can be repaired.
+            val savedRows=org.json.JSONArray(accountPrefs.getString("accounts-v2","[]"))
+            for(i in 0 until savedRows.length()) if(savedRows.getJSONObject(i).getString("id")==migrated.id)
+                savedRows.getJSONObject(i).put("password","unreadable-ciphertext")
+            accountPrefs.edit().putString("accounts-v2",savedRows.toString()).commit()
+            check(Accounts.list(targetContext).first { it.id==migrated.id }.let { !it.ready&&it.uid==migrated.uid }) { "Unreadable password hid the old account" }
+            Accounts.save(targetContext,migrated.uid,"test@example.com","repaired-password",migrated.id,"Tài khoản A")
+            check(Accounts.load(targetContext,migrated.id)?.password=="repaired-password") { "Account repair failed" }
+            Accounts.remove(targetContext,secondAccount)
+            check(Accounts.list(targetContext).size==1&&Accounts.load(targetContext,migrated.id)!=null) { "Deleting B erased A" }
+            check(Accounts.load(targetContext,secondAccount)==null) { "Deleted account silently fell back to A" }
+            val validAccountData=accountPrefs.getString("accounts-v2",null)
+            accountPrefs.edit().putString("accounts-v2","{").commit()
+            check(Accounts.list(targetContext).isEmpty()&&Accounts.problem(targetContext)!=null) { "Unreadable account data was not reported" }
+            var preventedOverwrite=false
+            try { Accounts.save(targetContext,"17514483308299379","new@example.com","new-password") } catch(_:Exception) { preventedOverwrite=true }
+            check(preventedOverwrite&&accountPrefs.getString("accounts-v2",null)=="{") { "Unreadable records were overwritten" }
+            accountPrefs.edit().putString("accounts-v2",validAccountData).commit()
             Accounts.clear(targetContext);check(Accounts.load(targetContext)==null) { "Test account was not cleared" }
             check(HeroNames.slug("Điêu Thuyền")=="dieu-thuyen")
             // The skills are one step read at run time: at least the four icons' two tabs, more for five icons or other forms.
@@ -187,6 +435,81 @@ class UiSmoke:Instrumentation() {
             }
             android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("dumpsys accessibility")).use { File(dest,"accessibility.txt").writeBytes(it.readBytes()) }
             check(service!=null) { "Accessibility service not connected" }
+            runOnMainSync {
+                check(service!!.selectMacro(BuiltInMacros.chess(ChessWiki.Options(
+                    setOf("tat-ca-quan-co"),openGame=false,heroDetails=true))))
+                service!!.showPanel()
+                fun bar(view:View):android.widget.ProgressBar? {
+                    if(view is android.widget.ProgressBar) return view
+                    if(view is android.view.ViewGroup) for(i in 0 until view.childCount)
+                        bar(view.getChildAt(i))?.let { return it }
+                    return null
+                }
+                val progress=bar(service!!.panelView?:error("Missing chess panel"))
+                    ?:error("Missing chess progress bar")
+                check(progress.visibility==View.GONE) { "Chess showed a percentage before knowing its total" }
+            }
+            // Exact task timing persists across new Macro objects, without borrowing another configuration.
+            val timingMacro=Macro(MacroStore.current(targetContext).readText())
+            val timingPrefs=targetContext.getSharedPreferences("ui",0)
+            check(RunTimes.get(timingPrefs,RunTimes.task(timingMacro.timingHash))==null)
+            RunTimes.recordTask(timingPrefs,timingMacro.timingHash,120.0)
+            RunTimes.recordTask(timingPrefs,timingMacro.timingHash,180.0)
+            check(RunTimes.taskSamples(timingPrefs,timingMacro.timingHash)==listOf(120.0,180.0))
+            check(RunTimes.get(timingPrefs,RunTimes.task(Macro(JSONObject(timingMacro.raw).toString()).timingHash))==150.0)
+            val namedTimingA=Macro(BuiltInMacros.named(listOf("Violet"),listOf(-1)))
+            val namedTimingB=Macro(BuiltInMacros.named(listOf("Violet"),listOf(8)))
+            check(namedTimingA.hash!=namedTimingB.hash&&namedTimingA.timingHash==namedTimingB.timingHash) { "Learned card position invalidated the same task's timing" }
+            val differentTiming=Macro(BuiltInMacros.chess(ChessWiki.Options(setOf("phe"),openGame=false)))
+            check(RunTimes.get(timingPrefs,RunTimes.task(differentTiming.timingHash))==null)
+            runOnMainSync { service!!.showPanel() }
+            waitFor("Learned duration missing from floating controller") {
+                automation.windows.mapNotNull { it.root }.any { it.findAccessibilityNodeInfosByText("Ước tính thu thập ~2:30").isNotEmpty() }
+            }
+            timingPrefs.edit().remove(RunTimes.task(timingMacro.timingHash)).remove(RunTimes.task(timingMacro.timingHash)+":samples").commit()
+            // Choose B for this run, then change the global default to A: resume must stay on B.
+            run {
+                fun window(title:String)=automation.windows.mapNotNull { it.root }
+                    .firstOrNull { it.findAccessibilityNodeInfosByText(title).isNotEmpty() }
+                fun press(title:String,text:String) {
+                    waitForIdleSync()
+                    val node=window(title)?.findAccessibilityNodeInfosByText(text)?.firstOrNull { it.text?.toString()?.equals(text,true)==true }
+                        ?:error("Missing $text in $title")
+                    check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK)||node.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK)==true)
+                    waitForIdleSync();SystemClock.sleep(350)
+                }
+                runOnMainSync {
+                    check(service!!.selectMacro(BuiltInMacros.chess(ChessWiki.Options(
+                        setOf("tat-ca-quan-co"),openGame=true,checkAccount=true,traceEntry=false))))
+                    service!!.start()
+                }
+                waitFor("Missing account silently disabled UID verification") { window("Chưa có tài khoản đã lưu")!=null }
+                press("Chưa có tài khoản đã lưu","Hủy")
+                val a=Accounts.save(targetContext,"17514483308299377","a@example.com","password-a",label="Tài khoản A")
+                val b=Accounts.save(targetContext,"17514483308299378","b@example.com","password-b",label="Tài khoản B")
+                Accounts.select(targetContext,a)
+                runOnMainSync { service!!.start() }
+                val title="Chọn tài khoản cho lượt chạy"
+                waitFor("Run did not offer the account picker") { window(title)!=null }
+                press(title,Accounts.list(targetContext).first { it.id==b }.caption)
+                snap("01d-account-picker")
+                press(title,"Chạy")
+                val runPrefs=targetContext.getSharedPreferences("collector",0)
+                waitFor("Chosen account was not pinned to the run") { runPrefs.getString("accountId",null)==b }
+                waitFor("Missing game did not end the test entry step") { var idle=false;runOnMainSync { idle=!service!!.isWorking };idle }
+                check(runPrefs.getString("accountUid",null)=="17514483308299378") { "Run pinned the wrong UID" }
+                Accounts.select(targetContext,a)
+                runOnMainSync { service!!.start() }
+                waitFor("Resume entry did not settle") { var idle=false;runOnMainSync { idle=!service!!.isWorking };idle }
+                check(window(title)==null&&runPrefs.getString("accountId",null)==b) { "Resume switched to the new default account" }
+                Accounts.remove(targetContext,b)
+                runOnMainSync { service!!.start() }
+                // The selected account has gone: no fallback to A and no game interaction.
+                var idle=false;runOnMainSync { idle=!service!!.isWorking }
+                check(idle&&runPrefs.getString("accountId",null)==b&&Accounts.load(targetContext,a)!=null) { "Deleted run account fell back to A" }
+                Accounts.clear(targetContext)
+                runOnMainSync { service!!.reset() }
+            }
             // A built-in macro saved by an older version is regenerated when a new run is created.
             MacroStore.current(targetContext).writeText(JSONObject(BuiltInMacros.create("Danh sách tướng",2,true)).apply { remove("builtinVersion") }.toString())
             runOnMainSync { service!!.reset() }
@@ -257,9 +580,221 @@ class UiSmoke:Instrumentation() {
             check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Hiện chữ") }
                 .none { it.text?.toString()=="Hiện chữ" }) { "Obsolete show-label option is still visible" }
             snap("04a-always-labeled-controls")
-            // No run yet: Dừng has nothing to end.
-            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Dừng") }.firstOrNull { it.text?.toString()=="Dừng" }?.isEnabled==false) { "Dừng is enabled before any run" }
+            // Restore an unfinished current run; unrelated old runs must stay out of its popup.
+            val currentRunMacro=Macro(MacroStore.current(targetContext).readText())
+            targetContext.getSharedPreferences("collector",0).edit().putString("hash",currentRunMacro.hash)
+                .putString("run","progress-smoke").putInt("step",0).putBoolean("stopped",false).commit()
+            shell("settings put secure enabled_accessibility_services null")
+            waitFor("Old capture service did not stop") { runOnMainSync { service=CollectorService.current };service==null }
+            shell("settings put secure enabled_accessibility_services vn.ndang.aovcollector/vn.ndang.aovcollector.CollectorService")
+            shell("settings put secure accessibility_enabled 1")
+            waitFor("Service did not restore current capture run") { runOnMainSync { service=CollectorService.current };service!=null }
+            runOnMainSync { service!!.showPanel() }
+            // The real asynchronous image writer feeds a durable, ordered second overlay.
+            val historyDir=File(targetContext.filesDir,"captures/progress-smoke").apply { mkdirs() }
+            File(historyDir,"hero.json").writeText(JSONObject().put("name","Violet").toString())
+            fun savePreviewImage(name:String):CaptureHistory.Entry {
+                val ready=java.util.concurrent.CountDownLatch(1)
+                val success=java.util.concurrent.atomic.AtomicBoolean(false)
+                runOnMainSync {
+                    service!!.store(Bitmap.createBitmap(800,600,Bitmap.Config.ARGB_8888).apply { eraseColor(Color.CYAN) },
+                        "progress-smoke",name) { success.set(it);ready.countDown() }
+                }
+                check(ready.await(10,java.util.concurrent.TimeUnit.SECONDS)&&success.get()) { "History writer did not save" }
+                return CaptureHistory.entries(targetContext).last()
+            }
+            val savedRow=savePreviewImage("hero-001-overview")
+            val secondRow=savePreviewImage("hero-001-skill-1-detail")
+            check(savedRow.name=="violet-1"&&secondRow.name=="violet-2") { "Unfriendly or unordered image names: ${savedRow.name}, ${secondRow.name}" }
+            check(savedRow.state=="saved"&&savedRow.bytes>0&&File(targetContext.filesDir,"captures/"+savedRow.path).isFile)
+            val oldDir=File(targetContext.filesDir,"captures/previous-progress").apply { mkdirs() }
+            File(oldDir,"hero.json").writeText(JSONObject().put("name","OldHero").toString())
+            val oldImage=File(oldDir,"old.png");File(targetContext.filesDir,"captures/"+savedRow.path).copyTo(oldImage,true)
+            val oldOrder=CaptureHistory.begin(targetContext,"previous-progress",oldImage)
+            CaptureHistory.finish(targetContext,oldOrder,true)
+            val failedOrder=CaptureHistory.begin(targetContext,"progress-smoke",File(targetContext.filesDir,"captures/progress-errors/failed.png"))
+            CaptureHistory.finish(targetContext,failedOrder,false)
+            val interruptedCapture=CaptureHistory.begin(targetContext,"progress-smoke",File(targetContext.filesDir,"captures/progress-errors/interrupted.png"))
+            CaptureHistory.recover(targetContext)
+            val journal=CaptureHistory.entries(targetContext)
+            check(journal.zipWithNext().all { (a,b)->a.order<b.order }&&journal.last().order==interruptedCapture&&journal.last().state=="interrupted")
+            check(journal.first { it.order==failedOrder }.state=="failed")
+            click("Ảnh")
+            waitFor("Missing live saved-image row") { nodes().any { it.findAccessibilityNodeInfosByText(savedRow.name).isNotEmpty() } }
+            check(nodes().any { it.findAccessibilityNodeInfosByText("Đã lưu trong app").isNotEmpty() })
+            check(nodes().none { it.findAccessibilityNodeInfosByText("oldhero-1").isNotEmpty() }) { "Current popup includes an earlier run" }
+            check(nodes().any { it.findAccessibilityNodeInfosByText("Lưu thất bại").isNotEmpty() })
+            snap("04c-live-capture-history")
+            check(nodes().none { it.findAccessibilityNodeInfosByText("progress-smoke/").isNotEmpty() }) { "History exposes storage paths" }
+            fun openHistoryImage(name:String) {
+                val node=nodes().flatMap { it.findAccessibilityNodeInfosByText("Mở ảnh $name") }
+                    .firstOrNull { it.contentDescription?.toString()=="Mở ảnh $name" }?:error("Missing image $name")
+                check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK));waitForIdleSync()
+            }
+            fun previewImage()=nodes().flatMap { it.findAccessibilityNodeInfosByText("Ảnh lớn số ${savedRow.order}") }
+                .firstOrNull { it.contentDescription?.toString()=="Ảnh lớn số ${savedRow.order}" }
+            openHistoryImage(savedRow.name)
+            waitFor("Large image did not load") { previewImage()?.stateDescription?.toString()=="Phóng to 100%" }
+            val largeBounds=Rect().also { previewImage()!!.getBoundsInScreen(it) }
+            check(largeBounds.width()>400&&largeBounds.height()>200) { "Image preview is not enlarged: $largeBounds" }
+            val closePreviewNode=nodes().flatMap { it.findAccessibilityNodeInfosByText("Đóng ảnh lớn") }
+                .first { it.contentDescription?.toString()=="Đóng ảnh lớn" }
+            val closePreviewBounds=Rect().also { closePreviewNode.getBoundsInScreen(it) }
+            check(closePreviewBounds.width()>=Ui.dp(targetContext,60)) { "Preview close button is clipped: $closePreviewBounds" }
+            fun previewAction(label:String) {
+                waitFor("Missing preview action $label") { nodes().any { root ->
+                    root.findAccessibilityNodeInfosByText(label).any { it.contentDescription?.toString()==label }
+                } }
+                val node=nodes().flatMap { it.findAccessibilityNodeInfosByText(label) }
+                    .firstOrNull { it.contentDescription?.toString()==label }?:error("Missing preview action $label")
+                check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK));waitForIdleSync()
+            }
+            previewAction("Phóng to ảnh")
+            waitFor("Image did not zoom") { previewImage()?.stateDescription?.toString()=="Phóng to 150%" }
+            snap("04d-large-image-preview")
+            previewAction("Thu nhỏ ảnh")
+            waitFor("Image did not zoom out") { previewImage()?.stateDescription?.toString()=="Phóng to 100%" }
+            previewAction("Ảnh sau")
+            waitFor("Next image did not load") { nodes().any { it.findAccessibilityNodeInfosByText("Ảnh lớn số ${secondRow.order}").isNotEmpty() } }
+            previewAction("Ảnh trước")
+            waitFor("Previous image did not return") { previewImage()?.stateDescription?.toString()=="Phóng to 100%" }
+            previewAction("Sao chép ảnh")
+            var clipboardURI:android.net.Uri?=null
+            waitFor("Image was not placed on clipboard") {
+                runOnMainSync {
+                    clipboardURI=targetContext.getSystemService(android.content.ClipboardManager::class.java).primaryClip?.getItemAt(0)?.uri
+                };clipboardURI!=null
+            }
+            val originalBytes=File(targetContext.filesDir,"captures/"+savedRow.path).readBytes()
+            check(targetContext.contentResolver.openInputStream(clipboardURI!!)!!.use { it.readBytes() }.contentEquals(originalBytes))
+            // The receiver is a separate application/UID and receives access through the clipboard grant.
+            targetContext.startActivity(Intent().setClassName("com.openai.chatgpt","vn.ndang.chatfixture.ClipboardActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            waitFor("Another app could not paste clipboard image") {
+                android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("run-as com.openai.chatgpt cat files/pasted-image.bin")).use { it.readBytes() }.contentEquals(originalBytes)
+            }
+            targetContext.startActivity(Intent(targetContext,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            waitFor("Collector did not return to landscape after pasting") {
+                targetContext.resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE
+            }
+            waitForIdleSync();SystemClock.sleep(500)
+            // The receiving app can rotate the device; rotation intentionally closes the large preview.
+            var needsPreview=false
+            runOnMainSync { needsPreview=service!!.capturePreviewView==null }
+            if(needsPreview) openHistoryImage(savedRow.name)
+            waitFor("Preview did not reopen after clipboard app") { previewImage()?.stateDescription?.toString()=="Phóng to 100%" }
+            val previewShotDone=java.util.concurrent.CountDownLatch(1)
+            val previewShotOK=java.util.concurrent.atomic.AtomicBoolean(false)
+            var previewHidden=false
+            runOnMainSync {
+                service!!.grab(true) { previewShotOK.set(it!=null);it?.recycle();previewShotDone.countDown() }
+                previewHidden=service!!.capturePreviewView?.visibility==View.INVISIBLE
+            }
+            check(previewHidden) { "Large preview not hidden for screenshot" }
+            check(previewShotDone.await(10,java.util.concurrent.TimeUnit.SECONDS)&&previewShotOK.get())
+            runOnMainSync { check(service!!.capturePreviewView?.visibility==View.VISIBLE) }
+            previewAction("Đóng ảnh lớn")
+            runOnMainSync { check(service!!.capturePreviewView==null&&service!!.captureProgressView!=null) }
+            // Select exactly two current-run images and exercise the existing SAF ZIP writer.
+            targetContext.startActivity(Intent(context,PhotoGrantActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            waitForIdleSync();SystemClock.sleep(700)
+            targetContext.contentResolver.takePersistableUriPermission(photoTree,Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            targetContext.startActivity(Intent(targetContext,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            waitForIdleSync()
+            val chosenZip=android.provider.DocumentsContract.createDocument(targetContext.contentResolver,photoRoot,"application/zip","selected-current-images.zip")!!
+            val resultIntent=Intent().setData(chosenZip).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            val exportFilter=android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE);addDataType("application/zip")
+            }
+            val exportMonitor=addMonitor(exportFilter,Instrumentation.ActivityResult(Activity.RESULT_OK,resultIntent),true)
+            try {
+                previewAction("Chọn ảnh trong lượt")
+                previewAction("Chọn ${savedRow.name}")
+                previewAction("Chọn ${secondRow.name}")
+                previewAction("Xuất ảnh đã chọn")
+                waitFor("Popup export did not open the file picker") { exportMonitor.hits>0 }
+                waitFor("Selected image ZIP export did not finish") { nodes().any { it.findAccessibilityNodeInfosByText("Đã lưu ZIP gồm 2 file").isNotEmpty() } }
+                val zipBytes=targetContext.contentResolver.openInputStream(chosenZip)!!.use { it.readBytes() }
+                val names=linkedSetOf<String>()
+                java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(zipBytes)).use { outer ->
+                    check(outer.nextEntry!=null)
+                    val innerBytes=outer.readBytes()
+                    java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(innerBytes)).use { inner ->
+                        var item=inner.nextEntry
+                        while(item!=null) { names+=item.name;inner.closeEntry();item=inner.nextEntry }
+                    }
+                }
+                check(names==setOf(savedRow.path,secondRow.path)) { "Export included unselected/older images: $names" }
+                click("Đã hiểu")
+            } finally { removeMonitor(exportMonitor) }
+            android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,chosenZip)
+            runOnMainSync { service!!.showPanel() }
+            previewAction("Mở hoặc đóng tiến trình ảnh")
+            waitFor("Current images did not return after export") { nodes().any { it.findAccessibilityNodeInfosByText(savedRow.name).isNotEmpty() } }
+            runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT };SystemClock.sleep(1000)
+            runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1000)
+            waitFor("Current images did not survive rotation") { nodes().any { it.findAccessibilityNodeInfosByText(savedRow.name).isNotEmpty() } }
+            // Removing an older file must not renumber the next image or break a stale thumbnail tap.
+            File(targetContext.filesDir,"captures/"+savedRow.path).delete()
+            check(CaptureHistory.entries(targetContext).first { it.order==secondRow.order }.name=="violet-2")
+            val thirdRow=savePreviewImage("hero-001-attributes")
+            check(thirdRow.name=="violet-3") { "Image counter reset after deleting an older image" }
+            File(targetContext.filesDir,"captures/"+savedRow.path).delete()
+            waitFor("Removed image still reported as saved") { nodes().any { it.findAccessibilityNodeInfosByText("File đã bị xóa").isNotEmpty() } }
+            fun closeHistory() {
+                val node=nodes().flatMap { it.findAccessibilityNodeInfosByText("×") }
+                    .firstOrNull { it.contentDescription?.toString()=="Đóng tiến trình ảnh" }?:error("Missing history close")
+                check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK));waitForIdleSync()
+            }
+            closeHistory()
+            runOnMainSync { check(service!!.captureProgressView==null) }
+            // This restored unfinished run can still be ended after exporting its images.
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Dừng") }.firstOrNull { it.text?.toString()=="Dừng" }?.isEnabled==true) { "Dừng is disabled for the unfinished current run" }
+            // The actual completed-run action renders the restart vector and resets without starting a run.
+            val chosen=Macro(MacroStore.current(targetContext).readText())
+            targetContext.getSharedPreferences("collector",0).edit().putString("hash",chosen.hash)
+                .putInt("step",chosen.steps.length()).commit()
+            runOnMainSync {
+                service!!.showPanel()
+                fun restart(view:View):android.widget.Button? {
+                    if(view is android.widget.Button&&view.text.toString()=="Tạo lượt mới") return view
+                    if(view is android.view.ViewGroup) for(i in 0 until view.childCount)
+                        restart(view.getChildAt(i))?.let { return it }
+                    return null
+                }
+                val button=restart(service!!.panelView?:error("Missing panel"))?:error("Missing new-run action")
+                val icon=button.compoundDrawables[0]?:error("Missing restart icon")
+                check(icon.bounds.width()>0&&icon.bounds.height()>0) { "Restart icon has no size" }
+                val preview=Bitmap.createBitmap(96,96,Bitmap.Config.ARGB_8888)
+                val original=Rect(icon.bounds)
+                val canvas=Canvas(preview);canvas.drawColor(Color.rgb(96,75,209))
+                icon.setBounds(12,12,84,84);icon.draw(canvas);icon.bounds=original
+                File(dest,"reset-icon.png").outputStream().use { preview.compress(Bitmap.CompressFormat.PNG,100,it) }
+                preview.recycle()
+            }
+            snap("04b-create-new-run")
+            click("Tạo lượt mới")
+            check(targetContext.getSharedPreferences("collector",0).getInt("step",0)==0) { "New-run action did not reset" }
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Chạy") }.any { it.text?.toString()=="Chạy" }) {
+                "New-run action did not return to the ready state"
+            }
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Dừng") }.firstOrNull { it.text?.toString()=="Dừng" }?.isEnabled==false) { "Dừng is enabled before any new run" }
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1500);snap("05-landscape")
+            click("Ảnh")
+            waitFor("New run still shows earlier images") { nodes().any { it.findAccessibilityNodeInfosByText("Chưa có ảnh trong lượt hiện tại").isNotEmpty() } }
+            runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT };SystemClock.sleep(1000)
+            runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1000)
+            waitFor("Empty current run did not restore after rotation") { nodes().any { it.findAccessibilityNodeInfosByText("Chưa có ảnh trong lượt hiện tại").isNotEmpty() } }
+            snap("05b-right-progress-panel")
+            val shotFinished=java.util.concurrent.CountDownLatch(1)
+            var cleanShot:Bitmap?=null
+            runOnMainSync {
+                service!!.grab(true) { cleanShot=it;shotFinished.countDown() }
+                check(service!!.panelView?.visibility==View.INVISIBLE&&service!!.captureProgressView?.visibility==View.INVISIBLE)
+            }
+            check(shotFinished.await(10,java.util.concurrent.TimeUnit.SECONDS)) { "Shielded screenshot did not finish" }
+            val screenshot=cleanShot?:error("Shielded screenshot failed")
+            File(dest,"05c-capture-without-overlays.png").outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG,100,it) };screenshot.recycle()
+            runOnMainSync { check(service!!.panelView?.visibility==View.VISIBLE&&service!!.captureProgressView?.visibility==View.VISIBLE) }
             // v0.3.1 regression: a macro tap under the floating panel pressed its hidden buttons
             // (Đóng removed the panel mid-run) instead of reaching the game.
             fun closeButton()=nodes().flatMap { it.findAccessibilityNodeInfosByText("Đóng") }.firstOrNull { it.text?.toString()=="Đóng" }
@@ -271,7 +806,10 @@ class UiSmoke:Instrumentation() {
             runOnMainSync { legacyClosed=service!!.panelView==null;if(legacyClosed) service!!.showPanel() else service!!.panelView?.visibility=View.VISIBLE }
             waitForIdleSync();SystemClock.sleep(800)
             val finished=java.util.concurrent.CountDownLatch(1);val delivered=java.util.concurrent.atomic.AtomicBoolean(false)
-            runOnMainSync { service!!.touchGame(tapAt(),true) { delivered.set(it);finished.countDown() } }
+            runOnMainSync {
+                service!!.touchGame(tapAt(),true) { delivered.set(it);finished.countDown() }
+                check(service!!.captureProgressView?.visibility==View.INVISIBLE) { "Progress overlay was not shielded" }
+            }
             check(finished.await(8,java.util.concurrent.TimeUnit.SECONDS)) { "Macro tap never finished" }
             waitForIdleSync();SystemClock.sleep(600)
             var panelKept=false;var swallowed=0
@@ -279,6 +817,8 @@ class UiSmoke:Instrumentation() {
             snap("06-after-macro-tap")
             check(delivered.get()) { "Macro tap was not delivered past the panel (swallowed=$swallowed)" }
             check(panelKept&&closeButton()!=null) { "Macro tap closed or hid the floating panel" }
+            runOnMainSync { check(service!!.captureProgressView?.visibility==View.VISIBLE) { "Progress overlay did not return" } }
+            closeHistory()
             // Before a run opens the game, a game left running is ended on its App info page: Buộc dừng, then OK.
             // Checked against the emulator's real Settings, on one of its own apps (English labels there).
             fun output(command:String)=android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).use { String(it.readBytes()) }.trim()
@@ -308,9 +848,80 @@ class UiSmoke:Instrumentation() {
             val darkForm=luma();snap("10-dark-form")
             check(darkForm<90) { "The dark task form is not dark: mean brightness $darkForm" }
             click("Hủy")
+            // No saved accounts: UID verification remains selectable and turns on game entry.
+            targetContext.getSharedPreferences("ui",0).edit().putBoolean("chessOpenGame",false)
+                .putBoolean("chessCheckAccount",false).commit()
+            chooserClick()
+            check(nodes().firstNotNullOfOrNull { findEdit(it) }!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,
+                Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"co lien quan") }))
+            waitForIdleSync();SystemClock.sleep(400)
+            click("Cờ Liên Quân · Bách khoa")
+            val verifyText="Kiểm tra UID · chọn tài khoản khi bấm Chạy"
+            val verify=nodes().flatMap { it.findAccessibilityNodeInfosByText(verifyText) }
+                .firstOrNull { it.text?.toString()==verifyText }?:error("Missing account verification option")
+            check(verify.isEnabled) { "No saved account still disables verification without a setup path" }
+            verify.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+            waitForIdleSync();SystemClock.sleep(400)
+            click(verifyText)
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Tự mở game tới sảnh trước khi vào Cờ Liên Quân") }
+                .any { it.isChecked }) { "Enabling account verification did not enable game entry" }
+            snap("11-account-setup-enabled")
+            click("Hủy")
+            click("Ảnh từ Pictures · Chọn thư mục để chép vào app ›")
+            for(label in listOf("Chọn / đổi thư mục Pictures","Đồng bộ các ảnh mới sau lượt thu thập",
+                "Mở ảnh gốc đã nhập trong Lịch sử")) {
+                check(nodes().flatMap { it.findAccessibilityNodeInfosByText(label) }
+                    .any { it.text?.toString()==label&&it.isVisibleToUser&&it.isEnabled }) {
+                    "Pictures actions are hidden behind the dialog message: $label"
+                }
+            }
+            snap("12-pictures-actions")
+            click("Mở ảnh gốc đã nhập trong Lịch sử")
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Chưa có ảnh gốc nào được sao chép.") }.isNotEmpty())
+            click("Đã hiểu")
+            click("Sau khi hoàn tất · Drive → dot của bạn ›")
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Tự lưu kết quả lên Drive sau khi hoàn tất lượt") }.isNotEmpty())
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Drive tải xong → mở ChatGPT → dot của bạn → gửi câu lệnh") }.isNotEmpty())
+            snap("13-after-run-settings")
+            click("Tự lưu kết quả lên Drive sau khi hoàn tất lượt")
+            val zipButton="Chọn ZIP đích trên Google Drive"
+            nodes().flatMap { it.findAccessibilityNodeInfosByText(zipButton) }.first { it.text?.toString()==zipButton }
+                .performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+            waitForIdleSync();SystemClock.sleep(300)
+            click(zipButton)
+            check(!AfterRun.config(targetContext).enabled) { "Picking a location applied an unsaved automation setting" }
+            fun afterSettingsVisible()=nodes().flatMap { it.findAccessibilityNodeInfosByText("Sau khi hoàn tất") }
+                .any { it.isVisibleToUser }
+            repeat(3) {
+                if(!afterSettingsVisible()) {
+                    automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK)
+                    waitForIdleSync();SystemClock.sleep(450)
+                }
+            }
+            waitFor("Drive picker cancellation did not return to settings") { afterSettingsVisible() }
+            check(!AfterRun.config(targetContext).enabled) { "Cancelling the Drive picker enabled automation" }
+            click("Đóng")
             targetContext.getSharedPreferences("ui",0).edit().remove("theme").commit()
-            result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
+            result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, current-run capture progress, clipboard image paste across apps, selected ZIP export, quick image navigation, named images, enlarged preview and zoom, learned task time, saved/missing/failed files, shielded screenshot, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
             finish(Activity.RESULT_OK,result)
-        } catch(t:Throwable) { result.putString("stream","SMOKE_FAILED: ${t.stackTraceToString()}\n");finish(Activity.RESULT_CANCELED,result) }
+        } catch(t:Throwable) {
+            try {
+                val auto=getUiAutomation(UiAutomation.FLAG_DONT_SUPPRESS_ACCESSIBILITY_SERVICES)
+                val out=File(targetContext.filesDir,"smoke").apply { mkdirs() }
+                auto.takeScreenshot()?.let { shot -> File(out,"failure.png").outputStream().use {
+                    shot.compress(Bitmap.CompressFormat.PNG,100,it)
+                };shot.recycle() }
+                val tree=StringBuilder()
+                fun visit(n:AccessibilityNodeInfo,depth:Int) {
+                    if(depth>24||tree.length>100_000) return
+                    tree.append("  ".repeat(depth)).append(n.className).append(" text=")
+                        .append(if(n.isPassword) "[password]" else n.text).append(" desc=").append(n.contentDescription).append('\n')
+                    for(i in 0 until n.childCount) n.getChild(i)?.let { visit(it,depth+1) }
+                }
+                auto.windows.mapNotNull { it.root }.forEach { visit(it,0) }
+                File(out,"failure-ui.txt").writeText(tree.toString())
+            } catch(_:Throwable) {}
+            result.putString("stream","SMOKE_FAILED: ${t.stackTraceToString()}\n");finish(Activity.RESULT_CANCELED,result) }
     }
 }
+
