@@ -38,6 +38,59 @@ object BoardScreens {
     const val SWAP_X=.1575; const val SWAP_Y=.742
     /** The X of "Chọn tướng". */
     const val PICKER_CLOSE_X=.8225; const val PICKER_CLOSE_Y=.111
+    /** A positively identified owned-only checkbox; null means unreadable, never unchecked. */
+    data class OwnedFilter(val checked:Boolean,val x:Double,val y:Double)
+    /**
+     * Find the blue square immediately beside "Đã nhận", then read its bright cyan tick.
+     * Work in screenshot pixels: the box is square at every resolution, including system-bar margins.
+     * Require all four edges and a dark interior for OFF, so a missing/covered control cannot mean OFF.
+     */
+    fun ownedFilter(width:Int,height:Int,words:List<GameScreens.Word>,readRow:(Int,IntArray)->Unit):OwnedFilter? {
+        if(width<=height||page(words,false)!=Page.PICKER) return null
+        val label=words.filter { it.plain.contains("danhan")&&it.plain.length<24&&it.left>.68&&it.right<.88&&
+            it.top>.16&&it.bottom<.29&&it.bottom-it.top<.075&&it.right-it.left in .015.. .18 }
+            .minByOrNull { (it.right-it.left)*(it.bottom-it.top) }?:return null
+        val x0=((label.right-.012)*width).toInt().coerceIn(0,width-1)
+        val x1=((label.right+.04)*width).toInt().coerceIn(x0,width-1)
+        val y0=((label.y-.025)*height).toInt().coerceIn(0,height-1)
+        val y1=((label.y+.025)*height).toInt().coerceIn(y0,height-1)
+        val cache=HashMap<Int,IntArray>()
+        fun pixel(x:Int,y:Int)=cache.getOrPut(y.coerceIn(0,height-1)) { IntArray(width).also { readRow(y.coerceIn(0,height-1),it) } }[x.coerceIn(0,width-1)]
+        fun blue(p:Int):Boolean { val r=p shr 16 and 255;val g=p shr 8 and 255;val b=p and 255
+            return b>=145&&b-r>=65&&g-r>=4&&g>=60 }
+        fun bright(p:Int):Boolean { val r=p shr 16 and 255;val g=p shr 8 and 255;val b=p and 255
+            return r>=125&&g>=160&&b>=180&&g-r>=12 }
+        val step=maxOf(1,height/540)
+        var best:OwnedFilter?=null;var bestScore=0.0
+        for(radiusFraction in listOf(.0165,.018,.0195)) {
+            val radius=maxOf(5,(height*radiusFraction).roundToInt())
+            for(cy in y0..y1 step step) for(cx in x0..x1 step step) {
+                // Avoid rounded corners. Each edge must be present, not just one blue line.
+                val edges=IntArray(4)
+                for(i in -3..3) { val d=i*radius/4
+                    // JPEG and half-pixel scaling can move a thin edge by one raster pixel.
+                    if((-step..step).any { blue(pixel(cx+d,cy-radius+it)) }) edges[0]++
+                    if((-step..step).any { blue(pixel(cx+d,cy+radius+it)) }) edges[1]++
+                    if((-step..step).any { blue(pixel(cx-radius+it,cy+d)) }) edges[2]++
+                    if((-step..step).any { blue(pixel(cx+radius+it,cy+d)) }) edges[3]++ }
+                if(edges.any { it<5 }) continue
+                var lit=0;var dark=0;var total=0
+                for(dy in -radius*2/3..radius*2/3) for(dx in -radius*2/3..radius*2/3) {
+                    val p=pixel(cx+dx,cy+dy);total++
+                    if(bright(p)) lit++
+                    if((p shr 16 and 255)<110&&(p shr 8 and 255)<135) dark++ }
+                val fraction=lit.toDouble()/total
+                val checked=when {
+                    fraction in .09.. .55 -> true
+                    fraction<.02&&dark>.85*total -> false
+                    else -> continue
+                }
+                val score=edges.sum().toDouble()-abs(cy.toDouble()/height-label.y)*10
+                if(score>bestScore) { bestScore=score;best=OwnedFilter(checked,cx.toDouble()/width,cy.toDouble()/height) }
+            }
+        }
+        return best
+    }
     /** The region dialog's three drop-downs and their lists. */
     val REGION_X=doubleArrayOf(.3525,.5,.6475)
     const val REGION_Y=.4856
@@ -142,6 +195,7 @@ class BoardReader(private val screen:Screen,private val heroes:Int,private val w
      */
     interface Look {
         val words:List<GameScreens.Word>; val lobby:Boolean; val signature:IntArray; val rows:List<Pair<Double,Double>>
+        val ownedFilter:BoardScreens.OwnedFilter?
         fun card(col:Int,top:Double,bottom:Double):Boolean
         fun done(keep:String?)
     }
@@ -161,6 +215,7 @@ class BoardReader(private val screen:Screen,private val heroes:Int,private val w
     }
     companion object {
         const val MAX_STEPS=30; const val MAX_WAITS=30; const val STILL_TRIES=3
+        const val MAX_PICKER_TRIES=3; const val MAX_FILTER_TAPS=2; const val FILTER_READS=3
         /** A list scroll: less than the rows on screen, so photos overlap. */
         const val LIST_FROM=.78; const val LIST_TO=.42; const val LIST_X=.75
     }
@@ -238,11 +293,28 @@ class BoardReader(private val screen:Screen,private val heroes:Int,private val w
     private fun openPicker(tries:Int):Unit = look(true,true) { l ->
         if(BoardScreens.page(l.words,l.lobby)!=BoardScreens.Page.PICKER) {
             l.done(null)
+            if(tries>=MAX_PICKER_TRIES) return@look fail("Không mở được Chọn tướng. Mở Chiến khu rồi bấm Tiếp tục.")
             if(tries<2) return@look screen.later(1200) { openPicker(tries+1) }
             return@look if(BoardScreens.page(l.words,l.lobby)==BoardScreens.Page.BOARD) tap(BoardScreens.SWAP_X,BoardScreens.SWAP_Y,1500) { openPicker(tries+1) }
                 else { steps=0; navigate() }
         }
-        l.done(null); toTop(0,null)
+        allHeroes(l,0,0)
+    }
+    /** Recheck every opening and every resume, before measuring or indexing any hero cards. */
+    private fun allHeroes(l:Look,reads:Int,taps:Int) {
+        if(BoardScreens.page(l.words,l.lobby)!=BoardScreens.Page.PICKER) {
+            l.done("board-filter");return fail("Chọn tướng đã đóng khi kiểm tra Đã nhận. Mở Chiến khu rồi bấm Tiếp tục.")
+        }
+        val filter=l.ownedFilter
+        if(filter!=null&&!filter.checked) { l.done(null);return toTop(0,null) }
+        // After a tap, let old frames settle before deciding it was ignored. Never toggle an OFF box.
+        if(filter==null||(taps>0&&reads<FILTER_READS)) {
+            if(reads>=FILTER_READS) { l.done("board-filter");return fail("Không đọc được trạng thái Đã nhận trong Chọn tướng. Kiểm tra ô này rồi bấm Tiếp tục; chưa chọn tướng để tránh lấy thiếu.") }
+            l.done(null);return screen.later(800) { look(true,true) { allHeroes(it,reads+1,taps) } }
+        }
+        if(taps>=MAX_FILTER_TAPS) { l.done("board-filter");return fail("Không tắt được Đã nhận trong Chọn tướng. Bỏ tick ô này rồi bấm Tiếp tục để lấy đủ tướng.") }
+        l.done(null);screen.note("Chọn tướng: tắt Đã nhận để lấy cả tướng chưa sở hữu")
+        tap(filter.x,filter.y,1200) { look(true,true) { allHeroes(it,0,taps+1) } }
     }
     private fun toTop(flings:Int,last:List<Pair<Double,Double>>?) {
         drag(.5,.40,.85,true,800) { look(false,true) { l -> l.done(null)

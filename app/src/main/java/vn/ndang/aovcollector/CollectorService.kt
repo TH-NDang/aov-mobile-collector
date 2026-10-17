@@ -1500,7 +1500,7 @@ class CollectorService : AccessibilityService() {
                         val read=try {
                             val rows={ y:Int,line:IntArray -> b.getPixels(line,0,b.width,0,y,b.width,1) }
                             val lobby=words&&GameScreens.read(b.width,b.height,rows).kind==GameScreens.Kind.LOBBY
-                            Triple(if(words) nodes+GameText.words(b) else nodes,lobby,RankScreens.signature(b.width,b.height,rows))
+                            Triple(if(words) GameText.rankingWords(b,nodes) else nodes,lobby,RankScreens.signature(b.width,b.height,rows))
                         } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không đọc được màn hình thống kê",e);null }
                         handler.post { if(read==null) { b.recycle();then(null) } else then(object:RankingReader.Look {
                             override val words=read.first; override val lobby=read.second; override val signature=read.third
@@ -1537,13 +1537,17 @@ class CollectorService : AccessibilityService() {
                     val nodes=if(words) screenWords() else emptyList()
                     try { io.execute {
                         val rows={ y:Int,line:IntArray -> b.getPixels(line,0,b.width,0,y,b.width,1) }
+                        var owned:BoardScreens.OwnedFilter?=null
                         val read:Pair<Triple<List<GameScreens.Word>,Boolean,IntArray>,List<Pair<Double,Double>>>?=try {
                             val lobby=words&&GameScreens.read(b.width,b.height,rows).kind==GameScreens.Kind.LOBBY
-                            Triple(if(words) nodes+GameText.words(b) else nodes,lobby,BoardScreens.signature(b.width,b.height,rows)) to
+                            val text=if(words) nodes+GameText.words(b) else nodes
+                            owned=if(words) BoardScreens.ownedFilter(b.width,b.height,text,rows) else null
+                            Triple(text,lobby,BoardScreens.signature(b.width,b.height,rows)) to
                                 (if(grid) BoardScreens.rows(b.width,b.height,rows) else emptyList())
                         } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không đọc được màn hình Chiến khu",e);null }
                         handler.post { if(read==null) { b.recycle();then(null) } else then(object:BoardReader.Look {
                             override val words=read.first.first; override val lobby=read.first.second; override val signature=read.first.third; override val rows=read.second
+                            override val ownedFilter=owned
                             override fun card(col:Int,top:Double,bottom:Double)=BoardScreens.card(b.width,b.height,col,top,bottom,rows)
                             override fun done(keep:String?) { if(keep!=null) store(b,runId,"$stamp-$keep") {} else b.recycle() }
                         }) }

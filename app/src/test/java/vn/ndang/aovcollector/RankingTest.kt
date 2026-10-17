@@ -57,13 +57,67 @@ class RankingTest {
         assertEquals(Page.LOBBY,RankScreens.page(emptyList(),true))
     }
 
+    private fun landing()=listOf(w("Bảng Phân Bậc Tướng",.25,.08),w("LIÊNQUÂN",.083,.9),w("Bảng xếp hạng tỷ lệ thắng",.27,.22))
+    private fun box(text:String,left:Double,top:Double,right:Double,bottom:Double)=GameScreens.Word(text,left,top,right,bottom)
+    private fun link()=box("Bảng xếp hạng đầy đủ >",.406,.064,.567,.101)
+    private fun parent()=box("Bảng Phân Bậc Tướng Bảng xếp hạng đầy đủ Tỷ lệ thắng Đánh giá",.03,.02,.95,.98)
+    private fun splitLink()=listOf(
+        box("đủ >",.548,.065,.567,.101),box("Bảng",.406,.064,.438,.101),
+        box("xếp hạng",.443,.064,.509,.101),box("đầy",.516,.065,.543,.101))
+
+    @Test fun fullRankingLinkPrefersTheTightLabelOverAnAggregatedAccessibilityParent() {
+        val tight=link()
+        assertEquals(tight,RankScreens.fullRankingLink(listOf(parent())+landing()+tight))
+        assertEquals(Page.HEROES,RankScreens.page(listOf(parent()),false))
+        assertNull(RankScreens.fullRankingLink(listOf(parent())))
+        assertTrue(RankScreens.needsFullRankingOcr(listOf(parent())))
+        val broad=box("Bảng xếp hạng đầy đủ",.32,.025,.59,.145)
+        assertEquals(tight,RankScreens.fullRankingLink(listOf(broad,tight)))
+        val headerParent=box("Bảng xếp hạng đầy đủ",.36,.045,.60,.115)
+        assertEquals(tight,RankScreens.fullRankingLink(listOf(headerParent,tight)))
+    }
+    @Test fun joinsAdjacentHeaderFragmentsAndKeepsTheTapInsideTheirVisibleBounds() {
+        val target=RankScreens.fullRankingLink(landing()+splitLink())!!
+        assertTrue(target.x in .406.. .567);assertTrue(target.y in .064.. .101)
+        assertEquals(Page.HEROES,RankScreens.page(landing()+splitLink(),false))
+        // A useful surviving suffix is enough in this header, including missing Vietnamese accents.
+        val suffix=box("xép hạng đẩy đủ >",.443,.064,.567,.101)
+        assertEquals(suffix,RankScreens.fullRankingLink(listOf(suffix)))
+        val end=box("đầy đủ >",.516,.064,.567,.101)
+        assertNull(RankScreens.fullRankingLink(listOf(end)))
+        assertEquals(end,RankScreens.fullRankingLink(landing()+end))
+        val short=box("hạng đầy đủ",.48,.064,.567,.101)
+        assertNull(RankScreens.fullRankingLink(listOf(short)))
+        assertEquals(short,RankScreens.fullRankingLink(landing()+short))
+    }
+    @Test fun aMissingGoldLinkDoesNotMisclassifyTheHeroLandingPageAsCommunity() {
+        assertEquals(Page.HEROES,RankScreens.page(landing(),false))
+        assertNull(RankScreens.fullRankingLink(landing()))
+        assertTrue(RankScreens.needsFullRankingOcr(landing()))
+        assertFalse(RankScreens.needsFullRankingOcr(listOf(w("Đổi bảng xếp hạng",.835,.2))))
+    }
+    @Test fun rejectsAbsentAmbiguousMisplacedAndDisconnectedLinkText() {
+        assertNull(RankScreens.fullRankingLink(emptyList()))
+        assertNull(RankScreens.fullRankingLink(landing()+box("Bảng xếp hạng",.406,.064,.509,.101)))
+        for(bad in listOf(box("Bảng xếp hạng đầy đủ",.4,.4,.57,.44),
+            box("Bảng xếp hạng đầy đủ",-.1,.06,.57,.1),box("Bảng xếp hạng đầy đủ",.4,.06,1.2,.1),
+            box("Bảng xếp hạng đầy đủ",Double.NaN,.06,.57,.1))) assertNull(RankScreens.fullRankingLink(listOf(bad)))
+        val second=box("Bảng xếp hạng đầy đủ",.59,.064,.69,.101)
+        assertNull(RankScreens.fullRankingLink(listOf(link(),second)))
+        assertNull(RankScreens.fullRankingLink(listOf(link(),box("Bảng xếp hạng đầy đủ",.55,.064,.69,.101))))
+        // A title and a separate article suffix must never be joined into a link.
+        assertNull(RankScreens.fullRankingLink(listOf(box("Bảng xếp hạng",.32,.06,.43,.1),box("đầy đủ",.59,.06,.65,.1))))
+        assertNull(RankScreens.fullRankingLink(listOf(box("Bảng xếp hạng",.40,.03,.51,.06),box("đầy đủ",.51,.11,.57,.145))))
+    }
+
     /**
      * The game from the lobby to the table: taps move between pages, the table scrolls by [length] screens and
      * keeps its headings (and the switches above) only at the top unless [sticky].
      */
     private class Web(var page:Page,var table:Table=Table.RATES,var mode:Mode=Mode.ALL,val length:Double=1.0,val sticky:Boolean=false,val cut:Int=Int.MAX_VALUE,
-                      var stalls:Int=0) : RankingReader.Screen {
-        var offset=0.0; var open=false; var looks=0
+                      var stalls:Int=0,var heroWords:List<GameScreens.Word>?=null,var ignoredLinkTaps:Int=0,var sideWorks:Boolean=true) : RankingReader.Screen {
+        var offset=0.0; var open=false; var looks=0; var linkTaps=0; var sideTaps=0
+        val tapPoints=ArrayList<Pair<Double,Double>>()
         val kept=ArrayList<String>(); val tapped=ArrayList<String>(); val finished=ArrayList<String>(); val pending=ArrayDeque<()->Unit>()
         var outcome:RankingReader.Outcome?=null
         override val alive get()=outcome==null&&looks<cut
@@ -71,7 +125,7 @@ class RankingTest {
         fun words():List<GameScreens.Word> = when(page) {
             Page.PANEL -> listOf(w("Tính năng khác",.12,.21),w("Hiệu ứng",.15,.37),w("Clan",.32,.37),w("Cộng đồng",.15,.52))
             Page.COMMUNITY -> listOf(w("MIC CHECK #6",.3,.09),w("LIÊNQUÂN",.083,.9))
-            Page.HEROES -> listOf(w("Bảng Phân Bậc Tướng",.25,.08),w("Bảng xếp hạng đầy đủ >",.485,.082),w("LIÊNQUÂN",.083,.9))
+            Page.HEROES -> heroWords?:listOf(w("Bảng Phân Bậc Tướng",.25,.08),w("Bảng xếp hạng đầy đủ >",.485,.082),w("LIÊNQUÂN",.083,.9))
             Page.RANKING -> buildList {
                 if(offset==0.0||sticky) {
                     add(w("Bảng Phân Bậc Tướng",.22,.077)); add(w("Đổi bảng xếp hạng",.835,.2)); add(w(mode.label,.57,.2))
@@ -90,13 +144,16 @@ class RankingTest {
                 override fun done(keep:String?) { if(keep!=null) kept+=keep } })
         }
         override fun tap(x:Double,y:Double,then:(Boolean)->Unit) {
+            tapPoints+=x to y
             val hit=words().firstOrNull { abs(it.x-x)<.001&&abs(it.y-y)<.001 }
             tapped+=hit?.text?:"%.3f,%.3f".format(x,y)
             when(page) {
                 Page.LOBBY -> if(x==RankScreens.MORE_X&&y==RankScreens.MORE_Y) page=Page.PANEL
                 Page.PANEL -> if(hit?.plain=="congdong") page=Page.COMMUNITY
-                Page.COMMUNITY -> if(abs(y-RankScreens.SIDE_Y)<.001) page=Page.HEROES
-                Page.HEROES -> if(hit?.plain?.contains("bangxephangdaydu")==true) page=Page.RANKING
+                Page.COMMUNITY -> if(abs(y-RankScreens.SIDE_Y)<.001) { sideTaps++;if(sideWorks) page=Page.HEROES }
+                Page.HEROES -> if(if(heroWords==null) hit?.plain?.contains("bangxephangdaydu")==true else x in .406.. .567&&y in .064.. .101) {
+                    linkTaps++;if(ignoredLinkTaps>0) ignoredLinkTaps-- else page=Page.RANKING
+                }
                 Page.RANKING -> when {
                     hit==null -> Unit
                     hit.plain.contains("doibangxephang") -> table=if(table==Table.RATES) Table.FIGURES else Table.RATES
@@ -127,6 +184,39 @@ class RankingTest {
         assertEquals(order,web.finished)
         assertEquals(order.flatMap { c -> (1..4).map { "$c-%02d".format(it) } },web.kept)
         assertEquals(1,web.tapped.count { it=="Đổi bảng xếp hạng" })
+    }
+    @Test fun boundedNavigationUsesTightAndSplitLabelsEvenWithParentNodesFirst() {
+        for(labels in listOf(listOf(link()),splitLink(),listOf(box("xếp hạng đầy đủ",.443,.064,.567,.101)))) {
+            val web=Web(Page.HEROES,heroWords=listOf(parent())+landing()+labels).run(wanted=emptyList())
+            assertTrue(web.outcome is RankingReader.Outcome.Done)
+            assertEquals(1,web.linkTaps);assertEquals(0,web.sideTaps)
+            assertTrue(web.tapPoints.single().first in .406.. .567)
+            assertTrue(web.tapPoints.single().second in .064.. .101)
+        }
+    }
+    @Test fun missingOrAmbiguousFullLinkWaitsThenStopsWithoutTappingTheSideTab() {
+        for(labels in listOf(emptyList(),listOf(parent()),listOf(link(),box("Bảng xếp hạng đầy đủ",.59,.064,.69,.101)))) {
+            val web=Web(Page.HEROES,heroWords=landing()+labels).run(wanted=emptyList())
+            assertTrue(web.outcome is RankingReader.Outcome.Failed)
+            assertEquals(listOf("ranking-link-unreadable"),web.kept)
+            assertTrue(web.tapped.isEmpty());assertEquals(RankingReader.MAX_WAITS+1,web.looks)
+        }
+    }
+    @Test fun aCommunityTabThatDoesNotOpenIsNotBlindlyTappedAgain() {
+        val web=Web(Page.COMMUNITY,sideWorks=false).run(wanted=emptyList())
+        assertTrue(web.outcome is RankingReader.Outcome.Failed)
+        assertEquals(1,web.sideTaps);assertEquals(1,web.tapPoints.size)
+        assertEquals(listOf("ranking-link-unreadable"),web.kept)
+    }
+    @Test fun fullLinkRetriesAreBoundedAndWaitForTheWebPageBeforeReobservingTheTarget() {
+        val recovered=Web(Page.HEROES,heroWords=landing()+link(),ignoredLinkTaps=1).run(wanted=emptyList())
+        assertTrue(recovered.outcome is RankingReader.Outcome.Done)
+        assertEquals(2,recovered.linkTaps);assertEquals(0,recovered.sideTaps)
+        assertTrue(recovered.looks>=RankingReader.MAX_WAITS+3)
+        val stuck=Web(Page.HEROES,heroWords=landing()+link(),ignoredLinkTaps=99).run(wanted=emptyList())
+        assertTrue(stuck.outcome is RankingReader.Outcome.Failed)
+        assertEquals(RankingReader.MAX_LINK_TAPS,stuck.linkTaps);assertEquals(0,stuck.sideTaps)
+        assertEquals(listOf("ranking-link-not-open"),stuck.kept)
     }
     @Test fun startsWithTheTableShownAndSkipsWhatAnEarlierTryFinished() {
         val web=Web(Page.RANKING,Table.FIGURES,Mode.FIVE,length=.5).run(skip=setOf("ty-le-dau-5v5","ty-le-dau-hang-tat-ca"))

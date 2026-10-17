@@ -281,13 +281,29 @@ class UiSmoke:Instrumentation() {
             // The way to the hero statistics, read by ML Kit on the user's screenshots: each page known by its words.
             val rankLog=StringBuilder()
             fun rank(asset:String):List<GameScreens.Word> { val b=context.assets.open(asset).use { BitmapFactory.decodeStream(it) }
-                return GameText.words(b).also { b.recycle();rankLog.append("$asset\n").append(it.joinToString("\n") { w -> "  %.3f %.3f %s".format(w.x,w.y,w.text) }).append("\n") } }
+                return GameText.rankingWords(b).also { b.recycle();rankLog.append("$asset\n").append(it.joinToString("\n") { w -> "  %.3f %.3f %s".format(w.x,w.y,w.text) }).append("\n") } }
             val more=rank("rank-more.jpg"); val community=rank("rank-community.jpg"); val heroes=rank("rank-community-heroes.jpg")
             val rates=rank("rank-ranking-rates.jpg"); val figures=rank("rank-ranking-figures.jpg"); val modes=rank("rank-ranking-modes.jpg")
+            // Synthetic generic header, rendered at runtime; new user attachments remain local only.
+            // A giant accessibility node must not take the visible header link's tap.
+            val parent=GameScreens.Word("Bảng Phân Bậc Tướng Bảng xếp hạng đầy đủ Đánh giá",.03,.02,.95,.98)
+            val blockedBitmap=Bitmap.createBitmap(2048,922,Bitmap.Config.ARGB_8888)
+            Canvas(blockedBitmap).apply {
+                drawColor(Color.rgb(58,58,144))
+                drawText("Bảng Phân Bậc Tướng",310f,88f,Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.WHITE;textSize=40f })
+                drawText("Bảng xếp hạng đầy đủ",830f,86f,Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.rgb(205,163,95);textSize=32f })
+            }
+            val blockedHeroes=GameText.rankingWords(blockedBitmap,listOf(parent))
+            val header=try { GameText.rankingHeader(blockedBitmap) } finally { blockedBitmap.recycle() }
+            rankLog.append("synthetic full-resolution header\n").append(header.joinToString("\n") { w -> "  %.3f %.3f %s".format(w.x,w.y,w.text) }).append("\n")
+            for((source,list) in listOf("combined" to blockedHeroes,"header-only" to header)) {
+                val target=RankScreens.fullRankingLink(listOf(parent)+list)
+                check(target!=null&&target.x in .405.. .60&&target.y in .06.. .105) { "Full-ranking link $source resolved outside synthetic label: $target" }
+            }
             File(targetContext.filesDir,"smoke").apply { mkdirs() }.resolve("ocr-ranking.txt").writeText(rankLog.toString())
             check(RankScreens.page(more,false)==RankScreens.Page.PANEL&&more.any { it.plain.contains("congdong")&&Math.abs(it.x-.15)<.06&&Math.abs(it.y-.52)<.05 }) { "Tính năng khác read as ${RankScreens.page(more,false)}" }
             check(RankScreens.page(community,false)==RankScreens.Page.COMMUNITY) { "Cộng đồng read as ${RankScreens.page(community,false)}" }
-            check(RankScreens.page(heroes,false)==RankScreens.Page.HEROES&&heroes.any { it.plain.contains("bangxephangdaydu")&&Math.abs(it.y-.082)<.04 }) { "Cộng đồng heroes read as ${RankScreens.page(heroes,false)}" }
+            check(RankScreens.page(heroes,false)==RankScreens.Page.HEROES&&RankScreens.fullRankingLink(heroes)?.let { Math.abs(it.y-.082)<.04 }==true) { "Cộng đồng heroes read as ${RankScreens.page(heroes,false)}" }
             for((list,table) in listOf(rates to RankScreens.Table.RATES,figures to RankScreens.Table.FIGURES)) {
                 check(RankScreens.page(list,false)==RankScreens.Page.RANKING&&RankScreens.table(list)==table&&RankScreens.mode(RankScreens.modeButton(list))==RankScreens.Mode.ALL) {
                     "Ranking read as ${RankScreens.page(list,false)} ${RankScreens.table(list)} ${RankScreens.mode(RankScreens.modeButton(list))}" } }
@@ -306,6 +322,24 @@ class UiSmoke:Instrumentation() {
             check(BoardScreens.region(boardPages.getValue("region-area")).let { it.open==1&&it.options.any { o -> o.plain.contains("mientrung") } }) { "Area list read as ${BoardScreens.region(boardPages.getValue("region-area")).options}" }
             for(name in listOf("board-province","board-country")) check(boardPage(name)==BoardScreens.Page.BOARD&&BoardScreens.hero(boardPages.getValue(name))?.let { HeroNames.slug(it) }=="flowborn") { "$name read as ${boardPage(name)} ${BoardScreens.hero(boardPages.getValue(name))}" }
             check(boardPage("picker")==BoardScreens.Page.PICKER) { "Chọn tướng read as ${boardPage("picker")}" }
+            // Synthetic generic label, blue outline and tick, drawn entirely at test runtime.
+            val filterBitmap=Bitmap.createBitmap(2048,922,Bitmap.Config.ARGB_8888)
+            Canvas(filterBitmap).apply {
+                drawColor(Color.rgb(51,51,126))
+                drawText("Đã nhận",1558f,220f,Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.rgb(170,170,207);textSize=28f })
+                drawRect(1651f,194f,1686f,229f,Paint().apply { color=Color.rgb(76,97,194) })
+                drawRect(1654f,197f,1683f,226f,Paint().apply { color=Color.rgb(41,39,101) })
+                drawPath(Path().apply { moveTo(1656f,211f);lineTo(1665f,220f);lineTo(1679f,203f) },
+                    Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.rgb(201,245,255);style=Paint.Style.STROKE;strokeWidth=5f })
+            }
+            val filterWords=listOf(GameScreens.Word("Chọn tướng",.16,.09,.25,.14))+GameText.words(filterBitmap)
+            fun ownedFilter()=BoardScreens.ownedFilter(filterBitmap.width,filterBitmap.height,filterWords) { y,row ->
+                filterBitmap.getPixels(row,0,filterBitmap.width,0,y,filterBitmap.width,1) }
+            check(ownedFilter()?.let { it.checked&&Math.abs(it.x-.814)<.004&&Math.abs(it.y-.229)<.006 }==true) {
+                "Owned-only checkbox or its OCR label unreadable: $filterWords" }
+            Canvas(filterBitmap).drawRect(1654f,197f,1683f,226f,Paint().apply { color=Color.rgb(41,39,101) })
+            check(ownedFilter()?.checked==false) { "Empty owned-only checkbox must be OFF" }
+            filterBitmap.recycle()
             check(boardPage("board-valhein")==BoardScreens.Page.BOARD&&BoardScreens.hero(boardPages.getValue("board-valhein"))?.let { HeroNames.slug(it) }=="valhein") { "Valhein's ranking read as ${boardPage("board-valhein")} ${BoardScreens.hero(boardPages.getValue("board-valhein"))}" }
             check(boardPage("top")==BoardScreens.Page.TOP) { "Số 1 máy chủ read as ${boardPage("top")}" }
             check(boardPage("trailer1")==BoardScreens.Page.OTHER) { "Trailer read as ${boardPage("trailer1")}" }

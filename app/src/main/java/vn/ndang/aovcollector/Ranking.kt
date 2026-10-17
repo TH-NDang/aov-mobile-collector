@@ -27,13 +27,63 @@ object RankScreens {
 
     fun page(words:List<GameScreens.Word>,lobby:Boolean):Page = when {
         words.any { it.plain.contains("doibangxephang") } -> Page.RANKING
-        words.any { it.plain.contains("bangxephangdaydu") } -> Page.HEROES
+        fullRankingLink(words)!=null||heroesLanding(words)||words.any { it.plain.contains("bangxephangdaydu") } -> Page.HEROES
         // The logo is drawn in its own letters, which OCR may miss; the news page names its author and weekly rewards.
         logo(words)!=null||words.any { w -> listOf("garenalienquanmobile","nhanthuonghangtuan").any { w.plain.contains(it) } } -> Page.COMMUNITY
         words.any { it.plain.contains("tinhnangkhac")||it.plain.contains("congdong") } -> Page.PANEL
         lobby -> Page.LOBBY
         else -> Page.OTHER
     }
+    /** Header crop used only to recover the dim full-ranking link, not a fallback tap position. */
+    const val LINK_LEFT=.30; const val LINK_TOP=.02; const val LINK_RIGHT=.70; const val LINK_BOTTOM=.16
+    private const val FULL_LINK="bangxephangdaydu"
+
+    /** The landing page is still known when OCR misses its small gold link. */
+    fun heroesLanding(words:List<GameScreens.Word>):Boolean {
+        val title=words.any { it.y<.16&&it.plain.contains("bangphanbactuong") }
+        return title&&(logo(words)!=null||words.any { it.y in .16.. .35&&it.plain.contains("bangxephangtylethang") })
+    }
+    /**
+     * A visible, compact header label only. Accessibility can put the entire web page's text in a parent
+     * whose centre is far below the link. Reject those boxes, join adjacent OCR fragments on the same line,
+     * and prefer the smallest agreeing box. Separate plausible labels are ambiguous: never guess between them.
+     */
+    fun fullRankingLink(words:List<GameScreens.Word>):GameScreens.Word? {
+        val landing=heroesLanding(words)
+        fun compact(w:GameScreens.Word)=listOf(w.left,w.top,w.right,w.bottom).all { it.isFinite() }&&
+            w.left>=LINK_LEFT&&w.right<=LINK_RIGHT&&w.top>=LINK_TOP&&w.bottom<=LINK_BOTTOM&&
+            w.right-w.left in .008.. .28&&w.bottom-w.top in .008.. .075
+        fun label(p:String)=p==FULL_LINK||p=="xephangdaydu"||landing&&(p=="hangdaydu"||p=="daydu")
+        val header=words.filter { compact(it)&&it.plain.isNotEmpty()&&FULL_LINK.contains(it.plain) }
+            .distinctBy { listOf(it.plain,(it.left*1000).toInt(),(it.top*1000).toInt(),(it.right*1000).toInt(),(it.bottom*1000).toInt()) }
+            .sortedBy { it.left }.take(40)
+        val candidates=ArrayList<GameScreens.Word>()
+        for(first in header) {
+            var joined=first
+            if(label(joined.plain)) candidates+=joined
+            // Six words in the label; no fuzzy match against unrelated headings or article text.
+            repeat(5) {
+                val next=header.filter { it.left>=joined.right-.003&&it.left-joined.right<=.025&&
+                    abs(it.y-joined.y)<=.018&&FULL_LINK.contains(joined.plain+it.plain) }
+                    .minByOrNull { it.left }
+                if(next!=null) {
+                    joined=GameScreens.Word(joined.text+" "+next.text,joined.left,minOf(joined.top,next.top),next.right,maxOf(joined.bottom,next.bottom))
+                    if(compact(joined)&&label(joined.plain)) candidates+=joined
+                }
+            }
+        }
+        val best=candidates.minByOrNull { (it.right-it.left)*(it.bottom-it.top) }?:return null
+        // OCR and accessibility duplicates can have slightly different boxes, but must cover the same label.
+        if(candidates.any {
+            val overlapX=minOf(it.right,best.right)-maxOf(it.left,best.left)
+            val overlapY=minOf(it.bottom,best.bottom)-maxOf(it.top,best.top)
+            overlapX<.65*minOf(it.right-it.left,best.right-best.left)||overlapY<.55*minOf(it.bottom-it.top,best.bottom-best.top)
+        }) return null
+        return best
+    }
+    fun needsFullRankingOcr(words:List<GameScreens.Word>)=fullRankingLink(words)==null&&
+        page(words,false) in setOf(Page.HEROES,Page.COMMUNITY)
+
     /** "LIÊNQUÂN ARENA OF VALOR" at the bottom of the Cộng đồng side bar, its drawn letters read as "uÊNQUÂN" or "UÊNGUÂN". */
     fun logo(words:List<GameScreens.Word>)=words.firstOrNull { it.x<.2&&it.y>.8&&(it.plain.contains("arenaofvalor")||it.plain.contains("lienquan")||it.plain.length in 5..10&&(it.plain.endsWith("quan")||it.plain.endsWith("guan"))) }
     fun table(words:List<GameScreens.Word>):Table? = when {
@@ -92,6 +142,7 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
     companion object {
         /** Web pages may take ten seconds or more to load over a slow connection. */
         const val MAX_STEPS=10; const val MAX_WAITS=8; const val MAX_TRIES=4
+        const val MAX_LINK_TAPS=2
         /** More pages than the table has: five heroes a page, three new ones per scroll. */
         const val MAX_PAGES=80; const val MAX_FLINGS=40
         /** A scroll moves less than the visible rows, so consecutive photos overlap by a row or two. */
@@ -100,6 +151,7 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
         const val STILL_TRIES=3
     }
     private var ended=false; private var pages=0
+    private var communityChosen=false; private var fullLinkTaps=0
     private val left=ArrayList<RankScreens.Combo>()
 
     fun start() = navigate(0,0)
@@ -128,15 +180,36 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
         val words=l.words
         when(RankScreens.page(words,l.lobby)) {
             RankScreens.Page.RANKING -> ranking(l)
-            RankScreens.Page.HEROES -> words.first { it.plain.contains("bangxephangdaydu") }.let { go(l,"Bấm Bảng xếp hạng đầy đủ",it.x,it.y,3000,steps) }
-            RankScreens.Page.COMMUNITY -> go(l,"Cộng đồng: chọn mục tướng ở thanh bên",RankScreens.logo(words)?.x?:RankScreens.SIDE_X,RankScreens.SIDE_Y,2500,steps)
+            RankScreens.Page.HEROES -> {
+                val link=RankScreens.fullRankingLink(words)
+                when {
+                    // Give the web view time to load after a tap; every retry needs a newly verified label.
+                    (link==null||fullLinkTaps>0)&&waits<MAX_WAITS -> waitForNavigation(l,steps,waits)
+                    link==null -> missingFullLink(l)
+                    fullLinkTaps>=MAX_LINK_TAPS -> { l.done("ranking-link-not-open"); fail("Đã bấm Bảng xếp hạng đầy đủ nhưng bảng chưa mở. Mở bảng rồi bấm Tiếp tục.") }
+                    else -> { fullLinkTaps++;go(l,"Bấm Bảng xếp hạng đầy đủ",link.x,link.y,3000,steps) }
+                }
+            }
+            RankScreens.Page.COMMUNITY -> if(communityChosen||fullLinkTaps>0) {
+                if(waits<MAX_WAITS) waitForNavigation(l,steps,waits) else missingFullLink(l)
+            } else {
+                communityChosen=true
+                go(l,"Cộng đồng: chọn mục tướng ở thanh bên",RankScreens.logo(words)?.x?:RankScreens.SIDE_X,RankScreens.SIDE_Y,2500,steps)
+            }
             RankScreens.Page.PANEL -> { val w=words.firstOrNull { it.plain.contains("congdong") }
                 if(w==null) { l.done("ranking-panel"); fail("Không thấy mục Cộng đồng trong Tính năng khác.") } else go(l,"Bấm Cộng đồng",w.x,w.y,3500,steps) }
             RankScreens.Page.LOBBY -> go(l,"Sảnh: bấm nút bên trái Túi đồ",RankScreens.MORE_X,RankScreens.MORE_Y,1500,steps)
             // Web pages take a moment to show their words.
-            RankScreens.Page.OTHER -> if(waits<MAX_WAITS) { l.done(null); screen.later(1500) { navigate(steps,waits+1) } }
+            RankScreens.Page.OTHER -> if(waits<MAX_WAITS) waitForNavigation(l,steps,waits)
                 else { l.done("ranking-unknown"); fail("Không nhận ra màn hình. Mở sảnh game hoặc Bảng Phân Bậc Tướng rồi bấm Tiếp tục.") }
         }
+    }
+    private fun waitForNavigation(l:Look,steps:Int,waits:Int) {
+        l.done(null);screen.later(1500) { navigate(steps,waits+1) }
+    }
+    private fun missingFullLink(l:Look) {
+        l.done("ranking-link-unreadable")
+        fail("Không xác định được nút Bảng xếp hạng đầy đủ. Mở bảng bằng tay rồi bấm Tiếp tục.")
     }
     /** On the table at last: every combination not done yet, starting with the one shown. */
     private fun ranking(l:Look) {

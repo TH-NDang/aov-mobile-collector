@@ -19,6 +19,34 @@ object GameText {
             GameScreens.Word(line.text,b.left.toDouble()/w,b.top.toDouble()/h,b.right.toDouble()/w,b.bottom.toDouble()/h) } }
     }
     /**
+     * Statistics navigation needs the small gold link at full resolution. Only retry an unresolved landing
+     * page's header; large accessibility containers remain evidence of the page, never tap targets.
+     */
+    fun rankingWords(screen:Bitmap,nodes:List<GameScreens.Word> =emptyList()):List<GameScreens.Word> {
+        val ordinary=nodes+words(screen)
+        if(screen.width<=screen.height||!RankScreens.needsFullRankingOcr(ordinary)) return ordinary
+        return ordinary+rankingHeader(screen)
+    }
+    /** Read the header at 2x native size and map both OCR lines and elements back into screen coordinates. */
+    fun rankingHeader(screen:Bitmap):List<GameScreens.Word> {
+        if(screen.width<=screen.height) return emptyList()
+        val x0=(screen.width*RankScreens.LINK_LEFT).toInt(); val y0=(screen.height*RankScreens.LINK_TOP).toInt()
+        val width=(screen.width*(RankScreens.LINK_RIGHT-RankScreens.LINK_LEFT)).toInt().coerceAtMost(screen.width-x0)
+        val height=(screen.height*(RankScreens.LINK_BOTTOM-RankScreens.LINK_TOP)).toInt().coerceAtMost(screen.height-y0)
+        if(width<1||height<1) return emptyList()
+        val crop=Bitmap.createBitmap(screen,x0,y0,width,height)
+        val enlarged=Bitmap.createScaledBitmap(crop,width*2,height*2,true);crop.recycle()
+        val text=ocr(enlarged)?:return emptyList()
+        fun located(value:String,b:android.graphics.Rect)=GameScreens.Word(value,
+            (x0+b.left/2.0)/screen.width,(y0+b.top/2.0)/screen.height,
+            (x0+b.right/2.0)/screen.width,(y0+b.bottom/2.0)/screen.height)
+        return text.textBlocks.flatMap { it.lines }.flatMap { line -> buildList {
+            line.boundingBox?.let { add(located(line.text,it)) }
+            line.elements.forEach { word -> word.boundingBox?.let { add(located(word.text,it)) } }
+        } }
+    }
+
+    /**
      * Read ONLY the white hero title at the top of a Chess Encyclopedia detail drawer.
      * The large skill heading is below y=.38; cropping before OCR prevents mistaking
      * "Pháo đại" for "Violet" on the same popup. Called only on ambiguous full-screen OCR.

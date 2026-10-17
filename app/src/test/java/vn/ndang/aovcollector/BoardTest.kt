@@ -13,9 +13,9 @@ import kotlin.math.floor
 
 class BoardTest {
     /** Screenshots from the user's phone (2400x1080), the UID line and players' names and pictures blurred. */
-    private fun pixels(name:String):Triple<Int,Int,IntArray> {
+    private fun pixels(name:String,extension:String="jpg"):Triple<Int,Int,IntArray> {
         System.setProperty("java.awt.headless","true")
-        val image=javaClass.getResourceAsStream("/screens/board-$name.jpg")!!.use {
+        val image=javaClass.getResourceAsStream("/screens/board-$name.$extension")!!.use {
             Class.forName("javax.imageio.ImageIO").getMethod("read",InputStream::class.java).invoke(null,it)!! }
         val type=image.javaClass
         val w=type.getMethod("getWidth").invoke(image) as Int; val h=type.getMethod("getHeight").invoke(image) as Int
@@ -50,6 +50,40 @@ class BoardTest {
 
     private fun w(text:String,x:Double,y:Double)=GameScreens.Word(text,x-.04,y-.015,x+.04,y+.015)
     private val ranked=listOf(w("Thời hạn mùa giải",.2,.141),w("Đấu đỉnh cao",.16,.26),w("Chiến khu",.15,.56),w("Đấu hạng",.795,.867))
+    private val pickerWords=listOf(w("Chọn tướng",.2,.117),GameScreens.Word("Đã nhận",.759,.212,.802,.242))
+
+    /** Synthetic square/tick drawn at runtime. No pixels from the new user attachments are published. */
+    private fun syntheticFilter(checked:Boolean=true):Triple<Int,Int,IntArray> {
+        val p=IntArray(2048*922) { 0xff33337e.toInt() }
+        for(y in 194..228) for(x in 1651..1685) p[y*2048+x]=
+            if(x<1654||x>1682||y<197||y>225) 0xff4c61c2.toInt() else 0xff292765.toInt()
+        fun stroke(x0:Int,y0:Int,x1:Int,y1:Int) {
+            for(i in 0..100) { val x=x0+(x1-x0)*i/100;val y=y0+(y1-y0)*i/100
+                for(dy in -2..2) for(dx in -2..2) p[(y+dy)*2048+x+dx]=0xffc9f5ff.toInt() }
+        }
+        if(checked) { stroke(1656,211,1665,220);stroke(1665,220,1679,203) }
+        return Triple(2048,922,p)
+    }
+    @Test fun detectsOwnedTickOnLegacyFixtureAndSyntheticSizes() {
+        for(source in listOf(pixels("picker"),syntheticFilter())) for(scale in listOf(.5,1.0,1.5)) {
+            val width=(source.first*scale).toInt();val height=(source.second*scale).toInt()
+            val p=Triple(width,height,IntArray(width*height) { val x=it%width;val y=it/width
+                source.third[(y*source.second/height)*source.first+x*source.first/width] })
+            val filter=BoardScreens.ownedFilter(width,height,pickerWords,rows(p))
+            assertTrue("${source.first} at $scale: $filter",filter?.checked==true)
+            assertEquals(.814,filter!!.x,.004);assertEquals(.229,filter.y,.006)
+        }
+    }
+    @Test fun requiresAVisibleEmptyBoxBeforeCallingOwnedFilterOff() {
+        val off=syntheticFilter(false)
+        assertEquals(false,BoardScreens.ownedFilter(off.first,off.second,pickerWords,rows(off))?.checked)
+        assertNull(BoardScreens.ownedFilter(off.first,off.second,pickerWords.take(1),rows(off)))
+        assertNull(BoardScreens.ownedFilter(off.first,off.second,pickerWords.drop(1),rows(off)))
+        val blank=Triple(off.first,off.second,IntArray(off.third.size) { 0xff33337e.toInt() })
+        assertNull(BoardScreens.ownedFilter(blank.first,blank.second,pickerWords,rows(blank)))
+        // A large accessibility parent mentioning the label is not a checkbox anchor.
+        assertNull(BoardScreens.ownedFilter(off.first,off.second,pickerWords.take(1)+GameScreens.Word("Đã nhận",0.0,0.0,1.0,1.0),rows(off)))
+    }
 
     @Test fun readsTheSeasonScreensAsMlKitDoes() {
         // As read on the emulator from the user's screenshots.
@@ -76,10 +110,12 @@ class BoardTest {
      * is false, [heroes] cards in "Chọn tướng", lists [length] screens long.
      */
     private class Game(var page:Page=Page.LOBBY,val heroes:Int=10,val seasons:Boolean=false,var regionSet:Boolean=true,val length:Double=1.0,
-                       var gridScroll:Double=0.0,val cut:Int=Int.MAX_VALUE) : BoardReader.Screen {
+                       var gridScroll:Double=0.0,val cut:Int=Int.MAX_VALUE,var owned:Boolean?=false,val ownedHeroes:Int=14,
+                       val ignoreFilterTaps:Boolean=false,val ownedOnReopen:Boolean=false,val ignorePickerTaps:Boolean=false) : BoardReader.Screen {
         var looks=0; var outcome:BoardReader.Outcome?=null
         val kept=ArrayList<String>(); val taps=ArrayList<Pair<Double,Double>>(); val chosen=ArrayList<Int>(); val finished=ArrayList<Int>(); val names=HashMap<Int,String?>()
         val pending=ArrayDeque<()->Unit>()
+        var filterTaps=0;var gridDrags=0
         override val alive get()=outcome==null&&looks<cut
         // The season's review: its screens in turn, the trailer showing no words.
         var season=if(seasons) listOf("Ấn mở l.sử mùa" to (.5 to .92),"Bước kế" to (.87 to .913),"Bước kế" to (.87 to .913),"Mở mùa mới" to (.5 to .855),
@@ -92,7 +128,8 @@ class BoardTest {
         var hero=0; var tab=0; var offset=0.0
         private fun w(text:String,x:Double,y:Double)=GameScreens.Word(text,x-.04,y-.015,x+.04,y+.015)
         private val rowZero=.3426
-        private val rowCount get()=(heroes+7)/8
+        private val visibleHeroes get()=if(owned==true) minOf(heroes,ownedHeroes) else heroes
+        private val rowCount get()=(visibleHeroes+7)/8
         private val maxScroll get()=maxOf(0.0,rowZero+(rowCount-1)*BoardScreens.ROW_PITCH+BoardScreens.CARD+.02-BoardScreens.VIEW_BOTTOM)
         fun words():List<GameScreens.Word> = when(page) {
             Page.LOBBY -> listOf(w("Túi đồ",.15,.92),w("Tướng",.27,.92),w("ĐẤU HẠNG",.85,.9))
@@ -123,7 +160,8 @@ class BoardTest {
             val signature=IntArray(8) { (hero*100000+tab*10000+(offset*1000).toInt()) }
             then(object:BoardReader.Look {
                 override val words=shown; override val lobby=page==Page.LOBBY; override val signature=signature; override val rows=bands
-                override fun card(col:Int,top:Double,bottom:Double)=rowAt((top+bottom)/2)*8+col<heroes
+                override val ownedFilter=if(page==Page.PICKER) owned?.let { BoardScreens.OwnedFilter(it,.814,.229) } else null
+                override fun card(col:Int,top:Double,bottom:Double)=rowAt((top+bottom)/2)*8+col<visibleHeroes
                 override fun done(keep:String?) { if(keep!=null) kept+=keep } })
         }
         override fun tap(x:Double,y:Double,then:(Boolean)->Unit) {
@@ -142,7 +180,7 @@ class BoardTest {
                     }
                 }
                 Page.BOARD -> when {
-                    abs(x-BoardScreens.SWAP_X)<.01&&abs(y-BoardScreens.SWAP_Y)<.01 -> page=Page.PICKER
+                    abs(x-BoardScreens.SWAP_X)<.01&&abs(y-BoardScreens.SWAP_Y)<.01 -> if(!ignorePickerTaps) { page=Page.PICKER;if(ownedOnReopen) owned=true }
                     abs(y-BoardScreens.TAB_Y)<.01 -> { tab=Tab.values().indexOfFirst { abs(it.x-x)<.01 }; offset=0.0 }
                     abs(x-Tab.TOP.x)<.01&&abs(y-Tab.TOP.y)<.01 -> page=Page.TOP
                 }
@@ -150,8 +188,9 @@ class BoardTest {
                 Page.TOP -> { check(abs(y-.853)>.03) { "Đổi tướng tapped" }; if(abs(x-BoardScreens.TOP_BACK_X)<.01&&abs(y-BoardScreens.TOP_BACK_Y)<.01) page=Page.BOARD }
                 Page.PICKER -> when {
                     abs(x-BoardScreens.PICKER_CLOSE_X)<.01&&abs(y-BoardScreens.PICKER_CLOSE_Y)<.01 -> page=Page.BOARD
+                    abs(x-.814)<.01&&abs(y-.229)<.01 -> { filterTaps++;if(!ignoreFilterTaps) { owned=owned?.not();gridScroll=0.0 } }
                     y>BoardScreens.VIEW_TOP&&y<BoardScreens.VIEW_BOTTOM -> { val col=BoardScreens.COLUMNS.indexOfFirst { abs(it-x)<.01 }; val i=rowAt(y)*8+col
-                        if(col>=0&&i<heroes) { hero=i; chosen+=i; page=Page.BOARD; tab=0; offset=0.0 } }
+                        if(col>=0&&i<visibleHeroes) { hero=i; chosen+=i; page=Page.BOARD; tab=0; offset=0.0 } }
                 }
                 else -> Unit
             }
@@ -159,7 +198,7 @@ class BoardTest {
         }
         override fun drag(x:Double,from:Double,to:Double,fling:Boolean,then:(Boolean)->Unit) {
             when(page) {
-                Page.PICKER -> gridScroll=if(fling&&to>from) 0.0 else (gridScroll+(from-to)).coerceIn(0.0,maxScroll)
+                Page.PICKER -> { gridDrags++;gridScroll=if(fling&&to>from) 0.0 else (gridScroll+(from-to)).coerceIn(0.0,maxScroll) }
                 Page.BOARD -> offset=minOf(length,offset+(from-to))
                 Page.REGION -> if(open==2) provinceScroll=minOf(provinces.size-7,provinceScroll+3)
                 else -> Unit
@@ -194,6 +233,46 @@ class BoardTest {
         val game=Game(page=Page.BOARD,heroes=30,gridScroll=.2).run(wanted=listOf(BoardScreens.Want(Tab.SERVER,3)))
         assertEquals((0 until 30).toList(),game.chosen)
         assertEquals(30,game.kept.size); assertEquals("hero-030-may-chu-01",game.kept.last())
+    }
+    @Test fun turnsOffOwnedOnlyBeforeIndexingAndCollectsTheWholeRoster() {
+        val game=Game(page=Page.BOARD,heroes=30,owned=true,ownedHeroes=14,gridScroll=.2).run(wanted=listOf(BoardScreens.Want(Tab.COUNTRY,3)))
+        assertTrue(game.outcome is BoardReader.Outcome.Done)
+        assertEquals((0 until 30).toList(),game.chosen);assertEquals(1,game.filterTaps)
+        assertEquals(false,game.owned)
+    }
+    @Test fun doesNotToggleAnAlreadyOffFilterAndRechecksEveryOpening() {
+        val off=Game(page=Page.BOARD,heroes=2,owned=false).run(wanted=BoardScreens.DEFAULT)
+        assertEquals(listOf(0,1),off.chosen);assertEquals(0,off.filterTaps)
+        val reset=Game(page=Page.BOARD,heroes=18,owned=false,ownedOnReopen=true).run(heroesWanted=18,wanted=listOf(BoardScreens.Want(Tab.COUNTRY,3)))
+        assertEquals((0 until 18).toList(),reset.chosen);assertEquals(18,reset.filterTaps)
+    }
+    @Test fun missingOrStuckFilterStopsBeforeScrollingOrCapturingAnyHero() {
+        val missing=Game(page=Page.BOARD,owned=null).run()
+        assertTrue(missing.outcome is BoardReader.Outcome.Failed)
+        assertEquals(0,missing.filterTaps);assertEquals(0,missing.gridDrags);assertTrue(missing.chosen.isEmpty())
+        assertEquals(listOf("board-filter"),missing.kept)
+        val stuck=Game(page=Page.BOARD,owned=true,ignoreFilterTaps=true).run()
+        assertTrue(stuck.outcome is BoardReader.Outcome.Failed)
+        assertEquals(BoardReader.MAX_FILTER_TAPS,stuck.filterTaps);assertEquals(0,stuck.gridDrags);assertTrue(stuck.chosen.isEmpty())
+    }
+    @Test fun resumesAnOpenPickerWithTheFilterAlreadyClearedOrReenabled() {
+        for(owned in listOf(false,true)) {
+            val resumed=Game(page=Page.PICKER,heroes=30,owned=owned,gridScroll=.2).run(heroesWanted=18,
+                wanted=listOf(BoardScreens.Want(Tab.COUNTRY,3)),first=14)
+            assertEquals(listOf(14,15,16,17),resumed.chosen)
+            assertEquals(if(owned) 1 else 0,resumed.filterTaps)
+        }
+    }
+    @Test fun pausingAfterClearingTheFilterDoesNotSelectAnyHero() {
+        val paused=Game(page=Page.BOARD,heroes=30,owned=true,cut=3).run()
+        assertNull(paused.outcome);assertEquals(false,paused.owned);assertTrue(paused.chosen.isEmpty())
+        val resumed=Game(page=paused.page,heroes=30,owned=paused.owned).run(heroesWanted=2,wanted=BoardScreens.DEFAULT)
+        assertEquals(listOf(0,1),resumed.chosen);assertEquals(0,resumed.filterTaps)
+    }
+    @Test fun anIgnoredOpenPickerTapIsBounded() {
+        val game=Game(page=Page.BOARD,ignorePickerTaps=true).run()
+        assertTrue(game.outcome is BoardReader.Outcome.Failed);assertTrue(game.chosen.isEmpty())
+        assertEquals(2,game.taps.size)
     }
     @Test fun stopsAtTheHeroCountAskedAndResumesAfterTheLastDone() {
         assertEquals(listOf(0,1),Game(page=Page.BOARD,heroes=30).run(heroesWanted=2,wanted=listOf(BoardScreens.Want(Tab.PROVINCE,3))).chosen)

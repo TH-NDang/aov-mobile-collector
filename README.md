@@ -25,6 +25,12 @@ Mở thư mục bằng Android Studio hoặc chạy workflow; Gradle wrapper ch�
 ## Giới hạn
 Screenshot cần API 30+, có thể thất bại nếu game chặn chụp. Nút Dừng hủy các bước tiếp theo; một gesture/screenshot đã gửi Android có thể vẫn hoàn thành. Tạm dừng khi bước đang chạy sẽ chờ hoàn tất bước đó rồi lưu checkpoint; riêng bước vào game và bước lấy chiêu bị ngắt ngay và làm lại từ đầu khi Tiếp tục. Nếu app bị kill giữa một bước, bước đó có thể chạy lại khi tiếp tục. Thay đổi UI/độ phân giải/tỉ lệ màn hình có thể làm tọa độ lệch; chuẩn hóa tỉ lệ không thay thế hiệu chỉnh. Một popup hệ thống hoặc rời game sẽ tạm dừng. Không có bảo đảm phát hiện mọi popup Unity.
 
+## Sửa điều hướng Thống kê và bộ lọc Chiến khu
+
+- **Thống kê tướng:** tìm đúng vùng chữ nhỏ **Bảng xếp hạng đầy đủ**, kể cả OCR tách chữ; bỏ qua vùng truy cập chứa cả trang có tâm nằm sai chỗ. Nếu chữ mờ, đọc riêng phần đầu trang ở kích thước lớn hơn. Sau khi bấm, chờ bảng mở và chỉ thử lại một lần khi vẫn xác định được đúng chữ. Không bấm lặp thanh bên khi thiếu chữ; lượt dừng kèm ảnh chẩn đoán nếu không mở được bảng.
+- **Chiến khu:** mỗi lần mở **Chọn tướng**, kiểm tra viền ô và dấu tick **Đã nhận**. Chỉ bấm khi đang bật, rồi xác minh đã tắt trước khi về đầu lưới và đếm tướng. Ô đã tắt được giữ nguyên, kể cả khi Tiếp tục. Không đọc được ô hoặc bấm không tắt được thì dừng có lý do, tránh báo hoàn tất trên danh sách chỉ có tướng đã sở hữu.
+- Kiểm thử bổ sung: vùng bấm OCR đầy đủ/tách chữ/vùng cha/sai vị trí; bộ lọc bật/tắt/mất/không nhận chạm; mở lại và tiếp tục; lưới 30 tướng với 14 tướng đã sở hữu. Nhận dạng ô được kiểm tra trên ảnh thật và các kích thước màn hình khác nhau. Ảnh báo lỗi được kiểm tra cục bộ; các ca OCR Android mới dùng giao diện giả vẽ lúc chạy, không đăng ảnh đính kèm lên kho mã và không cần mở game hay đăng nhập tài khoản.
+
 
 ## v0.2: collections and file management
 
