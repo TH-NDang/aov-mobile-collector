@@ -154,7 +154,7 @@ class CollectorService : AccessibilityService() {
             prefs.edit().putBoolean("running",false).commit(); save(); lastStatus="Lượt trước bị gián đoạn ở bước ${index+1}. Mở đúng màn hình rồi bấm Tiếp tục."
         }
         GamePhotoSync.request(this)
-        io.execute { CaptureHistory.recover(this) }
+        io.execute { try { CaptureHistory.recover(this) } catch(e:Exception) { CrashLog.record(this,"Chưa khôi phục được nhật ký ảnh",e) } }
         AfterRun.recover(this)
         if(uiPrefs.getBoolean("panel",false)) handler.post { if(current===this && panel==null) showPanel() }
     }
