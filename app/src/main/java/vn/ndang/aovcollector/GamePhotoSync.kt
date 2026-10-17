@@ -10,6 +10,7 @@ object GamePhotoSync {
     private val main=Handler(Looper.getMainLooper())
     private val worker=Executors.newSingleThreadExecutor()
     private var queued:Runnable?=null
+    private var again=false
     @Volatile var busy=false; private set
     @Volatile var revision=0L; private set
 
@@ -23,7 +24,7 @@ object GamePhotoSync {
         queued?.let { main.removeCallbacks(it) }
         queued=Runnable {
             queued=null
-            if(busy) return@Runnable // The current worker schedules the next attempt.
+            if(busy) { again=true;return@Runnable }
             if(CollectorService.libraryBusy||FileJob.running) {
                 schedule(app,3000);return@Runnable
             }
@@ -44,7 +45,8 @@ object GamePhotoSync {
                     main.post {
                         busy=false
                         // Providers may publish the new file later than the Sure popup disappears.
-                        if(queued==null&&pending) schedule(app,30_000)
+                        if(again) { again=false;schedule(app,500) }
+                        else if(queued==null&&pending) schedule(app,30_000)
                     }
                 }
             }

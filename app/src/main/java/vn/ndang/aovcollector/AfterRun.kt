@@ -66,7 +66,7 @@ object AfterRun {
     fun latest(c:Context):JSONObject?=states(c).lastOrNull()
     @Synchronized fun finished(c:Context,run:String) {
         val options=config(c)
-        if(!options.enabled||state(c,run)!=null) return
+        if(!options.enabled||state(c,run)!=null) { resume(c);return }
         put(c,JSONObject().put("run",run).put("stage","queued").put("tree",options.tree)
             .put("chat",options.chat).put("prompt",options.prompt).put("created",System.currentTimeMillis())
             .put("filename","aov-"+run+".zip").put("message","Chờ hoàn tất ảnh để lưu lên Drive"))

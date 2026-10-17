@@ -1243,7 +1243,7 @@ class CollectorService : AccessibilityService() {
         fun listEnded(collected:Int) {
             if(finished || token!=generation) return
             finished=true; busy=false; cancelStep=null; shield(false)
-            index=m.steps.length(); setRunning(false); save(); note("Hết danh sách · $collected tướng · ${clock(elapsed())}"); recordTimes(m,collected); status("Đã hết danh sách · lấy xong $collected tướng · ${clock(elapsed())}");afterSaves { AfterRun.finished(this,runId) }
+            index=m.steps.length(); setRunning(false); save(); note("Hết danh sách · $collected tướng · ${clock(elapsed())}"); recordTimes(m,collected); status("Đã hết danh sách · lấy xong $collected tướng · ${clock(elapsed())}");val completedRun=runId;afterSaves { AfterRun.finished(this,completedRun) }
         }
         try {
             val type=s.getString("type")
