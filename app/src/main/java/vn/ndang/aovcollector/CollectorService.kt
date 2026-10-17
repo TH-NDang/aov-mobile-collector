@@ -819,6 +819,24 @@ class CollectorService : AccessibilityService() {
                                 override fun keep(name:String,then:(Boolean)->Unit) {
                                     store(b,runId,stamp+"-"+name,then)
                                 }
+                                override fun keepRow(name:String,top:Double,bottom:Double,
+                                                     then:(Boolean)->Unit) {
+                                    try {
+                                        val x0=(b.width*.205).toInt().coerceIn(0,b.width-2)
+                                        val x1=(b.width*.934).toInt().coerceIn(x0+1,b.width)
+                                        val y0=(b.height*top).toInt().coerceIn(0,b.height-2)
+                                        val y1=(b.height*bottom).toInt().coerceIn(y0+1,b.height)
+                                        // Real cropped PNG: includes every portrait, its hero name,
+                                        // traits, and a little margin. The full page stays separately.
+                                        val cropped=Bitmap.createBitmap(b,x0,y0,x1-x0,y1-y0)
+                                        b.recycle()
+                                        store(cropped,runId,stamp+"-"+name,then)
+                                    } catch(e:Throwable) {
+                                        CrashLog.record(this@CollectorService,"Không cắt được ảnh hàng quân cờ",e)
+                                        if(!b.isRecycled) b.recycle()
+                                        then(false)
+                                    }
+                                }
                                 override fun discard() { b.recycle() }
                             })
                         }
@@ -1592,7 +1610,12 @@ class CollectorService : AccessibilityService() {
         if(folder!="manual"&&m.json.optString("collectionMode")=="chess") {
             val parts=name.substringAfter("chess__","").split("__")
             if(parts.size>=4) {
-                val dirs=if(parts[2]=="trang") parts.take(2) else if(parts.size>=5) parts.take(4) else emptyList()
+                val dirs=when {
+                    parts[2]=="trang" -> parts.take(2)
+                    parts[2]=="hang" -> parts.take(3)
+                    parts.size>=5 -> parts.take(4)
+                    else -> emptyList()
+                }
                 if(dirs.isNotEmpty()&&dirs.all { it.matches(Regex("[a-z0-9_-]{1,90}")) })
                     return dirs.fold(base) { dir,slug -> File(dir,slug).apply { mkdirs() } }
             }
