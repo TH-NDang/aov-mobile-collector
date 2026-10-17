@@ -747,8 +747,8 @@ class UiSmoke:Instrumentation() {
             }
             closeHistory()
             runOnMainSync { check(service!!.captureProgressView==null) }
-            // No run yet: Dừng has nothing to end.
-            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Dừng") }.firstOrNull { it.text?.toString()=="Dừng" }?.isEnabled==false) { "Dừng is enabled before any run" }
+            // This restored unfinished run can still be ended after exporting its images.
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Dừng") }.firstOrNull { it.text?.toString()=="Dừng" }?.isEnabled==true) { "Dừng is disabled for the unfinished current run" }
             // The actual completed-run action renders the restart vector and resets without starting a run.
             val chosen=Macro(MacroStore.current(targetContext).readText())
             targetContext.getSharedPreferences("collector",0).edit().putString("hash",chosen.hash)
@@ -777,6 +777,7 @@ class UiSmoke:Instrumentation() {
             check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Chạy") }.any { it.text?.toString()=="Chạy" }) {
                 "New-run action did not return to the ready state"
             }
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Dừng") }.firstOrNull { it.text?.toString()=="Dừng" }?.isEnabled==false) { "Dừng is enabled before any new run" }
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1500);snap("05-landscape")
             click("Ảnh")
             waitFor("New run still shows earlier images") { nodes().any { it.findAccessibilityNodeInfosByText("Chưa có ảnh trong lượt hiện tại").isNotEmpty() } }
