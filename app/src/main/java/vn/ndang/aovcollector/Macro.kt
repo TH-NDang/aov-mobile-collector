@@ -16,6 +16,8 @@ class Macro(val raw: String) {
     /** True when the photo count can grow at run time, as with a "skills" step. */
     val photosVary:Boolean by lazy { (0 until steps.length()).any { steps.getJSONObject(it).getString("type") in setOf("skills","ranking","board","chess") } }
     val hash = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray()).joinToString("") { "%02x".format(it) }
+    /** Timing ignores formatting and a learned card-position hint, which change between identical tasks. */
+    val timingHash:String by lazy { RunTimes.profile(json) }
     init {
         require(name.matches(Regex("[a-zA-Z0-9_-]{1,64}"))) { "Tên macro chỉ dùng chữ, số, _ và -" }
         require(target == "com.garena.game.kgvn") { "V1 chỉ hỗ trợ Liên Quân VN" }

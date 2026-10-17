@@ -440,18 +440,21 @@ class UiSmoke:Instrumentation() {
             // Exact task timing persists across new Macro objects, without borrowing another configuration.
             val timingMacro=Macro(MacroStore.current(targetContext).readText())
             val timingPrefs=targetContext.getSharedPreferences("ui",0)
-            check(RunTimes.get(timingPrefs,RunTimes.task(timingMacro.hash))==null)
-            RunTimes.recordTask(timingPrefs,timingMacro.hash,120.0)
-            RunTimes.recordTask(timingPrefs,timingMacro.hash,180.0)
-            check(RunTimes.taskSamples(timingPrefs,timingMacro.hash)==listOf(120.0,180.0))
-            check(RunTimes.get(timingPrefs,RunTimes.task(Macro(timingMacro.raw).hash))==150.0)
+            check(RunTimes.get(timingPrefs,RunTimes.task(timingMacro.timingHash))==null)
+            RunTimes.recordTask(timingPrefs,timingMacro.timingHash,120.0)
+            RunTimes.recordTask(timingPrefs,timingMacro.timingHash,180.0)
+            check(RunTimes.taskSamples(timingPrefs,timingMacro.timingHash)==listOf(120.0,180.0))
+            check(RunTimes.get(timingPrefs,RunTimes.task(Macro(JSONObject(timingMacro.raw).toString()).timingHash))==150.0)
+            val namedTimingA=Macro(BuiltInMacros.named(listOf("Violet"),listOf(-1)))
+            val namedTimingB=Macro(BuiltInMacros.named(listOf("Violet"),listOf(8)))
+            check(namedTimingA.hash!=namedTimingB.hash&&namedTimingA.timingHash==namedTimingB.timingHash) { "Learned card position invalidated the same task's timing" }
             val differentTiming=Macro(BuiltInMacros.chess(ChessWiki.Options(setOf("phe"),openGame=false)))
-            check(RunTimes.get(timingPrefs,RunTimes.task(differentTiming.hash))==null)
+            check(RunTimes.get(timingPrefs,RunTimes.task(differentTiming.timingHash))==null)
             runOnMainSync { service!!.showPanel() }
             waitFor("Learned duration missing from floating controller") {
-                automation.windows.mapNotNull { it.root }.any { it.findAccessibilityNodeInfosByText("Ước tính ~2:30").isNotEmpty() }
+                automation.windows.mapNotNull { it.root }.any { it.findAccessibilityNodeInfosByText("Ước tính thu thập ~2:30").isNotEmpty() }
             }
-            timingPrefs.edit().remove(RunTimes.task(timingMacro.hash)).remove(RunTimes.task(timingMacro.hash)+":samples").commit()
+            timingPrefs.edit().remove(RunTimes.task(timingMacro.timingHash)).remove(RunTimes.task(timingMacro.timingHash)+":samples").commit()
             // Choose B for this run, then change the global default to A: resume must stay on B.
             run {
                 fun window(title:String)=automation.windows.mapNotNull { it.root }

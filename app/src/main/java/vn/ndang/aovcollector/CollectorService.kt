@@ -119,13 +119,13 @@ class CollectorService : AccessibilityService() {
     private fun heroKey(m:Macro)=RunTimes.hero(m.json.optString("collectionMode") in LISTED,m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills"))
     private fun timingSummary():String {
         val m=selected()?:return ""
-        val estimate=RunTimes.get(uiPrefs,RunTimes.task(m.hash))?:return "Ước lượng: cần một lượt hoàn tất trước"
+        val estimate=RunTimes.get(uiPrefs,RunTimes.task(m.timingHash))?:return "Ước lượng: cần một lượt hoàn tất trước"
         val matching=prefs.getString("hash","")==m.hash
         if(matching&&(stopped||index>=m.steps.length())) return ""
         val spent=if(matching) elapsed()/1000.0 else 0.0
-        val learned="theo ${RunTimes.taskSamples(uiPrefs,m.hash).size} lượt gần đây"
+        val learned="theo ${RunTimes.taskSamples(uiPrefs,m.timingHash).size} lượt gần đây"
         return when {
-            spent<=0 -> "Ước tính ~${clock((estimate*1000).toLong())} · $learned"
+            spent<=0 -> "Ước tính thu thập ~${clock((estimate*1000).toLong())} · $learned"
             spent<estimate -> "Đã chạy ${clock((spent*1000).toLong())} · còn ~${clock(((estimate-spent)*1000).toLong())} · $learned"
             else -> "Đã chạy ${clock((spent*1000).toLong())} · lâu hơn các lượt trước"
         }
@@ -138,7 +138,7 @@ class CollectorService : AccessibilityService() {
      */
     private fun recordTimes(m:Macro,heroes:Int) {
         if(!prefs.getBoolean("clean",false)) return
-        RunTimes.recordTask(uiPrefs,m.hash,elapsed()/1000.0)
+        RunTimes.recordTask(uiPrefs,m.timingHash,elapsed()/1000.0)
         val spent=(elapsed()-entryMs)/1000.0
         when(m.json.optString("collectionMode")) {
             "all","pick" -> if(heroes>0) RunTimes.record(uiPrefs,heroKey(m),spent/heroes)

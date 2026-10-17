@@ -1,6 +1,9 @@
 package vn.ndang.aovcollector
 
 import android.content.SharedPreferences
+import org.json.JSONArray
+import org.json.JSONObject
+import java.security.MessageDigest
 
 /**
  * How long tasks took when they ran from start to end without a pause, kept on the phone to estimate the next
@@ -20,6 +23,15 @@ object RunTimes {
     fun blend(kept:Double?,seconds:Double)=if(kept==null) seconds else (kept+seconds)/2
     /** Exact macro configuration: topics, speed, native saves and game entry all affect its hash. */
     fun task(hash:String)="time:task:$hash"
+    fun profile(json:JSONObject):String {
+        fun canonical(value:Any?):String=when(value) {
+            is JSONObject -> value.keys().asSequence().filter { it!="hint" }.sorted().joinToString(",","{","}") { JSONObject.quote(it)+":"+canonical(value.get(it)) }
+            is JSONArray -> (0 until value.length()).joinToString(",","[","]") { canonical(value.get(it)) }
+            is String -> JSONObject.quote(value)
+            else -> value?.toString()?:"null"
+        }
+        return MessageDigest.getInstance("SHA-256").digest(canonical(json).toByteArray()).joinToString("") { "%02x".format(it) }
+    }
     fun taskSamples(prefs:SharedPreferences,hash:String):List<Double> =
         prefs.getString(task(hash)+":samples","").orEmpty().split(',').mapNotNull { it.toDoubleOrNull() }
             .filter { it.isFinite()&&it>0 }.takeLast(8)
