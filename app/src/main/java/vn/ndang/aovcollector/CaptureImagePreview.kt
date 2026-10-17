@@ -21,11 +21,19 @@ class CaptureImagePreview(private val c:Context,private val worker:Executor,priv
     internal val view:View? get()=frame
     private var params:WindowManager.LayoutParams?=null
     private var image:ZoomImage?=null
-    private var token=0
+    @Volatile private var token=0
+    private var gallery=emptyList<CaptureHistory.Entry>()
     private var hidden=false
     private fun dp(n:Int)=Ui.dp(c,n)
-    fun show(entry:CaptureHistory.Entry,caption:String) {
-        close();val request=++token
+    fun show(entries:List<CaptureHistory.Entry>,order:Long) {
+        gallery=entries.filter { it.state=="saved" }
+        val position=gallery.indexOfFirst { it.order==order }
+        if(position>=0) showAt(position)
+    }
+    private fun showAt(position:Int) {
+        if(position !in gallery.indices) return
+        closeWindow();val request=++token
+        val entry=gallery[position]
         val box=object:LinearLayout(c) {
             override fun dispatchTouchEvent(e:MotionEvent):Boolean {
                 if(!hidden) return super.dispatchTouchEvent(e)
@@ -35,10 +43,10 @@ class CaptureImagePreview(private val c:Context,private val worker:Executor,priv
         }.apply { orientation=LinearLayout.VERTICAL;setPadding(dp(12),dp(8),dp(12),dp(8));setBackgroundColor(Color.rgb(12,15,24))
             contentDescription="Khung xem ảnh lớn" }
         val header=LinearLayout(c).apply { gravity=Gravity.CENTER_VERTICAL }
-        header.addView(Ui.text(c,"Ảnh #${entry.order} · $caption",13f,Color.WHITE,true).apply {
+        header.addView(Ui.text(c,"${position+1}/${gallery.size} · ${entry.name}",13f,Color.WHITE,true).apply {
             maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END
         },LinearLayout.LayoutParams(0,-2,1f))
-        val zoom=ZoomImage(c).apply { contentDescription="Ảnh lớn số ${entry.order}" }
+        val zoom=ZoomImage(c) { direction -> showAt(position+direction) }.apply { contentDescription="Ảnh lớn số ${entry.order}" }
         fun button(text:String,label:String,action:()->Unit) {
             header.addView(Ui.button(c,text,action=action).apply { contentDescription=label;textSize=14f
                 setTextColor(Color.WHITE);background=Ui.shape(Color.rgb(47,52,74),dp(10));setPadding(dp(8),0,dp(8),0)
@@ -50,11 +58,38 @@ class CaptureImagePreview(private val c:Context,private val worker:Executor,priv
         box.addView(header)
         val message=Ui.text(c,"Đang mở ảnh…",11f,Color.LTGRAY);box.addView(message)
         box.addView(zoom,LinearLayout.LayoutParams(-1,0,1f))
+        val actions=LinearLayout(c)
+        fun action(text:String,label:String,enabled:Boolean=true,click:()->Unit):Button {
+            val b=Ui.button(c,text,action=click).apply {
+                contentDescription=label;isEnabled=enabled;textSize=12f
+                setTextColor(Color.WHITE);background=Ui.shape(Color.rgb(47,52,74),dp(10))
+            }
+            actions.addView(b,LinearLayout.LayoutParams(0,dp(42),1f).apply { topMargin=dp(6);if(actions.childCount>0) leftMargin=dp(5) })
+            return b
+        }
+        action("‹ Trước","Ảnh trước",position>0) { showAt(position-1) }
+        action("Sau ›","Ảnh sau",position+1<gallery.size) { showAt(position+1) }
+        lateinit var copy:Button
+        copy=action("Chép ảnh","Sao chép ảnh") {
+            copy.isEnabled=false
+            worker.execute {
+                try {
+                    val uri=CaptureActions.clipboardSnapshot(c,entry)
+                    main.post {
+                        try { CaptureActions.setClipboard(c,entry.name,uri);Toast.makeText(c,"Đã sao chép ${entry.name}; có thể dán sang app khác",Toast.LENGTH_SHORT).show() }
+                        catch(_:Exception) { Toast.makeText(c,"Không đặt được ảnh vào bộ nhớ tạm",Toast.LENGTH_SHORT).show() }
+                        copy.isEnabled=true
+                    }
+                } catch(_:Exception) { main.post { copy.isEnabled=true;Toast.makeText(c,"Không sao chép được ảnh; kiểm tra file còn lưu",Toast.LENGTH_SHORT).show() } }
+            }
+        }
+        box.addView(actions)
         // MATCH_PARENT uses the usable display area, including landscape navigation-bar insets.
         val p=WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,PixelFormat.TRANSLUCENT).apply { gravity=Gravity.TOP or Gravity.START }
         wm.addView(box,p);frame=box;params=p;image=zoom;shield(hidden)
         worker.execute {
+            if(request!=token) return@execute
             val loaded=try {
                 val file=File(c.filesDir,"captures/"+entry.path)
                 val size=BitmapFactory.Options().apply { inJustDecodeBounds=true };BitmapFactory.decodeFile(file.path,size)
@@ -81,13 +116,14 @@ class CaptureImagePreview(private val c:Context,private val worker:Executor,priv
         v.visibility=if(on) View.INVISIBLE else View.VISIBLE
         if(v.isAttachedToWindow) wm.updateViewLayout(v,p)
     }
-    fun close() {
+    fun close() { closeWindow();gallery=emptyList() }
+    private fun closeWindow() {
         token++;frame?.let { if(it.isAttachedToWindow) wm.removeView(it) };frame=null;params=null
         // A removed overlay can still have a pending draw; never recycle an image already displayed.
         image?.clear();image=null
     }
 
-    private class ZoomImage(c:Context):FrameLayout(c) {
+    private class ZoomImage(c:Context,private val navigate:(Int)->Unit):FrameLayout(c) {
         private val picture=ImageView(c).apply { scaleType=ImageView.ScaleType.MATRIX;importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         private var photo:Bitmap?=null
         private var factor=1f
@@ -102,6 +138,11 @@ class CaptureImagePreview(private val c:Context,private val worker:Executor,priv
         })
         private val taps=GestureDetector(c,object:GestureDetector.SimpleOnGestureListener() {
             override fun onDown(e:MotionEvent)=true
+            override fun onFling(first:MotionEvent?,last:MotionEvent,vx:Float,vy:Float):Boolean {
+                val dx=last.x-(first?.x?:last.x)
+                if(factor>1.05f||kotlin.math.abs(dx)<Ui.dp(c,48)||kotlin.math.abs(vx)<kotlin.math.abs(vy)) return false
+                navigate(if(dx<0) 1 else -1);return true
+            }
             override fun onDoubleTap(e:MotionEvent):Boolean { changeZoom(if(factor>1.1f) 1/factor else 2.5f,e.x,e.y);return true }
             override fun onSingleTapUp(e:MotionEvent):Boolean { performClick();return true }
         })

@@ -33,6 +33,41 @@ class ChessWikiTest {
         assertFalse(ChessWiki.changed(base,IntArray(96) { 58 }))
         assertTrue(ChessWiki.changed(base,IntArray(96) { 61 }))
     }
+    @Test fun textScrollIsNotAveragedAwayByTheUniformBackground() {
+        val base=IntArray(2560) { 60 }
+        val moved=base.copyOf().apply { for(i in 400 until 440) this[i]=110 }
+        assertTrue(ChessWiki.changed(base,moved))
+        assertFalse(ChessWiki.changed(base,base.copyOf()))
+        assertFalse(ChessWiki.changed(base,IntArray(2560) { 66 }))
+    }
+    @Test fun readerKeepsSecondTextPageBeforeMarkingRoundRulesFinished() {
+        var scrolled=false;val kept=ArrayList<String>();val done=HashSet<String>()
+        var outcome:ChessWikiReader.Outcome?=null
+        val screen=object:ChessWikiReader.Screen {
+            override val alive=true
+            override fun look(words:Boolean,then:(ChessWikiReader.Look?)->Unit) {
+                then(object:ChessWikiReader.Look {
+                    override val words=listOf(GameScreens.Word("Bách khoa Cờ Liên Quân",.1,.02,.6,.1))
+                    override val signature=IntArray(2560) { if(scrolled&&it in 400 until 440) 110 else 60 }
+                    override val modal=false
+                    override fun tiles(topic:ChessWiki.Topic)=emptyList<ChessWiki.Tile>()
+                    override fun keep(name:String,then:(Boolean)->Unit) { kept+=name;then(true) }
+                    override fun discard() {}
+                })
+            }
+            override fun tap(x:Double,y:Double,then:(Boolean)->Unit)=then(true)
+            override fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit) { scrolled=true;then(true) }
+            override fun later(ms:Long,then:()->Unit)=then()
+            override fun seen(id:String)=id in done
+            override fun finished(id:String) { done+=id }
+            override fun note(message:String) {}
+            override fun say(message:String) {}
+        }
+        ChessWikiReader(screen,ChessWiki.Options(setOf("thang-thua-vong"),openGame=false)) { outcome=it }.start()
+        assertTrue(outcome is ChessWikiReader.Outcome.Done)
+        assertEquals(listOf("chess__thong-tin__thang-thua-vong__trang__001","chess__thong-tin__thang-thua-vong__trang__002"),kept)
+        assertTrue("topic:thang-thua-vong" in done)
+    }
     @Test fun originalEquipmentImagesAreTaggedAutomaticallyFromCurrentTab() {
         val observed=listOf(GameScreens.Word("Bách khoa",.15,.03,.3,.09),
             GameScreens.Word("Cờ Liên Quân",.35,.03,.6,.09))

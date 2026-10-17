@@ -39,7 +39,7 @@ class CollectorService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private var panel: LinearLayout? = null
-    private val captureProgress by lazy { CaptureProgressPanel(this,{ swallowed=true }) { runId to listOf(lastStatus,timingSummary()).filter { it.isNotBlank() }.joinToString("\n") } }
+    private val captureProgress by lazy { CaptureProgressPanel(this,{ swallowed=true },{ exportCaptureHistory(it) }) { runId.ifBlank { manualRunId } to listOf(lastStatus,timingSummary()).filter { it.isNotBlank() }.joinToString("\n") } }
     internal val captureProgressView:View? get()=captureProgress.view
     internal val capturePreviewView:View? get()=captureProgress.previewView
     private var label: TextView? = null
@@ -49,6 +49,7 @@ class CollectorService : AccessibilityService() {
     private var busy = false
     private var generation = 0
     private var runId = ""
+    private var manualRunId=""
     private var runAccountId:String?=null
     private var runAccountUid:String?=null
     private var manualBusy = false
@@ -1187,7 +1188,25 @@ class CollectorService : AccessibilityService() {
             setRunning(true); generation++; save(); note(if(index==0) "Bắt đầu lượt" else "Tiếp tục"); next(generation)
         } catch(e:Exception) { pause("Lỗi macro: ${e.message}") }
     }
-    fun reset() { if(busy || manualBusy) { status("Chờ bước hiện tại xong"); return }; setRunning(false); activeMs=0L; listTotal=null; generation++; stopped=false; index=0; runId=""; runAccountId=null;runAccountUid=null;macro=null; listRef=null; prefs.edit().clear().commit(); upgradeBuiltIn(); status("Sẵn sàng lượt mới") }
+    fun reset() { if(busy || manualBusy) { status("Chờ bước hiện tại xong"); return }; setRunning(false); activeMs=0L; listTotal=null; generation++; stopped=false; index=0; runId="";manualRunId="";captureProgress.resetSession(); runAccountId=null;runAccountUid=null;macro=null; listRef=null; prefs.edit().clear().commit(); upgradeBuiltIn(); status("Sẵn sàng lượt mới") }
+    private fun exportCaptureHistory(entries:List<CaptureHistory.Entry>) {
+        if(libraryBusy||FileJob.running||GamePhotoSync.busy||afterRunChat!=null) { status("Đang xử lý dữ liệu; chờ xong rồi xuất ảnh");return }
+        if(running) pause("Tạm dừng để xuất ảnh đã chọn")
+        val token=generation
+        fun open(attempt:Int) {
+            if(token!=generation||running) return
+            if(busy||manualBusy||pendingSaves>0) {
+                if(attempt<30) handler.postDelayed({ open(attempt+1) },200)
+                else status("Thao tác chụp chưa xong; ảnh đã chọn được giữ lại")
+                return
+            }
+            try {
+                val intent=CaptureActions.exportIntent(this,entries)
+                hidePanel();startActivity(intent)
+            } catch(e:Exception) { status(e.message?:"Không xuất được ảnh đã chọn") }
+        }
+        open(0)
+    }
     /**
      * A built-in macro selected before an app update keeps its old steps in macro.json. Regenerate it with the
      * same settings unless a run of it is still unfinished, so a new run always uses the current steps.
@@ -1750,7 +1769,8 @@ class CollectorService : AccessibilityService() {
         if(busy || running || manualBusy) { status("Tạm dừng trước khi chụp riêng"); return }
         try { if(!ready(readMacro())) return } catch(e:Exception) { status(e.message?:"Lỗi macro"); return }
         manualBusy=true;refreshPanel()
-        capture("capture-${System.currentTimeMillis()}","manual",wait=true) { manualBusy=false; status(if(it) "Đã lưu ảnh" else failure?:"Chụp ảnh thất bại") }
+        if(runId.isBlank()&&manualRunId.isBlank()) manualRunId="manual-${System.currentTimeMillis()}"
+        capture("capture-${System.currentTimeMillis()}",runId.ifBlank { manualRunId },wait=true) { manualBusy=false; status(if(it) "Đã lưu ảnh" else failure?:"Chụp ảnh thất bại") }
     }
     private fun photoDirectory(folder:String,name:String,bitmap:Bitmap):File {
         val base=File(filesDir,"captures/$folder").apply { mkdirs() }

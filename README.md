@@ -1,4 +1,4 @@
-# AOV Mobile Collector — v0.12.0
+# AOV Mobile Collector — v0.13.0
 
 App thử nghiệm Android 11+ để chụp dữ liệu menu Liên Quân VN bằng macro. Ảnh lưu trên máy, OCR chạy ngoại tuyến; app không có quyền Internet.
 
@@ -8,7 +8,7 @@ App thử nghiệm Android 11+ để chụp dữ liệu menu Liên Quân VN bằ
 3. Mở danh sách macro trên bảng nổi; tìm tên có dấu hoặc không dấu.
 4. Chọn **Lấy thông tin tướng**, rồi chọn cách lấy: **Theo tên tướng** (tick các tướng đã lưu hoặc gõ tên), **Các ô đầu danh sách** (số ô cần thu thập) hoặc **Tướng đang mở**. Với hai cách đầu, tick **Tự mở game** để app tự mở Liên Quân, đóng popup sự kiện và vào danh sách tướng.
 5. Bấm **Chạy**. Nút đổi thành **Tạm dừng**, rồi **Tiếp tục**. **Dừng** kết thúc lượt và giữ ảnh.
-6. **Chụp** lưu ảnh thủ công. Nút **Ảnh** có icon lịch sử mở bảng tiến trình bên phải: ảnh thu nhỏ theo thứ tự, tên như violet-1, violet-2, trạng thái đang lưu/đã lưu/lỗi và tiến độ ảnh gốc, Drive. Bấm ảnh để mở lớn, dùng +/− hoặc chụm hai ngón để phóng to. Kéo tiêu đề để di chuyển, × để đóng riêng. Bảng có ước lượng thời gian từ các lượt đã hoàn tất cùng tác vụ. [Chi tiết bảng tiến trình](docs/CAPTURE_PROGRESS.md). **Về app** tạm dừng và mở lịch sử. **Đóng** tạm dừng và ẩn bảng. Dấu **−** thu gọn, vẫn chạy.
+6. **Chụp** lưu ảnh thủ công. Nút **Ảnh** có icon lịch sử mở bảng tiến trình bên phải: ảnh thu nhỏ của lượt hiện tại theo thứ tự, tên như violet-1, violet-2, trạng thái đang lưu/đã lưu/lỗi và tiến độ ảnh gốc, Drive. Bấm ảnh để mở lớn, dùng Trước/Sau hoặc vuốt để đổi ảnh, +/− hoặc chụm hai ngón để phóng to. Chép ảnh để dán sang app khác. Chọn nhiều ảnh → Xuất để lưu ZIP. Kéo tiêu đề để di chuyển, × để đóng riêng. Bảng có ước lượng thời gian từ các lượt đã hoàn tất cùng tác vụ. [Chi tiết bảng tiến trình](docs/CAPTURE_PROGRESS.md). **Về app** tạm dừng và mở lịch sử. **Đóng** tạm dừng và ẩn bảng. Dấu **−** thu gọn, vẫn chạy.
 7. Trong lịch sử, mở thư mục để xem ảnh; bấm **Chọn** hoặc nhấn giữ để chọn nhiều, **Lưu ZIP** hoặc **Xóa**. Menu từng mục có đổi tên. File ZIP lưu ra chứa các ZIP nhỏ dưới 450 MB, xếp theo chữ cái.
 8. **Nhập** trên header nhận ZIP đã xuất (cả dạng ZIP chứa ZIP nhỏ lẫn ZIP cũ) hoặc macro JSON. Macro JSON xuất hiện trong ô tìm của bảng nổi.
 

@@ -350,18 +350,25 @@ object ChessWiki {
         }
         return md.digest().take(7).joinToString("") { "%02x".format(it) }
     }
-    /** 96 brightness samples only from the scrolling area (not static menu or header). */
+    /** Dense samples catch thin text moving on the nearly uniform encyclopedia background. */
     fun signature(b:Bitmap,modal:Boolean=false):IntArray {
         val x0=if(modal) .38 else .24
         val x1=if(modal) .87 else .92
-        return IntArray(96) { n ->
-            val xx=x0+(x1-x0)*((n%12)+.5)/12.0;val yy=.25+.64*((n/12)+.5)/8.0
+        return IntArray(64*40) { n ->
+            val xx=x0+(x1-x0)*((n%64)+.5)/64.0;val yy=.25+.72*((n/64)+.5)/40.0
             val p=b.getPixel((xx*b.width).toInt().coerceIn(0,b.width-1),(yy*b.height).toInt().coerceIn(0,b.height-1))
             (Color.red(p)*299+Color.green(p)*587+Color.blue(p)*114)/1000
         }
     }
-    fun changed(a:IntArray,b:IntArray):Boolean =
-        a.size!=b.size || a.indices.sumOf { abs(a[it]-b[it]) }.toDouble()/a.size>4.0
+    fun changed(a:IntArray,b:IntArray):Boolean {
+        if(a.size!=b.size) return true
+        if(a.isEmpty()) return false
+        if(a.size<512) return a.indices.sumOf { abs(a[it]-b[it]) }.toDouble()/a.size>4.0
+        val differences=IntArray(a.size) { b[it]-a[it] }
+        val shift=differences.sortedArray()[differences.size/2]
+        // Ignore uniform brightness changes; count local text/edge changes instead of averaging them away.
+        return differences.count { abs(it-shift)>12 }>=maxOf(16,a.size/100)
+    }
     fun modal(b:Bitmap):Boolean {
         // The encyclopedia's dialog has a large white X in the upper right, absent on the page itself.
         val x=(.902*b.width).toInt();val y=(.083*b.height).toInt()
@@ -539,7 +546,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
             }
             // Two extra slow drags: a game list sometimes ignores its first drag near a transition.
             screen.note(t.label+": thử kéo lại danh sách ("+(still+1)+"/"+MAX_STILL+")")
-            return@look scrollList(at) { scan(at,page,previous,still+1,retries) }
+            return@look scrollList(at,still+1) { scan(at,page,previous,still+1,retries) }
         }
         // The first screenshot of each page is saved *before* clicking any item.
         val image=ChessWiki.filename(t,"trang",page)
@@ -757,11 +764,12 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
             }
         }
     }
-    private fun scrollList(at:Int,next:()->Unit) {
+    private fun scrollList(at:Int,retry:Int=0,next:()->Unit) {
         // Real ZIP: card rows are about .616 screen heights apart. A .60 drag brings
         // row 2's name to the same visible band, rather than leaving two partial rows.
         val heroes=topics[at].key=="tat-ca-quan-co"
-        swipe(.76,if(heroes) .84 else .82,.76,if(heroes) .24 else .40,next=next)
+        val x=if(!heroes&&retry%2==1) .55 else .76
+        swipe(x,if(heroes||retry>0) .84 else .82,x,if(heroes) .24 else if(retry>0) .28 else .40,next=next)
     }
     private fun nextPage(at:Int,page:Int,signature:IntArray) {
         screen.say(topics[at].label+": kéo xuống hàng tiếp theo")

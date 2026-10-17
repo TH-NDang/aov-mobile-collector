@@ -82,6 +82,18 @@ class UiSmoke:Instrumentation() {
                     "Real Save Photo dialog did not locate Sure: $sure"
                 }
             }
+            // User ZIP: a text tab has more content below its first screenshot.
+            context.assets.open("chess-round-bottom.jpg").use { input ->
+                val before=BitmapFactory.decodeStream(input)
+                val moved=before.copy(Bitmap.Config.ARGB_8888,true)
+                val region=Rect((before.width*.24).toInt(),(before.height*.25).toInt(),(before.width*.92).toInt(),(before.height*.97).toInt())
+                val source=Rect(region).apply { top+=12 }
+                val target=Rect(region).apply { bottom-=12 }
+                Canvas(moved).drawBitmap(before,source,target,null)
+                check(ChessWiki.changed(ChessWiki.signature(before),ChessWiki.signature(moved))) { "Real text scroll was treated as the end of the tab" }
+                check(!ChessWiki.changed(ChessWiki.signature(moved),ChessWiki.signature(moved)))
+                before.recycle();moved.recycle()
+            }
             // Native Save Photo exports go through a real SAF provider, then appear in app history.
             val photoTree=android.provider.DocumentsContract.buildTreeDocumentUri(
                 "vn.ndang.aovcollector.test.photos","Pictures")
@@ -568,6 +580,16 @@ class UiSmoke:Instrumentation() {
             check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Hiện chữ") }
                 .none { it.text?.toString()=="Hiện chữ" }) { "Obsolete show-label option is still visible" }
             snap("04a-always-labeled-controls")
+            // Restore an unfinished current run; unrelated old runs must stay out of its popup.
+            val currentRunMacro=Macro(MacroStore.current(targetContext).readText())
+            targetContext.getSharedPreferences("collector",0).edit().putString("hash",currentRunMacro.hash)
+                .putString("run","progress-smoke").putInt("step",0).putBoolean("stopped",false).commit()
+            shell("settings put secure enabled_accessibility_services null")
+            waitFor("Old capture service did not stop") { runOnMainSync { service=CollectorService.current };service==null }
+            shell("settings put secure enabled_accessibility_services vn.ndang.aovcollector/vn.ndang.aovcollector.CollectorService")
+            shell("settings put secure accessibility_enabled 1")
+            waitFor("Service did not restore current capture run") { runOnMainSync { service=CollectorService.current };service!=null }
+            runOnMainSync { service!!.showPanel() }
             // The real asynchronous image writer feeds a durable, ordered second overlay.
             val historyDir=File(targetContext.filesDir,"captures/progress-smoke").apply { mkdirs() }
             File(historyDir,"hero.json").writeText(JSONObject().put("name","Violet").toString())
@@ -585,6 +607,11 @@ class UiSmoke:Instrumentation() {
             val secondRow=savePreviewImage("hero-001-skill-1-detail")
             check(savedRow.name=="violet-1"&&secondRow.name=="violet-2") { "Unfriendly or unordered image names: ${savedRow.name}, ${secondRow.name}" }
             check(savedRow.state=="saved"&&savedRow.bytes>0&&File(targetContext.filesDir,"captures/"+savedRow.path).isFile)
+            val oldDir=File(targetContext.filesDir,"captures/previous-progress").apply { mkdirs() }
+            File(oldDir,"hero.json").writeText(JSONObject().put("name","OldHero").toString())
+            val oldImage=File(oldDir,"old.png");File(targetContext.filesDir,"captures/"+savedRow.path).copyTo(oldImage,true)
+            val oldOrder=CaptureHistory.begin(targetContext,"previous-progress",oldImage)
+            CaptureHistory.finish(targetContext,oldOrder,true)
             val failedOrder=CaptureHistory.begin(targetContext,"progress-smoke",File(targetContext.filesDir,"captures/progress-errors/failed.png"))
             CaptureHistory.finish(targetContext,failedOrder,false)
             val interruptedCapture=CaptureHistory.begin(targetContext,"progress-smoke",File(targetContext.filesDir,"captures/progress-errors/interrupted.png"))
@@ -595,6 +622,7 @@ class UiSmoke:Instrumentation() {
             click("Ảnh")
             waitFor("Missing live saved-image row") { nodes().any { it.findAccessibilityNodeInfosByText(savedRow.name).isNotEmpty() } }
             check(nodes().any { it.findAccessibilityNodeInfosByText("Đã lưu trong app").isNotEmpty() })
+            check(nodes().none { it.findAccessibilityNodeInfosByText("oldhero-1").isNotEmpty() }) { "Current popup includes an earlier run" }
             check(nodes().any { it.findAccessibilityNodeInfosByText("Lưu thất bại").isNotEmpty() })
             snap("04c-live-capture-history")
             check(nodes().none { it.findAccessibilityNodeInfosByText("progress-smoke/").isNotEmpty() }) { "History exposes storage paths" }
@@ -623,6 +651,26 @@ class UiSmoke:Instrumentation() {
             snap("04d-large-image-preview")
             previewAction("Thu nhỏ ảnh")
             waitFor("Image did not zoom out") { previewImage()?.stateDescription?.toString()=="Phóng to 100%" }
+            previewAction("Ảnh sau")
+            waitFor("Next image did not load") { nodes().any { it.findAccessibilityNodeInfosByText("Ảnh lớn số ${secondRow.order}").isNotEmpty() } }
+            previewAction("Ảnh trước")
+            waitFor("Previous image did not return") { previewImage()?.stateDescription?.toString()=="Phóng to 100%" }
+            previewAction("Sao chép ảnh")
+            var clipboardURI:android.net.Uri?=null
+            waitFor("Image was not placed on clipboard") {
+                runOnMainSync {
+                    clipboardURI=targetContext.getSystemService(android.content.ClipboardManager::class.java).primaryClip?.getItemAt(0)?.uri
+                };clipboardURI!=null
+            }
+            val originalBytes=File(targetContext.filesDir,"captures/"+savedRow.path).readBytes()
+            check(targetContext.contentResolver.openInputStream(clipboardURI!!)!!.use { it.readBytes() }.contentEquals(originalBytes))
+            // The receiver is a separate application/UID and receives access through the clipboard grant.
+            targetContext.startActivity(Intent().setClassName("com.openai.chatgpt","vn.ndang.chatfixture.ClipboardActivity").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            waitFor("Another app could not paste clipboard image") {
+                android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("run-as com.openai.chatgpt cat files/pasted-image.bin")).use { it.readBytes() }.contentEquals(originalBytes)
+            }
+            targetContext.startActivity(Intent(targetContext,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            waitForIdleSync()
             val previewShotDone=java.util.concurrent.CountDownLatch(1)
             val previewShotOK=java.util.concurrent.atomic.AtomicBoolean(false)
             runOnMainSync {
@@ -633,6 +681,41 @@ class UiSmoke:Instrumentation() {
             runOnMainSync { check(service!!.capturePreviewView?.visibility==View.VISIBLE) }
             previewAction("Đóng ảnh lớn")
             runOnMainSync { check(service!!.capturePreviewView==null&&service!!.captureProgressView!=null) }
+            // Select exactly two current-run images and exercise the existing SAF ZIP writer.
+            targetContext.startActivity(Intent(context,PhotoGrantActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            waitForIdleSync();SystemClock.sleep(700)
+            targetContext.contentResolver.takePersistableUriPermission(photoTree,Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            targetContext.startActivity(Intent(targetContext,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
+            waitForIdleSync()
+            val chosenZip=android.provider.DocumentsContract.createDocument(targetContext.contentResolver,photoRoot,"application/zip","selected-current-images.zip")!!
+            val resultIntent=Intent().setData(chosenZip).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            val exportMonitor=addMonitor(android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT),Instrumentation.ActivityResult(Activity.RESULT_OK,resultIntent),true)
+            try {
+                previewAction("Chọn ảnh trong lượt")
+                previewAction("Chọn ${savedRow.name}")
+                previewAction("Chọn ${secondRow.name}")
+                previewAction("Xuất ảnh đã chọn")
+                waitFor("Popup export did not open the file picker") { exportMonitor.hits>0 }
+                waitFor("Selected image ZIP export did not finish") { nodes().any { it.findAccessibilityNodeInfosByText("Đã lưu ZIP gồm 2 file").isNotEmpty() } }
+                val zipBytes=targetContext.contentResolver.openInputStream(chosenZip)!!.use { it.readBytes() }
+                val names=linkedSetOf<String>()
+                java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(zipBytes)).use { outer ->
+                    check(outer.nextEntry!=null)
+                    val innerBytes=outer.readBytes()
+                    java.util.zip.ZipInputStream(java.io.ByteArrayInputStream(innerBytes)).use { inner ->
+                        var item=inner.nextEntry
+                        while(item!=null) { names+=item.name;inner.closeEntry();item=inner.nextEntry }
+                    }
+                }
+                check(names==setOf(savedRow.path,secondRow.path)) { "Export included unselected/older images: $names" }
+                click("Đã hiểu")
+            } finally { removeMonitor(exportMonitor) }
+            android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,chosenZip)
+            runOnMainSync { service!!.showPanel() };click("Ảnh")
+            waitFor("Current images did not return after export") { nodes().any { it.findAccessibilityNodeInfosByText(savedRow.name).isNotEmpty() } }
+            runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT };SystemClock.sleep(1000)
+            runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1000)
+            waitFor("Current images did not survive rotation") { nodes().any { it.findAccessibilityNodeInfosByText(savedRow.name).isNotEmpty() } }
             // Removing an older file must not renumber the next image or break a stale thumbnail tap.
             File(targetContext.filesDir,"captures/"+savedRow.path).delete()
             check(CaptureHistory.entries(targetContext).first { it.order==secondRow.order }.name=="violet-2")
@@ -679,10 +762,10 @@ class UiSmoke:Instrumentation() {
             }
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1500);snap("05-landscape")
             click("Ảnh")
-            waitFor("History did not reopen") { nodes().any { it.findAccessibilityNodeInfosByText(savedRow.name).isNotEmpty() } }
+            waitFor("New run still shows earlier images") { nodes().any { it.findAccessibilityNodeInfosByText("Chưa có ảnh trong lượt hiện tại").isNotEmpty() } }
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT };SystemClock.sleep(1000)
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1000)
-            waitFor("History did not restore after rotation") { nodes().any { it.findAccessibilityNodeInfosByText(savedRow.name).isNotEmpty() } }
+            waitFor("Empty current run did not restore after rotation") { nodes().any { it.findAccessibilityNodeInfosByText("Chưa có ảnh trong lượt hiện tại").isNotEmpty() } }
             snap("05b-right-progress-panel")
             val shotFinished=java.util.concurrent.CountDownLatch(1)
             var cleanShot:Bitmap?=null
@@ -801,7 +884,7 @@ class UiSmoke:Instrumentation() {
             check(!AfterRun.config(targetContext).enabled) { "Cancelling the Drive picker enabled automation" }
             click("Đóng")
             targetContext.getSharedPreferences("ui",0).edit().remove("theme").commit()
-            result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, live capture progress, named images, enlarged preview and zoom, learned task time, saved/missing/failed files, shielded screenshot, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
+            result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, current-run capture progress, clipboard image paste across apps, selected ZIP export, quick image navigation, named images, enlarged preview and zoom, learned task time, saved/missing/failed files, shielded screenshot, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
             finish(Activity.RESULT_OK,result)
         } catch(t:Throwable) {
             try {

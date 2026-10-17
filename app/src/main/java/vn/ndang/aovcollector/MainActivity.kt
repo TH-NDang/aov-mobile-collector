@@ -185,6 +185,7 @@ class MainActivity : Activity() {
         showHistory()
         if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob()
         if(intent.getBooleanExtra(Accounts.OPEN,false)) { intent.removeExtra(Accounts.OPEN);accountDialog() }
+        acceptCaptureExport()
     }
     override fun onSaveInstanceState(out:Bundle) { super.onSaveInstanceState(out);out.putString("folder",folder?.path);out.putString("history-search",historyQueries[(folder?:captures).path].orEmpty());out.putStringArrayList("export",ArrayList(pendingExport.map { it.path }));out.putStringArrayList("copy",ArrayList(pendingCopy.map { it.path })) }
     override fun onResume() {
@@ -200,7 +201,14 @@ class MainActivity : Activity() {
     override fun onPause() { historySearchHandler.removeCallbacks(photoRefresh);if(FileJob.screen===jobDone) FileJob.screen=null;super.onPause() }
     override fun onDestroy() { historySearchToken++;historySearchTask?.let { historySearchHandler.removeCallbacks(it) };historySearchExecutor.shutdownNow();progress?.close();super.onDestroy() }
     override fun onNewIntent(intent:Intent) { super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob()
-        if(intent.getBooleanExtra(Accounts.OPEN,false)) { intent.removeExtra(Accounts.OPEN);accountDialog() } }
+        if(intent.getBooleanExtra(Accounts.OPEN,false)) { intent.removeExtra(Accounts.OPEN);accountDialog() };acceptCaptureExport() }
+    private fun acceptCaptureExport() {
+        val token=intent.getStringExtra(CaptureActions.EXPORT)?:return
+        intent.removeExtra(CaptureActions.EXPORT)
+        val files=CaptureActions.takeExport(token)
+        if(files.isNullOrEmpty()) { message("Lựa chọn xuất ảnh đã hết hạn; chọn lại ảnh trong bảng tiến trình.");return }
+        requestExport(files)
+    }
     private fun crashNotice() {
         val log=CrashLog.file(this);if(!log.exists()) return
         val prefs=getPreferences(MODE_PRIVATE);if(log.lastModified()<=prefs.getLong("crash-seen",0L)) return
@@ -690,7 +698,7 @@ class MainActivity : Activity() {
             type=if(i==0) "application/zip" else "application/json";addCategory(Intent.CATEGORY_OPENABLE)
         },if(i==0) 12 else 10)
     }.show() }
-    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Lấy thông tin tướng → chọn Theo tên tướng, Các ô đầu danh sách hoặc Tướng đang mở → Chạy. Theo tên: tick các tướng đã lưu từ lượt trước hoặc gõ tên; app tới ô đã biết, đọc lại tên trên thẻ, sai thì dò danh sách. Với hai cách đầu, tick Tự mở game thì app đóng hẳn Liên Quân nếu còn chạy (Cài đặt → Buộc dừng), mở lại, đóng popup sự kiện và vào danh sách tướng. Thống kê tướng chụp hết Bảng Phân Bậc Tướng (2 bảng × 3 chế độ) từ mục Cộng đồng. Chiến khu chụp bảng xếp hạng người chơi của từng tướng (Đấu hạng → Chiến khu).\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy. Nút Ảnh ở đầu bảng mở tiến trình ảnh bên phải: xem ảnh theo thứ tự, tên như violet-1 và trạng thái lưu; bấm ảnh để xem lớn, dùng +/− hoặc chụm hai ngón để phóng to. Kéo tiêu đề để di chuyển; × đóng riêng bảng ảnh.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080. Hàng chiêu được đọc khi chạy: 4 hoặc 5 biểu tượng, và tướng có nút ↻ được chụp thêm các chiêu đổi ở dạng khác. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nGiao diện: chọn Sáng, Tối hoặc Theo hệ thống ở nút Giao diện trên đầu màn hình.\n\nAOV Collector 0.12.0").setPositiveButton("Đã hiểu",null)
+    private fun help() { val dialog=AlertDialog.Builder(this).setMessage("1. Bật Trợ năng cho AOV Collector.\n2. Mở Bảng nổi rồi mở Liên Quân.\n3. Trên bảng nổi: Chọn macro → Lấy thông tin tướng → chọn Theo tên tướng, Các ô đầu danh sách hoặc Tướng đang mở → Chạy. Theo tên: tick các tướng đã lưu từ lượt trước hoặc gõ tên; app tới ô đã biết, đọc lại tên trên thẻ, sai thì dò danh sách. Với hai cách đầu, tick Tự mở game thì app đóng hẳn Liên Quân nếu còn chạy (Cài đặt → Buộc dừng), mở lại, đóng popup sự kiện và vào danh sách tướng. Thống kê tướng chụp hết Bảng Phân Bậc Tướng (2 bảng × 3 chế độ) từ mục Cộng đồng. Chiến khu chụp bảng xếp hạng người chơi của từng tướng (Đấu hạng → Chiến khu).\n\nTạm dừng: nghỉ và giữ vị trí. Tiếp tục: chạy tiếp đúng chỗ. Dừng: đóng lượt, giữ ảnh. Dấu − thu gọn bảng nhưng tác vụ vẫn chạy. Nút Ảnh ở đầu bảng mở tiến trình ảnh bên phải: xem ảnh theo thứ tự, tên như violet-1 và trạng thái lưu; bấm ảnh để xem lớn, dùng Trước/Sau hoặc vuốt để đổi nhanh; +/− hoặc chụm hai ngón để phóng to; Chép ảnh để dán sang app khác. Lịch sử chỉ có ảnh trong lượt hiện tại; Chọn → Xuất để lưu ZIP những ảnh đã chọn. Kéo tiêu đề để di chuyển; × đóng riêng bảng ảnh.\n\nẢnh được nhóm theo lượt và tên tướng đọc từ màn hình. Tên nhận dạng có thể sai; mở menu ⋮ để sửa. Chọn nhiều mục để lưu ZIP hoặc xóa cùng lúc.\n\nDanh sách tướng được cuộn có đo bằng ảnh chụp và dừng ở cuối danh sách. Bố cục hiện hỗ trợ màn ngang 2400×1080. Hàng chiêu được đọc khi chạy: 4 hoặc 5 biểu tượng, và tướng có nút ↻ được chụp thêm các chiêu đổi ở dạng khác. Bảng nổi tự ẩn và không nhận chạm khi macro chạm vào game.\n\nGiao diện: chọn Sáng, Tối hoặc Theo hệ thống ở nút Giao diện trên đầu màn hình.\n\nAOV Collector 0.13.0").setPositiveButton("Đã hiểu",null)
         if(CrashLog.file(this).exists()) dialog.setNeutralButton("Nhật ký lỗi") { _,_ -> showLog("Nhật ký lỗi") };dialog.show() }
     /** Choose Pictures or any folder in Android Files. Copy originals without creating a ZIP. */
     private fun requestCopy(files:List<File>) {
