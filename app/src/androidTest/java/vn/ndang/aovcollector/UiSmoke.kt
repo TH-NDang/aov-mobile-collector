@@ -550,6 +550,38 @@ class UiSmoke:Instrumentation() {
             check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Hiện chữ") }
                 .none { it.text?.toString()=="Hiện chữ" }) { "Obsolete show-label option is still visible" }
             snap("04a-always-labeled-controls")
+            // The real asynchronous image writer feeds a durable, ordered second overlay.
+            val historyDir=File(targetContext.filesDir,"captures/progress-smoke").apply { mkdirs() }
+            val saved=java.util.concurrent.CountDownLatch(1)
+            val saveOK=java.util.concurrent.atomic.AtomicBoolean(false)
+            runOnMainSync {
+                service!!.store(Bitmap.createBitmap(80,60,Bitmap.Config.ARGB_8888).apply { eraseColor(Color.CYAN) },
+                    "progress-smoke","history-real-save") { saveOK.set(it);saved.countDown() }
+            }
+            check(saved.await(10,java.util.concurrent.TimeUnit.SECONDS)&&saveOK.get()) { "History writer did not save" }
+            val savedRow=CaptureHistory.entries(targetContext).last()
+            check(savedRow.state=="saved"&&savedRow.bytes>0&&File(targetContext.filesDir,"captures/"+savedRow.path).isFile)
+            val failedOrder=CaptureHistory.begin(targetContext,"progress-smoke",File(historyDir,"failed.png"))
+            CaptureHistory.finish(targetContext,failedOrder,false)
+            val interrupted=CaptureHistory.begin(targetContext,"progress-smoke",File(historyDir,"interrupted.png"))
+            CaptureHistory.recover(targetContext)
+            val journal=CaptureHistory.entries(targetContext)
+            check(journal.zipWithNext().all { (a,b)->a.order<b.order }&&journal.last().order==interrupted&&journal.last().state=="interrupted")
+            check(journal.first { it.order==failedOrder }.state=="failed")
+            click("Ảnh")
+            waitFor("Missing live saved-image row") { nodes().any { it.findAccessibilityNodeInfosByText("history-real-save.png").isNotEmpty() } }
+            check(nodes().any { it.findAccessibilityNodeInfosByText("Đã lưu trong app").isNotEmpty() })
+            check(nodes().any { it.findAccessibilityNodeInfosByText("Lưu thất bại").isNotEmpty() })
+            snap("04c-live-capture-history")
+            File(targetContext.filesDir,"captures/"+savedRow.path).delete()
+            waitFor("Removed image still reported as saved") { nodes().any { it.findAccessibilityNodeInfosByText("File đã bị xóa").isNotEmpty() } }
+            fun closeHistory() {
+                val node=nodes().flatMap { it.findAccessibilityNodeInfosByText("×") }
+                    .firstOrNull { it.contentDescription?.toString()=="Đóng tiến trình ảnh" }?:error("Missing history close")
+                check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK));waitForIdleSync()
+            }
+            closeHistory()
+            runOnMainSync { check(service!!.captureProgressView==null) }
             // No run yet: Dừng has nothing to end.
             check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Dừng") }.firstOrNull { it.text?.toString()=="Dừng" }?.isEnabled==false) { "Dừng is enabled before any run" }
             // The actual completed-run action renders the restart vector and resets without starting a run.
@@ -581,6 +613,22 @@ class UiSmoke:Instrumentation() {
                 "New-run action did not return to the ready state"
             }
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1500);snap("05-landscape")
+            click("Ảnh")
+            waitFor("History did not reopen") { nodes().any { it.findAccessibilityNodeInfosByText("history-real-save.png").isNotEmpty() } }
+            runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT };SystemClock.sleep(1000)
+            runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1000)
+            waitFor("History did not restore after rotation") { nodes().any { it.findAccessibilityNodeInfosByText("history-real-save.png").isNotEmpty() } }
+            snap("05b-right-progress-panel")
+            val shotFinished=java.util.concurrent.CountDownLatch(1)
+            var cleanShot:Bitmap?=null
+            runOnMainSync {
+                service!!.grab(true) { cleanShot=it;shotFinished.countDown() }
+                check(service!!.panelView?.visibility==View.INVISIBLE&&service!!.captureProgressView?.visibility==View.INVISIBLE)
+            }
+            check(shotFinished.await(10,java.util.concurrent.TimeUnit.SECONDS)) { "Shielded screenshot did not finish" }
+            val screenshot=cleanShot?:error("Shielded screenshot failed")
+            File(dest,"05c-capture-without-overlays.png").outputStream().use { screenshot.compress(Bitmap.CompressFormat.PNG,100,it) };screenshot.recycle()
+            runOnMainSync { check(service!!.panelView?.visibility==View.VISIBLE&&service!!.captureProgressView?.visibility==View.VISIBLE) }
             // v0.3.1 regression: a macro tap under the floating panel pressed its hidden buttons
             // (Đóng removed the panel mid-run) instead of reaching the game.
             fun closeButton()=nodes().flatMap { it.findAccessibilityNodeInfosByText("Đóng") }.firstOrNull { it.text?.toString()=="Đóng" }
@@ -592,7 +640,10 @@ class UiSmoke:Instrumentation() {
             runOnMainSync { legacyClosed=service!!.panelView==null;if(legacyClosed) service!!.showPanel() else service!!.panelView?.visibility=View.VISIBLE }
             waitForIdleSync();SystemClock.sleep(800)
             val finished=java.util.concurrent.CountDownLatch(1);val delivered=java.util.concurrent.atomic.AtomicBoolean(false)
-            runOnMainSync { service!!.touchGame(tapAt(),true) { delivered.set(it);finished.countDown() } }
+            runOnMainSync {
+                service!!.touchGame(tapAt(),true) { delivered.set(it);finished.countDown() }
+                check(service!!.captureProgressView?.visibility==View.INVISIBLE) { "Progress overlay was not shielded" }
+            }
             check(finished.await(8,java.util.concurrent.TimeUnit.SECONDS)) { "Macro tap never finished" }
             waitForIdleSync();SystemClock.sleep(600)
             var panelKept=false;var swallowed=0
@@ -600,6 +651,8 @@ class UiSmoke:Instrumentation() {
             snap("06-after-macro-tap")
             check(delivered.get()) { "Macro tap was not delivered past the panel (swallowed=$swallowed)" }
             check(panelKept&&closeButton()!=null) { "Macro tap closed or hid the floating panel" }
+            runOnMainSync { check(service!!.captureProgressView?.visibility==View.VISIBLE) { "Progress overlay did not return" } }
+            closeHistory()
             // Before a run opens the game, a game left running is ended on its App info page: Buộc dừng, then OK.
             // Checked against the emulator's real Settings, on one of its own apps (English labels there).
             fun output(command:String)=android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).use { String(it.readBytes()) }.trim()
@@ -683,7 +736,7 @@ class UiSmoke:Instrumentation() {
             check(!AfterRun.config(targetContext).enabled) { "Cancelling the Drive picker enabled automation" }
             click("Đóng")
             targetContext.getSharedPreferences("ui",0).edit().remove("theme").commit()
-            result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
+            result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, live capture progress, saved/missing/failed files, shielded screenshot, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
             finish(Activity.RESULT_OK,result)
         } catch(t:Throwable) {
             try {

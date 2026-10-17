@@ -39,6 +39,8 @@ class CollectorService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private var panel: LinearLayout? = null
+    private val captureProgress by lazy { CaptureProgressPanel(this,{ swallowed=true }) { runId to lastStatus } }
+    internal val captureProgressView:View? get()=captureProgress.view
     private var label: TextView? = null
     private var macro: Macro? = null
     private var index = 0
@@ -152,6 +154,7 @@ class CollectorService : AccessibilityService() {
             prefs.edit().putBoolean("running",false).commit(); save(); lastStatus="Lượt trước bị gián đoạn ở bước ${index+1}. Mở đúng màn hình rồi bấm Tiếp tục."
         }
         GamePhotoSync.request(this)
+        io.execute { CaptureHistory.recover(this) }
         AfterRun.recover(this)
         if(uiPrefs.getBoolean("panel",false)) handler.post { if(current===this && panel==null) showPanel() }
     }
@@ -189,7 +192,7 @@ class CollectorService : AccessibilityService() {
         }
     }
     override fun onInterrupt() { pause("Dịch vụ bị ngắt") }
-    override fun onDestroy() { afterRunChat?.cancel();afterRunChat=null;if(running) { setRunning(false); save() }; generation++; handler.removeCallbacksAndMessages(null); hidePanel(); current = null; io.shutdown(); super.onDestroy() }
+    override fun onDestroy() { afterRunChat?.cancel();afterRunChat=null;if(running) { setRunning(false); save() }; generation++; handler.removeCallbacksAndMessages(null); hidePanel();captureProgress.destroy(); current = null; io.shutdown(); super.onDestroy() }
     private var compact=false
     private var panelParams:WindowManager.LayoutParams?=null
     private var taskLabel:TextView?=null
@@ -219,6 +222,7 @@ class CollectorService : AccessibilityService() {
     override fun onConfigurationChanged(newConfig:Configuration) {
         super.onConfigurationChanged(newConfig)
         if(panel!=null) { dismissMacroPicker();rebuildPanel() }
+        captureProgress.rotate()
     }
     private var shielded=false
     private var shieldSession=0
@@ -231,6 +235,7 @@ class CollectorService : AccessibilityService() {
     private fun shield(on:Boolean) {
         if(on==shielded) return
         shielded=on
+        captureProgress.shield(on)
         val params=panelParams
         if(params!=null) params.flags=if(on) params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
         val view=panel?:return
@@ -293,8 +298,16 @@ class CollectorService : AccessibilityService() {
             layout.addView(bubble); drag(bubble!!) { compact=false;rebuildPanel() }
         } else {
             val header=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
-            val title=Ui.text(this,"AOV · KÉO ĐỂ DI CHUYỂN",10f,Color.rgb(220,224,237),true)
+            val title=Ui.text(this,"AOV · KÉO ĐỂ DI CHUYỂN",10f,Color.rgb(220,224,237),true).apply {
+                maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END
+            }
             header.addView(title,LinearLayout.LayoutParams(0,dp(32),1f));drag(title)
+            val history=Ui.button(this,"Ảnh") { captureProgress.toggle() }.apply {
+                panelButtonIcon(this,R.drawable.ic_panel_history,"Ảnh")
+                contentDescription="Mở hoặc đóng tiến trình ảnh";setTextColor(Color.WHITE)
+                background=Ui.shape(Color.rgb(47,52,74),dp(10))
+            }
+            header.addView(history,LinearLayout.LayoutParams(dp(62),dp(32)).apply { rightMargin=dp(5) })
             val collapse=Ui.button(this,"−") { compact=true;rebuildPanel() }.apply {
                 contentDescription="Thu gọn bảng nổi";setTextColor(Color.WHITE)
                 background=Ui.shape(Color.rgb(47,52,74),dp(10))
@@ -1100,7 +1113,7 @@ class CollectorService : AccessibilityService() {
             .setPositiveButton("Bỏ thao tác") { _,_ -> if(!isWorking&&!stopped) { index++;save();status("Đã bỏ thao tác. Bấm Tiếp tục.") } }
             .setNegativeButton("Hủy",null).create())
     }
-    private fun hidePanel() { dismissMacroPicker();activeDialog?.dismiss();panel?.let { detach(it) };panel=null;label=null;primary=null;stopView=null;choose=null;progress=null;bubble=null;uiPrefs.edit().putBoolean("panel",false).apply() }
+    private fun hidePanel() { captureProgress.close();dismissMacroPicker();activeDialog?.dismiss();panel?.let { detach(it) };panel=null;label=null;primary=null;stopView=null;choose=null;progress=null;bubble=null;uiPrefs.edit().putBoolean("panel",false).apply() }
     private fun status(s:String) { lastStatus=s;refreshPanel();Toast.makeText(this,s,Toast.LENGTH_SHORT).show() }
     private fun ready(m:Macro):Boolean {
         val p=foreground()
@@ -1775,7 +1788,7 @@ class CollectorService : AccessibilityService() {
     }
     private var lastShotAt=0L
     /** Takes a screenshot with the panel hidden; [done] gets a software bitmap to recycle, or null. */
-    private fun grab(anyApp:Boolean=false,done:(Bitmap?)->Unit) {
+    internal fun grab(anyApp:Boolean=false,done:(Bitmap?)->Unit) {
         val session=++shieldSession; shield(true)
         val finish={ b:Bitmap? -> if(session==shieldSession) shield(false); done(b) }
         fun shoot(retry:Boolean) {
@@ -1822,10 +1835,20 @@ class CollectorService : AccessibilityService() {
     }
     private fun afterSaves(then:()->Unit) { if(pendingSaves==0) then() else saveWaiters.addLast { afterSaves(then) } }
     /** Writes [bitmap] as PNG off the main thread and recycles it. */
-    private fun store(bitmap:Bitmap,folder:String,name:String,done:(Boolean)->Unit) {
+    internal fun store(bitmap:Bitmap,folder:String,name:String,done:(Boolean)->Unit) {
         try {
             io.execute {
-                val ok=try { val dir=photoDirectory(folder,name,bitmap); File(dir,"$name.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) } } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không lưu được ảnh $name",e); false }
+                var record:Long?=null
+                val ok=try {
+                    val dir=photoDirectory(folder,name,bitmap);val target=File(dir,"$name.png")
+                    record=try { CaptureHistory.begin(this,folder,target) } catch(_:Exception) { null }
+                    val part=File(dir,"$name.png.part")
+                    try {
+                        require(part.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG,100,it) })
+                        require(part.length()>0&&part.renameTo(target));true
+                    } finally { part.delete() }
+                } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không lưu được ảnh $name",e); false }
+                record?.let { try { CaptureHistory.finish(this,it,ok) } catch(_:Exception) {} }
                 bitmap.recycle()
                 handler.post { done(ok) }
             }

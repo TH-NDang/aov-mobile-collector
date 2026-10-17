@@ -168,6 +168,7 @@ object GamePhotoSession {
             val file=File(destRoot,GamePhotoImport.groupPath(pick.group)+"/"+safe(runId)).apply { mkdirs() }
             val target=File(file,safe(pick.item)+"-"+identity+"."+ext)
             val partial=File(file,target.name+".part")
+            var history:Long?=null
             try {
                 if(target.isFile&&target.length()>0) {
                     ledger.put(identity,target.relativeTo(destRoot).invariantSeparatorsPath)
@@ -177,6 +178,7 @@ object GamePhotoSession {
                     state.put("assignments",assignments);store(context,runId,state)
                     continue
                 }
+                history=try { CaptureHistory.begin(context,runId,target) } catch(_:Exception) { null }
                 require(image.size>=0 && image.size<=MAX_IMAGE) { "Ảnh vượt giới hạn 32 MB" }
                 require(context.filesDir.usableSpace>image.size+30L*1024*1024) { "Bộ nhớ trống quá ít" }
                 context.contentResolver.openInputStream(image.uri)?.use { input ->
@@ -197,6 +199,7 @@ object GamePhotoSession {
                     }
                 }?:error("Không mở được ảnh mới")
                 require(partial.length() in 1..MAX_IMAGE && partial.renameTo(target)) { "Ảnh lưu bị lỗi" }
+                history?.let { try { CaptureHistory.finish(context,it,true) } catch(_:Exception) {} }
                 ledger.put(identity,target.relativeTo(destRoot).invariantSeparatorsPath)
                 ledgerFile.writeText(ledger.toString(2))
                 copied++
@@ -204,9 +207,11 @@ object GamePhotoSession {
                 state.put("assignments",assignments);store(context,runId,state)
             } catch(e:ZipFiles.Cancelled) {
                 partial.delete()
+                history?.let { try { CaptureHistory.finish(context,it,false) } catch(_:Exception) {} }
                 break
             } catch(e:Exception) {
                 partial.delete()
+                history?.let { try { CaptureHistory.finish(context,it,target.isFile&&target.length()>0) } catch(_:Exception) {} }
                 errors++
             }
         }
