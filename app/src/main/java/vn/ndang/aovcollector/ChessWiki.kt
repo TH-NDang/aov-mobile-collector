@@ -178,17 +178,17 @@ object ChessWiki {
             if(result.none { it.id=="hero-"+slug })
                 result.add(Tile(x,portraitY,"hero-"+slug,name))
         }
-        return result.sortedWith(compareBy({it.y},{it.x}))
+        return heroRows(result).flatten()
     }
 
-    /** Keep each row intact and visit its five heroes left-to-right. */
+    /** Group OCR detections by approximate Y, then sort INSIDE each row by X. */
     fun heroRows(tiles:List<Tile>):List<List<Tile>> {
         val rows=ArrayList<MutableList<Tile>>()
         for(tile in tiles.sortedWith(compareBy({it.y},{it.x}))) {
             if(rows.isEmpty()||abs(rows.last().first().y-tile.y)>.075) rows.add(ArrayList())
             rows.last().add(tile)
         }
-        return rows
+        return rows.map { row -> row.sortedBy { it.x } }
     }
 
     fun rowKey(topic:Topic,row:List<Tile>)=
