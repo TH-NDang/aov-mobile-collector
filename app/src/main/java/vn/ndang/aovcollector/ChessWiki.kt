@@ -170,7 +170,7 @@ object ChessWiki {
             val slug=HeroNames.slug(name)
             if(w.y !in .49.. .925 || slug.length !in 2..25 ||
                name.count { it.isLetter() }<2 || w.text.contains('…') ||
-               w.text.contains("...") || slug in NON_HERO_NAMES) continue
+               w.text.contains("...") || GameScreens.plain(name) in NON_HERO_NAMES) continue
             val x=HERO_COLUMNS.minByOrNull { abs(w.x-it) }?:continue
             if(abs(w.x-x)>.047) continue
             val portraitY=w.y-.172
@@ -209,7 +209,7 @@ object ChessWiki {
             .map { it.text.trim().replace(Regex("\\s+\\d+$"),"").trim() }
             .firstOrNull { name ->
                 name.length in 2..35 && name.count { it.isLetter() }>=2 &&
-                HeroNames.slug(name) !in NON_HERO_NAMES &&
+                GameScreens.plain(name) !in NON_HERO_NAMES &&
                 !name.contains('…') && !name.contains("...")
             }
 
