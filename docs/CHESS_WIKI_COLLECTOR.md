@@ -1,6 +1,6 @@
 # Thu thập Bách khoa Cờ Liên Quân
 
-Nhánh triển khai: `codex/chess-hero-row-capture-fix`, phát triển từ `codex/chess-encyclopedia-collector`.
+Nhánh sửa mới nhất: `codex/chess-verified-title-progress`, phát triển từ `codex/chess-hero-row-capture-fix`.
 
 ## Bắt đầu
 
@@ -66,9 +66,11 @@ captures/
                     └── ...__001.png
 ```
 
-**Đối với quân cờ:** tên thư mục là **tên tướng** chuẩn hoá thành slug (ví dụ \`violet\`, \`fennik\`, \`darcy\`), không phải tên kỹ năng, không thêm mã fingerprint sau tên. Ưu tiên tên ở phần đầu bảng chi tiết, dự phòng bằng tên đọc ngay trên thẻ quân cờ. Nếu tên đọc từ thẻ khác tên bảng chi tiết, tác vụ dừng để tránh gán ảnh sai; không đoán tên từ mô tả/chiêu. Mỗi hàng có một ảnh PNG riêng trong \`hang/\`, ngoài ảnh toàn trang. Các mục khác giữ quy tắc đặt tên cũ. Xuất ZIP tại Lịch sử giống các macro khác; ZIP chứa các thư mục lồng nhau.
+**Đối với quân cờ:** tên thư mục là **tên tướng** chuẩn hoá thành slug (ví dụ \`violet\`, \`fennik\`, \`darcy\`), không phải tên kỹ năng, không thêm mã fingerprint sau tên. Lọc cả nhãn nghề bị OCR thêm ký tự biểu tượng, ví dụ **A Đấu sĩ**. Nếu tên thẻ khác tên popup, đọc riêng vùng tiêu đề: hai lần liên tiếp cùng tên sẽ xác nhận tên popup và sửa nhãn thẻ, ví dụ **A Đấu sĩ → Arduin**, rồi tiếp tục. Chỉ tạm dừng khi chưa xác minh được tên sau ba lần đọc; không lấy tên chiêu làm tên tướng. Tên đã xác minh dùng cho cả thư mục và dấu hoàn tất để không lưu trùng khi tên thẻ bị OCR khác ở trang sau. Mỗi hàng có một ảnh PNG riêng trong \`hang/\`, ngoài ảnh toàn trang. Các mục khác giữ quy tắc đặt tên cũ. Xuất ZIP tại Lịch sử giống các macro khác; ZIP chứa các thư mục lồng nhau.
 
-**Tạm dừng / Dừng / Tiếp tục** dùng chung bảng nổi. Những mục và tab đã hoàn tất được lưu vào `chess-progress.json`. Khi tiếp tục, ứng dụng tìm lại Bách khoa, bỏ qua các mục đã hoàn tất. Quân cờ được đánh dấu bằng tên thẻ (không bằng fingerprint pixel dễ đổi sau cuộn); hàng được đánh dấu bằng tập tên trong hàng. Nếu dừng ở giữa tab, chương trình có thể phải kéo lại từ đầu tab nhưng không chủ động đánh dấu lại item đã hoàn tất.
+**Tiến trình:** trong khi dò danh sách, chỉ hiện **đã lưu N tướng · tổng chưa xác định** và tên đang mở. Số đã lưu tính theo quân cờ đã hoàn tất, kể cả các quân cờ đã lưu trước khi tạm dừng. Thanh chạy thể hiện đang xử lý; bảng nổi và nút thu gọn không hiện phần trăm từ số bước macro hay coi số ô trên trang hiện tại là tổng tướng.
+
+**Tạm dừng / Dừng / Tiếp tục** dùng chung bảng nổi. Những mục và tab đã hoàn tất được lưu vào `chess-progress.json`. Khi tiếp tục, ứng dụng tìm lại Bách khoa, bỏ qua các mục đã hoàn tất. Quân cờ được đánh dấu bằng tên popup đã xác minh (không bằng fingerprint pixel dễ đổi sau cuộn); hàng được đánh dấu bằng tập tên trong hàng. Nếu dừng ở giữa tab, chương trình có thể phải kéo lại từ đầu tab nhưng không chủ động đánh dấu lại item đã hoàn tất.
 
 ## Giới hạn và kiểm thử
 
@@ -99,3 +101,4 @@ Kết quả cho biết **trước lượt bao nhiêu ảnh, sau lượt bao nhi�
 **Giới hạn và an toàn:** Nếu bạn đồng thời tạo ảnh cá nhân trong vài giây quanh một lần Save Photo của game, chỉ dùng thời điểm và số lượng không thể xác minh tuyệt đối ảnh nào thuộc game. Vì vậy nên tránh lưu ảnh khác trong lúc macro chạy, hoặc chọn thư mục con chỉ chứa ảnh game. File thiếu thời gian sửa và thuộc nhiều nhóm sẽ không được tự phân loại. Khi bố cục icon thay đổi, thao tác nhấn giữ có thể không mở hộp Save Photo; khi đó app lưu screenshot bình thường và nhật ký để hiệu chỉnh, không giả vờ ảnh gốc đã được lưu.
 
 Thư viện Lịch sử, tìm kiếm và xuất ZIP hỗ trợ PNG, JPEG và WebP đã sao chép. GitHub Actions kiểm thử nhận diện nhóm, đối chiếu trước/sau và nhận diện hộp xác nhận bằng các kịch bản giả lập; thao tác tải thực tế cần kiểm thử trên thiết bị đã đăng nhập Liên Quân.
+

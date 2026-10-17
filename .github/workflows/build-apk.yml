@@ -1,7 +1,7 @@
 name: Build APK
 on:
   push:
-    branches: [main, codex/chess-encyclopedia-collector, codex/chess-hero-row-capture-fix]
+    branches: [main, codex/chess-encyclopedia-collector, codex/chess-hero-row-capture-fix, codex/chess-verified-title-progress]
   workflow_dispatch:
 concurrency:
   group: collector-build-${{ github.ref }}
@@ -84,3 +84,4 @@ jobs:
         run: |
           cp app/build/outputs/apk/debug/app-universal-debug.apk aov-mobile-collector-v0.3.1.apk
           gh release create v0.3.1 aov-mobile-collector-v0.3.1.apk --target "$RELEASE_COMMIT" --title 'AOV Collector v0.3.1' --notes 'Fix macro selection by expanding the searchable list inside the existing floating controller. Keeps the v0.3 signing key and saved collections. Built and checked with UI regression, OCR and Android lint.'
+

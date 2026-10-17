@@ -158,6 +158,18 @@ object ChessWiki {
         "demdong","chihuy","hothien","hoily","phe","nghe"
     )
 
+    /** OCR can include the role icon as a letter: "A Đấu sĩ" is still a role label. */
+    fun isHeroName(name:String):Boolean {
+        val plain=GameScreens.plain(name)
+        return name.length in 2..35 && name.count { it.isLetter() }>=2 &&
+            !name.contains('…') && !name.contains("...") &&
+            NON_HERO_NAMES.none { plain==it || (plain.endsWith(it)&&plain.length<=it.length+2) }
+    }
+
+    fun heroProgress(saved:Int,current:String?=null)=
+        "Quân cờ: đã lưu $saved tướng · tổng chưa xác định"+
+            (current?.let { " · đang mở $it" }?:"")
+
     /**
      * Hero cards are keyed by their visible NAMES, never by a pixel patch of the card or
      * by a skill heading. Position is the PORTRAIT, which is safely tappable even after
@@ -168,9 +180,7 @@ object ChessWiki {
         for(w in words) {
             val name=w.text.trim().replace(Regex("\\s+\\d+$"),"").trim()
             val slug=HeroNames.slug(name)
-            if(w.y !in .49.. .925 || slug.length !in 2..25 ||
-               name.count { it.isLetter() }<2 || w.text.contains('…') ||
-               w.text.contains("...") || GameScreens.plain(name) in NON_HERO_NAMES) continue
+            if(w.y !in .49.. .925 || slug.length !in 2..25 || !isHeroName(name)) continue
             val x=HERO_COLUMNS.minByOrNull { abs(w.x-it) }?:continue
             if(abs(w.x-x)>.047) continue
             val portraitY=w.y-.172
@@ -211,9 +221,7 @@ object ChessWiki {
             .filter { it.x in .345.. .67 && it.y in .175.. .345 }
             .map { word -> word to word.text.trim().replace(Regex("\\s+\\d+$"),"").trim() }
             .filter { (_,name) ->
-                name.length in 2..35 && name.count { it.isLetter() }>=2 &&
-                GameScreens.plain(name) !in NON_HERO_NAMES &&
-                !name.contains('…') && !name.contains("...")
+                isHeroName(name)
             }.toList()
         if(expected!=null) candidates.firstOrNull {
             safeName(it.second)==safeName(expected)
@@ -355,6 +363,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
     }
     interface Screen {
         val alive:Boolean
+        /** Previously completed heroes from this run's persistent ledger. */
+        val completedHeroes:Int get()=0
         fun look(words:Boolean,then:(Look?)->Unit)
         fun tap(x:Double,y:Double,then:(Boolean)->Unit)
         fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit)
@@ -380,6 +390,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
     private val topics=options.topics()
     private var completed=false;private var pages=0;private var items=0;private var navigation=0;private var selectedChess=false
     private var veteranAttempts=0;private var tipAttempts=0
+    private var heroes=screen.completedHeroes
     private val tried=HashSet<String>()
     fun start()=navigate()
     private fun end(out:Outcome) { if(!completed) { completed=true;finish(out) } }
@@ -560,8 +571,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
 
         fun detail() {
             if(kind==null||screen.seen(identity)) return collect(at,page,signature,tiles,from+1)
-            screen.say(t.label+": chi tiết "+(from+1)+"/"+tiles.size+
-                (item.label?.let { " ("+it+")" }?:""))
+            screen.say(if(kind=="tuong") ChessWiki.heroProgress(heroes,item.label) else
+                t.label+": chi tiết "+(from+1)+"/"+tiles.size)
             tap(item.x,item.y,1250) {
                 look(true) { l ->
                     if(!l.modal) {
@@ -583,7 +594,15 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                         }
                         val slug=ChessWiki.safeName(title?:"muc")
                         val folder=if(kind=="tuong") slug else slug+"-"+item.id.take(8)
-                        modal(at,page,signature,tiles,from,item,kind,folder,1,l,null,0)
+                        // The popup heading is authoritative. Never persist a noisy card label
+                        // as a completed hero, or count the same popup again after scrolling.
+                        val actual=if(kind=="tuong") item.copy(id="hero-"+slug,label=title) else item
+                        if(kind=="tuong"&&screen.seen("item:"+t.key+":"+actual.id)) {
+                            l.discard()
+                            return close(at,page,signature,tiles,from,actual)
+                        }
+                        if(kind=="tuong") screen.say(ChessWiki.heroProgress(heroes,title))
+                        modal(at,page,signature,tiles,from,actual,kind,folder,1,l,null,0)
                     }
                     if(kind!="tuong") return@look capture(header)
                     if(item.label!=null&&header!=null &&
@@ -595,23 +614,25 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                     screen.note("Tên popup chưa chắc chắn: thẻ="+(item.label?:"?")+
                         ", OCR toàn màn hình="+(header?:"không thấy")+
                         ". Đọc lại riêng vùng tên tướng.")
-                    fun verify(attempt:Int) {
+                    fun verify(attempt:Int,previous:String?=null) {
                         screen.readHeroTitle { precise ->
                             if(!screen.alive||completed) { l.discard();return@readHeroTitle }
-                            if(precise!=null && (item.label==null ||
-                               ChessWiki.safeName(precise)==ChessWiki.safeName(item.label))) {
-                                screen.note("Đã xác minh tên quân cờ bằng OCR vùng tiêu đề: "+precise)
-                                capture(item.label?:precise)
-                            } else if(precise==null&&attempt<2) {
-                                screen.later(600) { verify(attempt+1) }
+                            val valid=precise?.takeIf { ChessWiki.isHeroName(it) }
+                            val matchesCard=valid!=null&&item.label!=null&&
+                                ChessWiki.safeName(valid)==ChessWiki.safeName(item.label)
+                            val confirmed=valid!=null&&previous!=null&&
+                                ChessWiki.safeName(valid)==ChessWiki.safeName(previous)
+                            if(valid!=null && (matchesCard||confirmed)) {
+                                screen.note("Đã xác minh tên quân cờ bằng OCR vùng tiêu đề: "+valid+
+                                    if(matchesCard) "" else "; sửa nhãn thẻ "+(item.label?:"?"))
+                                capture(valid)
+                            } else if(attempt<3) {
+                                screen.later(600) { verify(attempt+1,valid) }
                             } else {
                                 l.discard()
-                                if(precise==null) fail("Không đọc được tên quân cờ "+
-                                    (item.label?:"?")+" trong vùng tiêu đề sau 2 lần. "+
-                                    "Ảnh hàng vẫn được giữ; chưa lấy tên chiêu làm tên tướng.")
-                                else fail("Ô quân cờ "+(item.label?:"?")+" có tiêu đề popup là "+
-                                    precise+" (đã đọc riêng vùng tên tướng). "+
-                                    "Dừng để tránh lưu nhầm tướng.")
+                                fail("Chưa xác minh được tên quân cờ "+(item.label?:"?")+
+                                    " trong vùng tiêu đề sau 3 lần. Ảnh hàng vẫn được giữ; "+
+                                    "kiểm tra popup rồi bấm Tiếp tục.")
                             }
                         }
                     }
@@ -622,7 +643,9 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
 
         val nativeKey=originalGroup?.let { "native:"+it+":"+item.id }
         if(originalGroup==null || nativeKey==null || screen.seen(nativeKey)) return detail()
-        screen.say(t.label+": lưu ảnh gốc "+(from+1)+"/"+tiles.size)
+        screen.say(if(t.key=="tat-ca-quan-co") "Quân cờ: lưu ảnh gốc "+
+            (item.label?:"đang nhận diện")+" · tổng chưa xác định" else
+            t.label+": lưu ảnh gốc "+(from+1)+"/"+tiles.size)
         screen.nativeSave(originalGroup,item.label?:item.id,item.x,item.y,false) { saved ->
             if(saved) {
                 screen.finished(nativeKey)
@@ -679,7 +702,12 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                 val stillOpen=l.modal;l.discard()
                 if(stillOpen) close(at,page,signature,tiles,from,tile,tries+1)
                 else {
-                    screen.finished("item:"+topics[at].key+":"+tile.id);items++
+                    val identity="item:"+topics[at].key+":"+tile.id
+                    if(!screen.seen(identity)) {
+                        screen.finished(identity);items++
+                        if(topics[at].key=="tat-ca-quan-co") heroes++
+                    }
+                    if(topics[at].key=="tat-ca-quan-co") screen.say(ChessWiki.heroProgress(heroes))
                     collect(at,page,signature,tiles,from+1)
                 }
             }
@@ -689,3 +717,4 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         swipe(.76,.82,.76,.40,1100) { scan(at,page+1,signature,0,0) }
     }
 }
+

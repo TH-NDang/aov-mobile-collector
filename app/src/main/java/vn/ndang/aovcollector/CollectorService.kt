@@ -369,7 +369,11 @@ class CollectorService : AccessibilityService() {
         choose?.text=if(macroPicker!=null) "Đóng danh sách ▲" else m?.let { MacroStore.title(it) }?:"Chọn macro"
         choose?.tooltipText=m?.let { MacroStore.title(it) }?:"Chọn macro"
         choose?.isEnabled=!isWorking;choose?.alpha=if(isWorking) .45f else 1f
-        progress?.progress=if(m!=null) step*100/maxOf(1,m.steps.length()) else 0
+        // Chess discovers heroes while scrolling; macro step count is not collection progress.
+        val unknownChessTotal=m!=null&&m.json.optString("collectionMode")=="chess"&&step<m.steps.length()
+        progress?.isIndeterminate=unknownChessTotal&&running
+        progress?.visibility=if(unknownChessTotal&&!running) View.GONE else View.VISIBLE
+        progress?.progress=if(unknownChessTotal) 0 else if(m!=null) step*100/maxOf(1,m.steps.length()) else 0
         label?.text=lastStatus
         val caption=when { running -> "Tạm dừng";busy||manualBusy -> "Đang xử lý…";ended() -> "Tạo lượt mới";step>0 -> "Tiếp tục";else -> "Chạy" }
         val glyph=when { running -> R.drawable.ic_panel_pause;busy||manualBusy -> R.drawable.ic_panel_check
@@ -379,7 +383,8 @@ class CollectorService : AccessibilityService() {
         stopView?.let { panelButtonIcon(it,R.drawable.ic_panel_stop,"Dừng",Color.rgb(255,213,220)) }
         // Dừng ends a run: nothing to end before one starts or after it ended.
         val stoppable=canStop(); stopView?.isEnabled=stoppable; stopView?.alpha=if(stoppable) 1f else .4f
-        bubble?.text=if(running) "AOV\n${progress?.progress ?: if(m!=null) step*100/maxOf(1,m.steps.length()) else 0}%" else "AOV"
+        bubble?.text=if(running&&unknownChessTotal) "AOV\nĐang chạy" else if(running)
+            "AOV\n${progress?.progress ?: if(m!=null) step*100/maxOf(1,m.steps.length()) else 0}%" else "AOV"
     }
     /** This service in the look chosen in "Giao diện", for the views and dialogs it shows over the game. */
     private fun themed():android.content.Context { Ui.use(this); return ContextThemeWrapper(this,Ui.windowTheme(this)) }
@@ -796,6 +801,7 @@ class CollectorService : AccessibilityService() {
         } catch(_:Exception) { mutableSetOf<String>() }
         val screen=object:ChessWikiReader.Screen {
             override val alive get()=alive()
+            override val completedHeroes get()=doneIds.count { it.startsWith("item:tat-ca-quan-co:hero-") }
             override fun look(words:Boolean,then:(ChessWikiReader.Look?)->Unit) {
                 if(filesDir.usableSpace<30L*1024*1024) { note("Không đủ dung lượng trống");return then(null) }
                 grab(anyApp=true) { b ->
@@ -1728,3 +1734,4 @@ class CollectorService : AccessibilityService() {
         } catch(e:Exception) { bitmap.recycle(); done(false) }
     }
 }
+

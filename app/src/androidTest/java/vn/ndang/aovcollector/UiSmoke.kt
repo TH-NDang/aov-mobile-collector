@@ -46,6 +46,12 @@ class UiSmoke:Instrumentation() {
             val qiLog=ArrayList<String>();val qiName=HeroNames.read(qi) { qiLog+=it };qi.recycle()
             File(targetContext.filesDir,"smoke").apply { mkdirs() }.resolve("ocr-qi.txt").writeText("$qiName\n"+qiLog.joinToString("\n"))
             check(qiName=="Qi") { "OCR read $qiName for Qi: ${qiLog.joinToString("; ")}" }
+            // User regression: the popup is Arduin even though card OCR read "A Đấu sĩ".
+            context.assets.open("chess-arduin-role-ocr.jpg").use { input ->
+                val shot=BitmapFactory.decodeStream(input)
+                val title=try { GameText.chessHeroTitle(shot) } finally { shot.recycle() }
+                check(title!=null&&HeroNames.slug(title)=="arduin") { "Chess heading OCR read $title for Arduin" }
+            }
             // The way into the game: a list run that opens the game starts with the entry step, and a popup shot on
             // the user's phone, fading in, is read on Android as in the unit tests.
             check(Macro(BuiltInMacros.create("",2,true,openGame=true)).steps.getJSONObject(0).getString("type")=="enter") { "Tự vào game should start with the entry step" }
@@ -187,6 +193,20 @@ class UiSmoke:Instrumentation() {
             }
             android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("dumpsys accessibility")).use { File(dest,"accessibility.txt").writeBytes(it.readBytes()) }
             check(service!=null) { "Accessibility service not connected" }
+            runOnMainSync {
+                check(service!!.selectMacro(BuiltInMacros.chess(ChessWiki.Options(
+                    setOf("tat-ca-quan-co"),openGame=false,heroDetails=true))))
+                service!!.showPanel()
+                fun bar(view:View):android.widget.ProgressBar? {
+                    if(view is android.widget.ProgressBar) return view
+                    if(view is android.view.ViewGroup) for(i in 0 until view.childCount)
+                        bar(view.getChildAt(i))?.let { return it }
+                    return null
+                }
+                val progress=bar(service!!.panelView?:error("Missing chess panel"))
+                    ?:error("Missing chess progress bar")
+                check(progress.visibility==View.GONE) { "Chess showed a percentage before knowing its total" }
+            }
             // A built-in macro saved by an older version is regenerated when a new run is created.
             MacroStore.current(targetContext).writeText(JSONObject(BuiltInMacros.create("Danh sách tướng",2,true)).apply { remove("builtinVersion") }.toString())
             runOnMainSync { service!!.reset() }
@@ -314,3 +334,4 @@ class UiSmoke:Instrumentation() {
         } catch(t:Throwable) { result.putString("stream","SMOKE_FAILED: ${t.stackTraceToString()}\n");finish(Activity.RESULT_CANCELED,result) }
     }
 }
+

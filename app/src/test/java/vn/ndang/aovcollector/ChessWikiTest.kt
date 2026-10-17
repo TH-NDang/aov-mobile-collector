@@ -223,7 +223,8 @@ class ChessWikiTest {
     @Test fun chessHeroCardsReadNamesInsteadOfRemainingRoleTextAfterScroll() {
         fun w(text:String,x:Double,y:Double)=GameScreens.Word(text,x-.045,y-.014,x+.045,y+.014)
         val first=ChessWiki.heroNameTiles(listOf(
-            w("Đấu sĩ",.421,.638), w("Giải Điệu H...",.275,.694),
+            w("Đấu sĩ",.421,.638), w("A Đấu sĩ",.421,.638),
+            w("© Pháo thủ",.275,.638), w("Giải Điệu H...",.275,.694),
             w("Raz",.713,.583),w("Arduin",.421,.588),
             w("Lumburr",.858,.590),w("Hayate",.567,.580),w("Violet",.275,.586)
         ))
@@ -385,24 +386,30 @@ class ChessWikiTest {
         assertTrue("item:tat-ca-quan-co:hero-violet" in done)
     }
 
-    @Test fun chessCollectorStillRejectsConfirmedWrongHero() {
+    @Test fun chessCollectorCorrectsRoleLabelFromVerifiedArduinPopupAndDeduplicates() {
         fun w(text:String,x:Double,y:Double)=GameScreens.Word(text,x-.04,y-.015,x+.04,y+.015)
-        val seen=HashSet<String>()
+        val seen=hashSetOf("item:tat-ca-quan-co:hero-violet") // resume an existing run
         val saved=ArrayList<String>()
+        val messages=ArrayList<String>()
         var opened=false
+        var page=1
+        var reads=0
         var outcome:ChessWikiReader.Outcome?=null
         val screen=object:ChessWikiReader.Screen {
             override val alive=true
+            override val completedHeroes get()=seen.count { it.startsWith("item:tat-ca-quan-co:hero-") }
             override fun look(words:Boolean,then:(ChessWikiReader.Look?)->Unit) {
                 val modal=opened
                 then(object:ChessWikiReader.Look {
                     override val words=if(!words) emptyList() else if(modal)
-                        listOf(w("Pháo đại",.49,.26)) else listOf(
-                            w("Bách khoa",.20,.06),w("Cờ Liên Quân",.45,.06),w("Violet",.275,.58))
-                    override val signature=IntArray(96) { 42 }
+                        listOf(w("Arduin",.41,.267)) else listOf(
+                            w("Bách khoa",.20,.06),w("Cờ Liên Quân",.45,.06))
+                    override val signature=IntArray(96) { page*42 }
                     override val modal=modal
+                    // Simulate an old/noisy card detection, then another OCR spelling after scrolling.
                     override fun tiles(topic:ChessWiki.Topic)=listOf(
-                        ChessWiki.Tile(.275,.408,"hero-violet","Violet"))
+                        ChessWiki.Tile(.275,.408,if(page==1) "hero-a-dau-si" else "hero-ardvin",
+                            if(page==1) "A Đấu sĩ" else "Ardvin"))
                     override fun keep(name:String,then:(Boolean)->Unit) { saved.add(name);then(true) }
                     override fun discard() {}
                 })
@@ -412,19 +419,75 @@ class ChessWikiTest {
                 else if(kotlin.math.abs(x-.275)<.01&&y>.30) opened=true
                 then(true)
             }
-            override fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit)=then(true)
-            override fun readHeroTitle(then:(String?)->Unit)=then("Raz")
+            override fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit) {
+                if(!opened) page=2
+                then(true)
+            }
+            override fun readHeroTitle(then:(String?)->Unit) { reads++;then("Arduin") }
             override fun later(ms:Long,then:()->Unit)=then()
             override fun seen(id:String)=id in seen
             override fun finished(id:String) { seen.add(id) }
             override fun note(message:String) {}
-            override fun say(message:String) {}
+            override fun say(message:String) { messages.add(message) }
         }
         ChessWikiReader(screen,ChessWiki.Options(setOf("tat-ca-quan-co"),openGame=false,
             heroDetails=true), { outcome=it }).start()
-        assertTrue(outcome is ChessWikiReader.Outcome.Failed)
-        assertFalse(saved.any { "__tuong__violet" in it })
-        assertFalse("item:tat-ca-quan-co:hero-violet" in seen)
+        assertEquals(ChessWikiReader.Outcome.Done(5,1),outcome)
+        assertEquals(4,reads) // two matching cropped reads for each conflicting card label
+        assertEquals(1,saved.count { "__tuong__arduin__001" in it })
+        assertFalse(saved.any { "__tuong__a-dau-si" in it || "__tuong__ardvin" in it })
+        assertEquals(setOf("item:tat-ca-quan-co:hero-violet","item:tat-ca-quan-co:hero-arduin"),
+            seen.filter { it.startsWith("item:") }.toSet())
+        assertTrue(messages.any { it.contains("đã lưu 1 tướng")&&it.contains("tổng chưa xác định") })
+        assertTrue(messages.any { it.contains("đã lưu 2 tướng")&&it.contains("tổng chưa xác định") })
+        assertFalse(messages.any { it.contains("/1") || it.contains("đã lưu 3 tướng") })
+    }
+
+    @Test fun chessCollectorKeepsRowsButDoesNotGuessWhenCroppedTitlesAreUnreliable() {
+        for(readings in listOf(listOf(null,null,null),listOf("Raz","Arduin","Raz"),
+            listOf("A Đấu sĩ","A Đấu sĩ","A Đấu sĩ"))) {
+            fun w(text:String,x:Double,y:Double)=GameScreens.Word(text,x-.04,y-.015,x+.04,y+.015)
+            val saved=ArrayList<String>()
+            val done=HashSet<String>()
+            var opened=false
+            var reads=0
+            var outcome:ChessWikiReader.Outcome?=null
+            val screen=object:ChessWikiReader.Screen {
+                override val alive=true
+                override fun look(words:Boolean,then:(ChessWikiReader.Look?)->Unit) {
+                    val popup=opened
+                    then(object:ChessWikiReader.Look {
+                        override val words=if(!words||popup) emptyList() else listOf(
+                            w("Bách khoa",.20,.06),w("Cờ Liên Quân",.45,.06))
+                        override val signature=IntArray(96) { 42 }
+                        override val modal=popup
+                        override fun tiles(topic:ChessWiki.Topic)=listOf(
+                            ChessWiki.Tile(.275,.408,"hero-violet","Violet"))
+                        override fun keep(name:String,then:(Boolean)->Unit) { saved.add(name);then(true) }
+                        override fun discard() {}
+                    })
+                }
+                override fun tap(x:Double,y:Double,then:(Boolean)->Unit) {
+                    if(kotlin.math.abs(x-.275)<.01&&y>.30) opened=true
+                    then(true)
+                }
+                override fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit)=then(true)
+                override fun readHeroTitle(then:(String?)->Unit)=then(readings[reads++])
+                override fun later(ms:Long,then:()->Unit)=then()
+                override fun seen(id:String)=id in done
+                override fun finished(id:String) { done.add(id) }
+                override fun note(message:String) {}
+                override fun say(message:String) {}
+            }
+            ChessWikiReader(screen,ChessWiki.Options(setOf("tat-ca-quan-co"),openGame=false,
+                heroDetails=true), { outcome=it }).start()
+            assertTrue(outcome is ChessWikiReader.Outcome.Failed)
+            assertEquals(3,reads)
+            assertTrue(saved.any { "__hang__" in it })
+            assertFalse(saved.any { "__tuong__" in it })
+            assertFalse(done.any { it.startsWith("item:") })
+        }
     }
 
 }
+
