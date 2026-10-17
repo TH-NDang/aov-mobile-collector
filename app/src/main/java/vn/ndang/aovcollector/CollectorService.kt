@@ -49,11 +49,12 @@ class CollectorService : AccessibilityService() {
     private var runAccountId:String?=null
     private var runAccountUid:String?=null
     private var manualBusy = false
+    private var afterRunChat:AfterRunChat?=null
     private var stopped = false
     private var pendingSaves = 0
     private val saveWaiters = ArrayDeque<()->Unit>()
-    val isWorking: Boolean get() = running || busy || manualBusy || pendingSaves>0
-    fun prepareEdit(): Boolean { if(running) pause("Tạm dừng để quản lý dữ liệu"); return !busy && !manualBusy && pendingSaves==0 }
+    val isWorking: Boolean get() = running || busy || manualBusy || pendingSaves>0 || afterRunChat!=null
+    fun prepareEdit(): Boolean { if(running) pause("Tạm dừng để quản lý dữ liệu"); return !busy && !manualBusy && pendingSaves==0 && afterRunChat==null }
     // Collection time of the current run, pauses excluded.
     private var activeMs=0L
     private var segmentStart=0L
@@ -151,7 +152,20 @@ class CollectorService : AccessibilityService() {
             prefs.edit().putBoolean("running",false).commit(); save(); lastStatus="Lượt trước bị gián đoạn ở bước ${index+1}. Mở đúng màn hình rồi bấm Tiếp tục."
         }
         GamePhotoSync.request(this)
+        AfterRun.recover(this)
         if(uiPrefs.getBoolean("panel",false)) handler.post { if(current===this && panel==null) showPanel() }
+    }
+    fun startAfterRunChat(run:String) {
+        if(isWorking) return
+        hidePanel()
+        val runner=AfterRunChat(this,run) {
+            afterRunChat=null
+            lastStatus=AfterRun.state(this,run)?.optString("message").orEmpty()
+            refreshPanel()
+            AfterRun.resume(this)
+        }
+        afterRunChat=runner
+        runner.start()
     }
     private val awayCheck=Runnable { val p=foreground(); if(running&&!entering&&p!=null&&p!=GAME&&p!=packageName) pause("Đã rời game (đang mở ${appName(p)}) — tạm dừng") }
     /** While the run opens the game itself ([GameEntry]), another app in front is expected. */
@@ -159,6 +173,13 @@ class CollectorService : AccessibilityService() {
     /** Steps that start outside the game or on its web pages, where another app in front is expected. */
     private fun entryStep(m:Macro,i:Int)=i<m.steps.length()&&m.steps.getJSONObject(i).optString("type") in setOf("enter","ranking","board","chess")
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if(event?.eventType==AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED&&event.packageName?.toString()==AfterRunProtocol.DRIVE) {
+            val notification=event.parcelableData as? android.app.Notification
+            if(notification==null||notification.flags and android.app.Notification.FLAG_ONGOING_EVENT==0) {
+                AfterRun.driveNotification(this,AfterRunProtocol.DRIVE,
+                    event.text.joinToString("\n")+"\n"+AfterRun.notificationText(notification))
+            }
+        }
         if (running && event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val p = event.packageName?.toString()
             // Notifications, keyboards and game boosters report window changes too; only pause if another app stays in front.
@@ -166,7 +187,7 @@ class CollectorService : AccessibilityService() {
         }
     }
     override fun onInterrupt() { pause("Dịch vụ bị ngắt") }
-    override fun onDestroy() { if(running) { setRunning(false); save() }; generation++; handler.removeCallbacksAndMessages(null); hidePanel(); current = null; io.shutdown(); super.onDestroy() }
+    override fun onDestroy() { afterRunChat?.cancel();afterRunChat=null;if(running) { setRunning(false); save() }; generation++; handler.removeCallbacksAndMessages(null); hidePanel(); current = null; io.shutdown(); super.onDestroy() }
     private var compact=false
     private var panelParams:WindowManager.LayoutParams?=null
     private var taskLabel:TextView?=null
@@ -1089,6 +1110,7 @@ class CollectorService : AccessibilityService() {
     private fun readMacro() = Macro(File(filesDir,"macro.json").readText())
     fun start()=startWithAccount(null)
     private fun startWithAccount(pickedAccount:String?) {
+        if(afterRunChat!=null) { status("Đang gửi câu lệnh sau lượt trong ChatGPT");return }
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
         if(running || busy || manualBusy || activeDialog!=null || macroPicker!=null) return
         upgradeBuiltIn()
@@ -1193,7 +1215,7 @@ class CollectorService : AccessibilityService() {
     private fun next(token:Int,away:Int=0) {
         val m=macro ?: return
         if(!running || token!=generation) return
-        if(index>=m.steps.length()) { afterSaves { if(token==generation&&running) { setRunning(false); save(); note("Hoàn tất · ${clock(elapsed())}"); recordTimes(m,m.json.optInt("heroCount",1)); status("Đã chụp xong · ${photosTaken(m)} ảnh · ${clock(elapsed())}") } }; return }
+        if(index>=m.steps.length()) { afterSaves { if(token==generation&&running) { setRunning(false); save(); note("Hoàn tất · ${clock(elapsed())}"); recordTimes(m,m.json.optInt("heroCount",1)); status("Đã chụp xong · ${photosTaken(m)} ảnh · ${clock(elapsed())}");AfterRun.finished(this,runId) } }; return }
         val front=foreground()
         val opening=entryStep(m,index)
         if(!opening&&front!=null&&front!=m.target) {
@@ -1220,7 +1242,7 @@ class CollectorService : AccessibilityService() {
         fun listEnded(collected:Int) {
             if(finished || token!=generation) return
             finished=true; busy=false; cancelStep=null; shield(false)
-            index=m.steps.length(); setRunning(false); save(); note("Hết danh sách · $collected tướng · ${clock(elapsed())}"); recordTimes(m,collected); status("Đã hết danh sách · lấy xong $collected tướng · ${clock(elapsed())}")
+            index=m.steps.length(); setRunning(false); save(); note("Hết danh sách · $collected tướng · ${clock(elapsed())}"); recordTimes(m,collected); status("Đã hết danh sách · lấy xong $collected tướng · ${clock(elapsed())}");afterSaves { AfterRun.finished(this,runId) }
         }
         try {
             val type=s.getString("type")

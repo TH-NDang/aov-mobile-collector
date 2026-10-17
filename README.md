@@ -667,3 +667,5 @@ Các tùy chọn chạy nhanh, chỉ chụp Chi tiết, chuyển thẳng giữa 
 
 
 Ảnh gốc Cờ Liên Quân: chọn **Ảnh từ Pictures → Chọn / đổi thư mục Pictures → Bộ nhớ trong/Pictures** một lần, rồi bật các nhóm tải ảnh trong macro Cờ. Sau **Save Photo → Sure**, ảnh được tự chép vào thư viện app theo nhóm; file xuất hiện chậm được tự thử lại. Mở ảnh tại **Ảnh từ Pictures → Mở ảnh gốc đã nhập trong Lịch sử**.
+
+Sau mỗi lượt hoàn tất, có thể tự lưu ZIP vào một thư mục Google Drive và gửi câu lệnh đã lưu trong ChatGPT → **dot của bạn**. Cấu hình tại **Sau khi hoàn tất** trên màn hình chính. App xác minh nội dung ZIP đọc lại và đợi thông báo tải thành công từ Drive có đúng tên file trước khi mở ChatGPT. Cần bật thông báo Drive và giữ dịch vụ Trợ năng hoạt động. Nếu Drive không phát thông báo xác nhận đúng tên ZIP, trạng thái giữ ở chờ và chưa gửi lệnh. Chưa xác nhận được lần gửi thì app không tự gửi trùng.

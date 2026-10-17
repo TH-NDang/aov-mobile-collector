@@ -134,9 +134,44 @@ class UiSmoke:Instrumentation() {
             check(GamePhotoSync.revision>oldRevision&&!GamePhotoSync.busy) { "After-Sure background sync did not finish" }
             check(imported.walkTopDown().any { it.isFile&&it.path.contains("tuong-tac/phe") })
             check(GamePhotoImport.scan(targetContext,photoTree).size==4) { "Original Pictures files changed" }
+            // Full post-run pipeline: real SAF ZIP/read-back, no ChatGPT before Drive proof,
+            // then navigate a separate fixture app's drawer -> dot -> composer -> Send.
+            targetContext.contentResolver.takePersistableUriPermission(photoTree,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            targetContext.getSharedPreferences("after-run",0).edit().putString("tree",photoTree.toString()).commit()
+            val savedCommand="Phân tích kết quả đã lưu trên Drive · smoke"
+            AfterRun.saveConfig(targetContext,true,true,savedCommand)
+            AfterRun.finished(targetContext,nativeRun)
+            fun awaitStage(wanted:String,timeout:Long=25_000) {
+                val until=SystemClock.uptimeMillis()+timeout
+                while(AfterRun.state(targetContext,nativeRun)?.optString("stage")!=wanted&&SystemClock.uptimeMillis()<until)
+                    SystemClock.sleep(150)
+                check(AfterRun.state(targetContext,nativeRun)?.optString("stage")==wanted) {
+                    "Post-run expected $wanted: ${AfterRun.state(targetContext,nativeRun)}"
+                }
+            }
+            awaitStage("waiting-drive")
+            val upload=AfterRun.state(targetContext,nativeRun)!!
+            check(upload.optBoolean("verified")&&!upload.optBoolean("driveProof"))
+            val zipName=upload.getString("filename")
+            AfterRun.driveNotification(targetContext,AfterRunProtocol.DRIVE,"Đang tải lên $zipName")
+            check(AfterRun.state(targetContext,nativeRun)!!.getString("stage")=="waiting-drive")
+            AfterRun.driveNotification(targetContext,AfterRunProtocol.DRIVE,"Đã tải lên other.zip")
+            check(AfterRun.state(targetContext,nativeRun)!!.getString("stage")=="waiting-drive")
+            AfterRun.driveNotification(targetContext,AfterRunProtocol.DRIVE,"Đã tải lên $zipName")
+            awaitStage("done")
+            val sentText=android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(
+                "run-as com.openai.chatgpt cat files/sent.txt")).use { it.bufferedReader().readText() }
+            check(sentText=="dot\n"+savedCommand) { "Command went to the wrong destination: $sentText" }
+            AfterRun.finished(targetContext,nativeRun)
+            check(AfterRun.state(targetContext,nativeRun)!!.getString("stage")=="done")
+            File(targetContext.filesDir,"smoke/after-run.txt").writeText("zip-readback=verified; wait-for-drive=ok; dot-navigation=ok; sent-once=ok")
+            android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,android.net.Uri.parse(upload.getString("uri")))
+            targetContext.getSharedPreferences("after-run",0).edit().clear().commit()
+            File(targetContext.filesDir,"after-run").deleteRecursively()
             File(targetContext.filesDir,"smoke/native-photos.txt").writeText("late-indexed=ok; bytes=identical; classified=ok; dedup=ok; restore=ok")
             listOf(personal,violet,skill,faction).forEach { android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,it) }
-            targetContext.contentResolver.releasePersistableUriPermission(photoTree,Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            targetContext.contentResolver.releasePersistableUriPermission(photoTree,Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             targetContext.getSharedPreferences("game-photo-source",0).edit().clear().commit()
             File(targetContext.filesDir,"captures/$nativeRun").deleteRecursively()
             imported.deleteRecursively()
@@ -560,6 +595,11 @@ class UiSmoke:Instrumentation() {
             click("Mở ảnh gốc đã nhập trong Lịch sử")
             check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Chưa có ảnh gốc nào được sao chép.") }.isNotEmpty())
             click("Đã hiểu")
+            click("Sau khi hoàn tất · Drive → dot của bạn ›")
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Tự lưu kết quả lên Drive sau khi hoàn tất lượt") }.isNotEmpty())
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Drive tải xong → mở ChatGPT → dot của bạn → gửi câu lệnh") }.isNotEmpty())
+            snap("13-after-run-settings")
+            click("Lưu")
             targetContext.getSharedPreferences("ui",0).edit().remove("theme").commit()
             result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
             finish(Activity.RESULT_OK,result)

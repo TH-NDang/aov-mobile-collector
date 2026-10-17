@@ -58,6 +58,7 @@ jobs:
           script: |
             adb install -r app/build/outputs/apk/debug/app-universal-debug.apk
             adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb install -r chat-fixture/build/outputs/apk/debug/chat-fixture-debug.apk
             # UiSmoke enables the service itself once its process is up; enabling it here races the
             # process restart of am instrument and can leave the binding stuck.
             adb shell am instrument -w vn.ndang.aovcollector.test/vn.ndang.aovcollector.UiSmoke > smoke-result.txt
