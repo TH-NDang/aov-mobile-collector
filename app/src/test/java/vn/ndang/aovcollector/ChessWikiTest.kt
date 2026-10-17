@@ -326,6 +326,7 @@ class ChessWikiTest {
             }
             override fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit) {
                 if(opened==null) {
+                    assertTrue("Hero list must drag a full card row",y-toY>=.58)
                     actions.add("scroll-list")
                     if(listPage<2) listPage=2
                 }

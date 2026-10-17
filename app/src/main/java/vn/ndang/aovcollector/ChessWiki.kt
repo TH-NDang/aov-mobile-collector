@@ -539,7 +539,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
             }
             // Two extra slow drags: a game list sometimes ignores its first drag near a transition.
             screen.note(t.label+": thử kéo lại danh sách ("+(still+1)+"/"+MAX_STILL+")")
-            return@look swipe(.76,.80,.76,.38) { scan(at,page,previous,still+1,retries) }
+            return@look scrollList(at) { scan(at,page,previous,still+1,retries) }
         }
         // The first screenshot of each page is saved *before* clicking any item.
         val image=ChessWiki.filename(t,"trang",page)
@@ -757,10 +757,16 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
             }
         }
     }
+    private fun scrollList(at:Int,next:()->Unit) {
+        // Real ZIP: card rows are about .616 screen heights apart. A .60 drag brings
+        // row 2's name to the same visible band, rather than leaving two partial rows.
+        val heroes=topics[at].key=="tat-ca-quan-co"
+        swipe(.76,if(heroes) .84 else .82,.76,if(heroes) .24 else .40,next=next)
+    }
     private fun nextPage(at:Int,page:Int,signature:IntArray) {
         screen.say(topics[at].label+": kéo xuống hàng tiếp theo")
         screen.note(topics[at].label+": cuộn sang trang "+(page+1))
-        swipe(.76,.82,.76,.40) { scan(at,page+1,signature,0,0) }
+        scrollList(at) { scan(at,page+1,signature,0,0) }
     }
 }
 
