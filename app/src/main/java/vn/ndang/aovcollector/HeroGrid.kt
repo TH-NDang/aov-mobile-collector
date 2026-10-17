@@ -18,29 +18,43 @@ object HeroGrid {
     const val BOTTOM=.86
     const val PARK=.70          // a scroll leaves the wanted row here, with the row before it still visible
     const val MAX_STEP=.45      // larger moves leave too little overlap between screenshots to measure
-    private const val Y0=.12
-    private const val Y1=.99
-    private const val BAND=.035
     private const val FEATURES=15
     private const val MIN_OVERLAP=160
 
+    /** Layout is shared by the hero list and chess encyclopedia; offsets remain measured. */
+    data class Layout(val columns:DoubleArray,val row0:Double,val pitch:Double,
+                      val top:Double,val bottom:Double,val park:Double,val maxStep:Double,
+                      val lastRowLimit:Double,val profileTop:Double=.12,val profileBottom:Double=.99,
+                      val band:Double=.035) {
+        init { require(columns.size==5) } // shift() compares five RGB bands.
+        fun centre(index:Int,offset:Double)=columns[index%columns.size] to row0+(index/columns.size)*pitch-offset
+        fun plan(index:Int,offset:Double):Plan {
+            val (x,y)=centre(index,offset)
+            return when { y>bottom -> Plan.Move(minOf(y-park,maxStep))
+                y<top -> Plan.Move(maxOf(y-park,-maxStep)); else -> Plan.Tap(x,y) }
+        }
+    }
+    val DEFAULT_LAYOUT=Layout(columns,ROW0,PITCH,TOP,BOTTOM,PARK,MAX_STEP,LAST_ROW_LIMIT)
+
     /** Centre of card [index] (reading order from the top of the list) on screen. */
-    fun centre(index:Int,offset:Double)=columns[index%5] to ROW0+(index/5)*PITCH-offset
+    fun centre(index:Int,offset:Double)=DEFAULT_LAYOUT.centre(index,offset)
 
     /** Next action for card [index]: tap it where it is, or move the content up by [Move.d] (negative: down). */
     sealed class Plan { data class Tap(val x:Double,val y:Double):Plan(); data class Move(val d:Double):Plan() }
-    fun plan(index:Int,offset:Double):Plan { val (x,y)=centre(index,offset)
-        return when { y>BOTTOM -> Plan.Move(minOf(y-PARK,MAX_STEP)); y<TOP -> Plan.Move(maxOf(y-PARK,-MAX_STEP)); else -> Plan.Tap(x,y) } }
+    fun plan(index:Int,offset:Double):Plan=DEFAULT_LAYOUT.plan(index,offset)
     /** After the list stops moving, a card this low is still on screen and tappable. */
     const val LAST_ROW_LIMIT=.95
 
     /** For each screen row of the grid, the mean colour of every column's band: rows x 15 values. */
     fun profile(width:Int,height:Int,readRow:(Int,IntArray)->Unit):FloatArray {
-        val y0=(Y0*height).toInt(); val y1=(Y1*height).toInt(); val out=FloatArray((y1-y0)*FEATURES); val row=IntArray(width)
+        return profile(width,height,DEFAULT_LAYOUT,readRow)
+    }
+    fun profile(width:Int,height:Int,layout:Layout,readRow:(Int,IntArray)->Unit):FloatArray {
+        val y0=(layout.profileTop*height).toInt(); val y1=(layout.profileBottom*height).toInt(); val out=FloatArray((y1-y0)*FEATURES); val row=IntArray(width)
         for(y in y0 until y1) {
             readRow(y,row)
-            for(c in columns.indices) {
-                val from=((columns[c]-BAND)*width).toInt(); val to=((columns[c]+BAND)*width).toInt()
+            for(c in layout.columns.indices) {
+                val from=((layout.columns[c]-layout.band)*width).toInt(); val to=((layout.columns[c]+layout.band)*width).toInt()
                 var r=0f;var g=0f;var b=0f;var n=0
                 var x=from; while(x<to) { val p=row[x]; r+=(p shr 16) and 255;g+=(p shr 8) and 255;b+=p and 255;n++;x+=4 }
                 val o=(y-y0)*FEATURES+c*3; out[o]=r/n;out[o+1]=g/n;out[o+2]=b/n
@@ -49,6 +63,7 @@ object HeroGrid {
         return out
     }
     fun profile(b:Bitmap)=profile(b.width,b.height,reader(b))
+    fun profile(b:Bitmap,layout:Layout)=profile(b.width,b.height,layout,reader(b))
 
     /** How far the content moved up between [before] and [after], in pixels (negative: down). */
     data class Shift(val px:Int,val cost:Float,val median:Float) { val reliable get()=cost<20f&&cost<.45f*median }

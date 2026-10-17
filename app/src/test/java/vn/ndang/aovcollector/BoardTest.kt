@@ -84,6 +84,15 @@ class BoardTest {
         // A large accessibility parent mentioning the label is not a checkbox anchor.
         assertNull(BoardScreens.ownedFilter(off.first,off.second,pickerWords.take(1)+GameScreens.Word("Đã nhận",0.0,0.0,1.0,1.0),rows(off)))
     }
+    @Test fun acceptsTheObservedFinalLetterOcrErrorOnlyWithAVisibleCheckbox() {
+        val words=pickerWords.take(1)+GameScreens.Word("Đã nhậi",.759,.212,.802,.242)
+        for(checked in listOf(true,false)) {
+            val p=syntheticFilter(checked)
+            assertEquals(checked,BoardScreens.ownedFilter(p.first,p.second,words,rows(p))?.checked)
+        }
+        val blank=Triple(2048,922,IntArray(2048*922) { 0xff33337e.toInt() })
+        assertNull(BoardScreens.ownedFilter(blank.first,blank.second,words,rows(blank)))
+    }
 
     @Test fun readsTheSeasonScreensAsMlKitDoes() {
         // As read on the emulator from the user's screenshots.

@@ -47,7 +47,9 @@ object BoardScreens {
      */
     fun ownedFilter(width:Int,height:Int,words:List<GameScreens.Word>,readRow:(Int,IntArray)->Unit):OwnedFilter? {
         if(width<=height||page(words,false)!=Page.PICKER) return null
-        val label=words.filter { it.plain.contains("danhan")&&it.plain.length<24&&it.left>.68&&it.right<.88&&
+        // At small text sizes ML Kit can read the final n as i ("Đã nhậi"). The label
+        // is only an anchor: all four blue edges and the tick/empty interior still must match.
+        val label=words.filter { (it.plain.contains("danhan")||it.plain=="danhai")&&it.plain.length<24&&it.left>.68&&it.right<.88&&
             it.top>.16&&it.bottom<.29&&it.bottom-it.top<.075&&it.right-it.left in .015.. .18 }
             .minByOrNull { (it.right-it.left)*(it.bottom-it.top) }?:return null
         val x0=((label.right-.012)*width).toInt().coerceIn(0,width-1)

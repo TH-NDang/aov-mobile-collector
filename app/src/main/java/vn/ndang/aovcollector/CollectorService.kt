@@ -897,6 +897,7 @@ class CollectorService : AccessibilityService() {
         val screen=object:ChessWikiReader.Screen {
             override val alive get()=alive()
             override val completedHeroes get()=doneIds.count { it.startsWith("item:tat-ca-quan-co:hero-") }
+            override val completedHeroSlots get()=ChessWiki.heroSlots(doneIds)
             override fun look(words:Boolean,then:(ChessWikiReader.Look?)->Unit) {
                 if(filesDir.usableSpace<30L*1024*1024) { note("Không đủ dung lượng trống");return then(null) }
                 grab(anyApp=true) { b ->
@@ -904,8 +905,9 @@ class CollectorService : AccessibilityService() {
                     val nodes=if(words) screenWords() else emptyList()
                     try { io.execute {
                         val data:Triple<List<GameScreens.Word>,IntArray,Boolean>?=try {
+                            val modal=ChessWiki.modal(b)
                             Triple(if(words) nodes+GameText.words(b) else nodes,
-                                ChessWiki.signature(b),ChessWiki.modal(b))
+                                ChessWiki.signature(b,modal),modal)
                         } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không đọc được màn hình Bách khoa",e);null }
                         handler.post {
                             if(!alive()) { b.recycle();then(null) }
@@ -914,29 +916,19 @@ class CollectorService : AccessibilityService() {
                                 override val words=data.first
                                 override val signature=data.second
                                 override val modal=data.third
+                                override val height=b.height
+                                override val heroProfile by lazy {
+                                    if(!modal&&ChessWiki.heroListVisible(this.words))
+                                        HeroGrid.profile(b,ChessWiki.HERO_LAYOUT) else floatArrayOf()
+                                }
+                                override fun hasHeroCard(x:Double,y:Double)=HeroGrid.hasCard(b.width,b.height,x,y) { yy,row ->
+                                    b.getPixels(row,0,b.width,0,yy,b.width,1)
+                                }
                                 override fun tiles(topic:ChessWiki.Topic)=ChessWiki.tiles(topic,b,this.words)
                                 override fun nativeTiles(topic:ChessWiki.Topic)=ChessWiki.nativeTiles(topic,b,this.words)
                                 override fun skillIcons()=ChessWiki.skillTiles(b)
                                 override fun keep(name:String,then:(Boolean)->Unit) {
                                     store(b,runId,stamp+"-"+name,then)
-                                }
-                                override fun keepRow(name:String,top:Double,bottom:Double,
-                                                     then:(Boolean)->Unit) {
-                                    try {
-                                        val x0=(b.width*.205).toInt().coerceIn(0,b.width-2)
-                                        val x1=(b.width*.934).toInt().coerceIn(x0+1,b.width)
-                                        val y0=(b.height*top).toInt().coerceIn(0,b.height-2)
-                                        val y1=(b.height*bottom).toInt().coerceIn(y0+1,b.height)
-                                        // Real cropped PNG: includes every portrait, its hero name,
-                                        // traits, and a little margin. The full page stays separately.
-                                        val cropped=Bitmap.createBitmap(b,x0,y0,x1-x0,y1-y0)
-                                        b.recycle()
-                                        store(cropped,runId,stamp+"-"+name,then)
-                                    } catch(e:Throwable) {
-                                        CrashLog.record(this@CollectorService,"Không cắt được ảnh hàng quân cờ",e)
-                                        if(!b.isRecycled) b.recycle()
-                                        then(false)
-                                    }
                                 }
                                 override fun discard() { b.recycle() }
                             })
@@ -955,7 +947,7 @@ class CollectorService : AccessibilityService() {
                                     null
                                 }
                             shot.recycle()
-                            handler.post { if(alive()) then(title) }
+                            handler.post { then(title) }
                         }
                     } catch(e:Exception) {
                         shot.recycle()
@@ -965,6 +957,12 @@ class CollectorService : AccessibilityService() {
             }
             override fun tap(x:Double,y:Double,then:(Boolean)->Unit) {
                 touchGame(tapAt(x,y),true,then)
+            }
+            override fun dragHeroList(d:Double,fling:Boolean,then:(Boolean)->Unit) {
+                val start=if(d>0) .92 else .24
+                val distance=kotlin.math.abs(d).coerceAtMost(.70)
+                val end=if(d>0) start-distance else start+distance
+                touchGame(drag(.76,start,end,if(fling) 160 else 700,if(fling) 0 else 450),false,then)
             }
             override fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit) {
                 if(kotlin.math.abs(x-toX)<.003) {
@@ -1061,7 +1059,11 @@ class CollectorService : AccessibilityService() {
             override fun later(ms:Long,then:()->Unit) { handler.postDelayed(then,ms) }
             override fun seen(id:String)=id in doneIds
             override fun finished(id:String) {
-                if(!doneIds.add(id)) return
+                val replaced=if(id.startsWith("hero-slot-v2:")) {
+                    val prefix=id.substringBeforeLast(':')+":"
+                    doneIds.removeAll { it!=id&&it.startsWith(prefix) }
+                } else false
+                if(!doneIds.add(id)&&!replaced) return
                 try {
                     ledger.parentFile?.mkdirs()
                     ledger.writeText(JSONObject().put("finished",org.json.JSONArray(doneIds.sorted())).toString(2))

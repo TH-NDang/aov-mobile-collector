@@ -162,6 +162,26 @@ object ChessWiki {
     // A portrait is about 17% of the screen ABOVE its hero name. Reading the name first
     // prevents tapping remnants of the previous row when the list has been scrolled.
     private val HERO_COLUMNS=listOf(.275,.421,.567,.713,.858)
+    val HERO_LAYOUT=HeroGrid.Layout(HERO_COLUMNS.toDoubleArray(),.415,.6167,
+        .33,.70,.51,.40,.82,profileTop=.235,profileBottom=.985,band=.035)
+
+    fun heroListVisible(words:List<GameScreens.Word>):Boolean {
+        val text=GameScreens.plain(words.joinToString(" ") { it.text })
+        return text.contains("bachkhoa") && text.contains("tatcaquanco")
+    }
+    fun heroOverviewFilename(topic:Topic,row:Int)=
+        "chess__"+topic.section+"__"+topic.key+"__trang__grid-v2__%03d".format(row)
+    fun heroSlotKey(index:Int,id:String)="hero-slot-v2:tat-ca-quan-co:$index:$id"
+    fun heroSlots(ids:Iterable<String>):Map<Int,String> = ids.mapNotNull { id ->
+        if(!id.startsWith("hero-slot-v2:tat-ca-quan-co:")) null else {
+            val parts=id.split(':',limit=4)
+            parts.getOrNull(2)?.toIntOrNull()?.takeIf { it>=0 }?.let { index ->
+                parts.getOrNull(3)?.takeIf { it.startsWith("hero-") }?.let { index to it }
+            }
+        }
+    }.groupBy({ it.first },{ it.second }).mapNotNull { (index,names) ->
+        names.distinct().singleOrNull()?.let { index to it }
+    }.toMap()
     private val HERO_ROLES=setOf("phaothu","dausi","cungthu","phapsu","dodon","satthu","trothu")
     private val NON_HERO_NAMES=setOf(
         "phaothu","dausi","cungthu","phapsu","dodon","satthu","trothu",
@@ -235,18 +255,6 @@ object ChessWiki {
             rows.last().add(tile)
         }
         return rows.map { row -> row.sortedBy { it.x } }
-    }
-
-    fun rowKey(topic:Topic,row:List<Tile>)=
-        "row:"+topic.key+":"+row.joinToString("|") { it.id }
-
-    /** A cropped screenshot of exactly this row, saved in .../tat-ca-quan-co/hang/. */
-    fun rowFilename(topic:Topic,page:Int,row:List<Tile>):String {
-        val digest=MessageDigest.getInstance("SHA-256").digest(rowKey(topic,row).toByteArray())
-            .take(5).joinToString("") { "%02x".format(it) }
-        val first=safeName(row.first().label?:"chua-ro-ten").take(20)
-        return "chess__"+topic.section+"__"+topic.key+"__hang__"+
-            "%03d".format(page)+"-"+first+"-"+digest
     }
 
     /** Hero's name lives at the top of the detail drawer; the skill title is lower down. */
@@ -402,17 +410,26 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         fun nativeTiles(topic:ChessWiki.Topic):List<ChessWiki.Tile> = tiles(topic)
         fun skillIcons():List<ChessWiki.Tile> = emptyList()
         fun keep(name:String,then:(Boolean)->Unit)
-        /** Crop the card row (with its name + portraits) before saving; also releases this Look. */
-        fun keepRow(name:String,top:Double,bottom:Double,then:(Boolean)->Unit) = keep(name,then)
+        /** List-only measurements, using the same RGB profile matcher as normal heroes. */
+        val heroProfile:FloatArray get()=floatArrayOf()
+        val height:Int get()=0
+        fun hasHeroCard(x:Double,y:Double):Boolean=false
         fun discard()
     }
     interface Screen {
         val alive:Boolean
         /** Previously completed heroes from this run's persistent ledger. */
         val completedHeroes:Int get()=0
+        val completedHeroSlots:Map<Int,String> get()=emptyMap()
         fun look(words:Boolean,then:(Look?)->Unit)
         fun tap(x:Double,y:Double,then:(Boolean)->Unit)
         fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit)
+        /** Held list drags use the same slow gesture as the normal hero collector. */
+        fun dragHeroList(d:Double,fling:Boolean,then:(Boolean)->Unit) {
+            val distance=abs(d).coerceAtMost(.70)
+            val start=if(d>0) .92 else .24
+            swipe(.76,start,.76,if(d>0) start-distance else start+distance,then)
+        }
         /** Long press, identify Save Photo → Sure, and record its current group. */
         fun nativeSave(group:String,item:String,x:Double,y:Double,
                        preserveDetail:Boolean=false,then:(Boolean)->Unit) { then(false) }
@@ -438,6 +455,12 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
     private var heroes=screen.completedHeroes
     private val timing=ChessWiki.Timing(options.fast)
     private val tried=HashSet<String>()
+    private val heroState=ListNavigator.State()
+    private val heroSlots=screen.completedHeroSlots.toMutableMap()
+    private val heroRetries=HashMap<Int,Int>()
+    private val detailSignatures=HashMap<String,MutableList<IntArray>>()
+    private var heroTopic=-1
+    private var heroIndex=0
     fun start()=navigate()
     private fun end(out:Outcome) { if(!completed) { completed=true;finish(out) } }
     private fun fail(reason:String)=end(Outcome.Failed(reason))
@@ -476,7 +499,11 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         val onboarding=GameScreens.refine(
             GameScreens.Reading(GameScreens.Kind.OTHER,null,l.signature),words,null)
         val modeEntry=ChessWiki.modeEntryPoint(words)
-        if(l.modal) { l.discard();return@look tap(.901,.08) { navigate() } }
+        if(l.modal) {
+            l.discard()
+            if(navigation++>=3) return@look fail("Không đóng được bảng chi tiết. Đóng dấu X rồi bấm Tiếp tục.")
+            return@look tap(.901,.08) { navigate() }
+        }
         if(all.contains("bachkhoa") && all.contains("colienquan")) {
             l.discard();screen.say("Đã vào Bách khoa Cờ Liên Quân"); return@look topic(0)
         }
@@ -522,18 +549,24 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         if(!screen.alive) return
         if(at>=topics.size) return end(Outcome.Done(pages,items))
         val t=topics[at]
-        if(screen.seen("topic:"+t.key)) return topic(at+1)
+        val marker=if(t.key=="tat-ca-quan-co") "hero-grid-v2:topic:"+t.key else "topic:"+t.key
+        if(screen.seen(marker)) return topic(at+1)
         screen.say("Bách khoa: "+t.side+" → "+t.label)
+        val scanTopic={ if(t.key=="tat-ca-quan-co") startHeroList(at) else scan(at,1,null,0,0) }
         tap(.129,t.sidebarY,timing.tab) {
-            if(t.tabX==0.0) scan(at,1,null,0,0)
+            if(t.tabX==0.0) scanTopic()
             else if(t.sweepHeader) swipe(.83,.18,.37,.18,700) {
-                tap(t.tabX,.18,timing.tab) { scan(at,1,null,0,0) }
-            } else tap(t.tabX,.18,timing.tab) { scan(at,1,null,0,0) }
+                tap(t.tabX,.18,timing.tab) { scanTopic() }
+            } else tap(t.tabX,.18,timing.tab) { scanTopic() }
         }
     }
     private fun scan(at:Int,page:Int,previous:IntArray?,still:Int,retries:Int):Unit=look(true) { l ->
         val t=topics[at]
-        if(l.modal) { l.discard();return@look tap(.902,.082) { scan(at,page,previous,still,retries+1) } }
+        if(l.modal) {
+            l.discard()
+            if(retries>=3) return@look fail("Không đóng được bảng chi tiết ở "+t.label+". Đóng dấu X rồi Tiếp tục.")
+            return@look tap(.902,.082) { scan(at,page,previous,still,retries+1) }
+        }
         if(page>MAX_PAGES) {
             l.discard();return@look fail("Đã tới giới hạn "+MAX_PAGES+" trang ở "+t.label+
                 ". Kiểm tra xem danh sách đã tới cuối hay chưa; ảnh đã lưu được giữ lại.")
@@ -552,61 +585,142 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         val image=ChessWiki.filename(t,"trang",page)
         val signature=l.signature.copyOf()
         val native=ChessWiki.nativeGroup(t,options)!=null
-        // A row screenshot is mandatory for Quân cờ even when "Mở từng quân cờ" is off.
         val candidates=when {
-            t.key=="tat-ca-quan-co" -> l.tiles(t)
             native -> l.nativeTiles(t)
             ChessWiki.detailType(t,options)!=null -> l.tiles(t)
             else -> emptyList()
         }
         val path="chess-page:"+t.key+":"+page
-        if(t.key=="tat-ca-quan-co") screen.note("Quân cờ: trang "+page+" · "+candidates.size+
-            " ô: "+candidates.joinToString(", ") { it.label?:"chưa rõ tên" })
         val next={ collect(at,page,signature,candidates,0) }
         if(screen.seen(path)) { l.discard(); next() }
         else save(l,image) { screen.finished(path);next() }
     }
-    /** Save a dedicated screenshot for each fully visible row BEFORE opening its heroes. */
-    private fun collect(at:Int,page:Int,signature:IntArray,tiles:List<ChessWiki.Tile>,from:Int) {
+    /** Chess uses the normal list navigator, with its own geometry and drawer recovery. */
+    private fun startHeroList(at:Int) {
+        heroTopic=at
+        heroState.synced=false;heroState.ref=null
+        collectHero(at,0)
+    }
+    private fun collectHero(at:Int,index:Int) {
+        if(!screen.alive||completed) return
         val t=topics[at]
-        val kind=ChessWiki.detailType(t,options)
-        val originalGroup=ChessWiki.nativeGroup(t,options)
-        if(from>=tiles.size||items>=MAX_TILES||
-           (kind==null&&originalGroup==null&&t.key!="tat-ca-quan-co"))
-            return nextPage(at,page,signature)
-        val newRow=t.key=="tat-ca-quan-co" &&
-            (from==0 || abs(tiles[from-1].y-tiles[from].y)>.075)
-        if(newRow) {
-            val row=ChessWiki.heroRows(tiles).firstOrNull { group ->
-                group.any { it.id==tiles[from].id }
-            }.orEmpty()
-            if(row.isNotEmpty()) {
-                val marker=ChessWiki.rowKey(t,row)
-                if(!screen.seen(marker)) {
-                    screen.say("Quân cờ: lưu ảnh hàng "+page+" ("+
-                        row.joinToString(", ") { it.label?:"?" }+")")
-                    return look(false) { rowShot ->
-                        if(rowShot.modal) {
-                            rowShot.discard()
-                            return@look fail("Có cửa sổ chi tiết khi chụp ảnh hàng. Đóng cửa sổ rồi bấm Tiếp tục.")
-                        }
-                        val top=(row.first().y-.17).coerceIn(.20,.80)
-                        val bottom=(row.first().y+.47).coerceIn(top+.15,.985)
-                        rowShot.keepRow(ChessWiki.rowFilename(t,page,row),top,bottom) { ok ->
-                            if(!screen.alive||completed) return@keepRow
-                            if(!ok) fail("Không lưu được ảnh hàng "+page+
-                                ". Ảnh danh sách được giữ lại; kiểm tra dung lượng rồi Tiếp tục.")
-                            else {
-                                pages++
-                                screen.finished(marker)
-                                collectItem(at,page,signature,tiles,from)
-                            }
-                        }
-                    }
+        if(index>=MAX_TILES) return fail("Đã tới giới hạn $MAX_TILES quân cờ; chưa xác nhận cuối danh sách.")
+        heroIndex=index
+        val detail=ChessWiki.detailType(t,options)!=null
+        val native=ChessWiki.nativeGroup(t,options)!=null
+        // Recheck the viewport even for completed slots. A user can resume mid-list or
+        // change the ordering; an ordinal alone must never skip a different visible hero.
+        var target:ChessWiki.Tile?=null
+        var unexpectedLabel:String?=null
+        var signature=intArrayOf()
+        class Shot(val look:Look):ListNavigator.Shot {
+            var released=false
+            override val profile=look.heroProfile
+            override val height=look.height
+            override val backArrow=look.modal
+            override fun hasCard(x:Double,y:Double)=look.hasHeroCard(x,y)
+            override fun done(keep:String?) { if(!released) { released=true;look.discard() } }
+            fun saveOverview(next:()->Unit) {
+                val page=index/5+1
+                val marker="chess-grid-v2-page:"+t.key+":"+page
+                if(screen.seen(marker)) return next()
+                released=true
+                save(look,ChessWiki.heroOverviewFilename(t,page)) { screen.finished(marker);next() }
+            }
+        }
+        val adapter=object:ListNavigator.Screen {
+            override val alive get()=screen.alive&&!completed
+            override val layout=ChessWiki.HERO_LAYOUT
+            override fun look(then:(ListNavigator.Shot?)->Unit) {
+                this@ChessWikiReader.look(true) { then(Shot(it)) }
+            }
+            override fun drag(d:Double,fling:Boolean,then:(Boolean)->Unit) {
+                screen.note("Quân cờ: ô ${index+1}, "+
+                    (if(fling) "đưa về đầu" else "kéo có đo")+" "+(d*100).toInt()+"% màn hình")
+                screen.dragHeroList(d,fling,then)
+            }
+            // Approve has already selected fresh coordinates. Defer the physical tap until
+            // native-photo work (if enabled) has finished, then open the drawer exactly once.
+            override fun tap(x:Double,y:Double,then:(Boolean)->Unit)=then(true)
+            override fun back(then:(Boolean)->Unit)=screen.tap(.902,.081,then)
+            override fun later(ms:Long,then:()->Unit)=screen.later(ms,then)
+            override fun note(text:String)=screen.note("Quân cờ: "+text)
+        }
+        val approve=ListNavigator.Approve { raw,x,y,has,_,then ->
+            val shot=raw as Shot
+            if(!has) then(null) else {
+                val nearby=shot.look.tiles(t).filter { abs(it.x-x)<.035&&abs(it.y-y)<.065 }
+                // OCR only supplies a name; measured grid position owns the tap and ordinal.
+                // Ambiguous labels never become a completed hero without popup verification.
+                val label=nearby.singleOrNull()?.label?.takeIf { ChessWiki.isHeroName(it) }
+                val id=label?.let { "hero-"+ChessWiki.safeName(it) }?:"slot-$index"
+                target=ChessWiki.Tile(x,y,id,label)
+                signature=shot.look.signature.copyOf()
+                shot.saveOverview {
+                    val known=label!=null&&screen.seen("item:"+t.key+":"+id)
+                    val wrongSlot=heroSlots.any { (slot,saved) -> saved==id&&slot!=index } ||
+                        (known&&heroSlots[index]!=null&&heroSlots[index]!=id)
+                    if(detail&&wrongSlot) {
+                        unexpectedLabel=label
+                        then(null) // Do not tap an already completed hero at a different ordinal.
+                    } else if(detail&&known) {
+                        heroSlots[index]=id;screen.finished(ChessWiki.heroSlotKey(index,id))
+                        screen.note("Quân cờ: bỏ qua chi tiết ô ${index+1} đã lưu "+label)
+                        if(native) then(x to y) else then(null)
+                    } else then(x to y)
                 }
             }
         }
+        ListNavigator(index,heroState,adapter,approve) { outcome ->
+            when(outcome) {
+                ListNavigator.Outcome.End -> {
+                    heroTopic=-1;screen.finished("hero-grid-v2:topic:"+t.key);topic(at+1)
+                }
+                ListNavigator.Outcome.Missing -> unexpectedLabel?.let { resyncHero(at,it) }
+                    ?: collectHero(at,index+1)
+                is ListNavigator.Outcome.Failed -> fail("Quân cờ, ô ${index+1}: "+
+                    outcome.reason.replace("danh sách Tất cả tướng","danh sách Tất cả quân cờ")
+                        .replace("danh sách tướng","danh sách quân cờ"))
+                ListNavigator.Outcome.Tapped -> {
+                    val item=target?:return@ListNavigator fail("Không xác định được ô quân cờ ${index+1}.")
+                    if(!detail&&!native) collectHero(at,(index/5+1)*5)
+                    else collectItem(at,index/5+1,signature,listOf(item),0)
+                }
+            }
+        }.start()
+    }
+
+    private fun collect(at:Int,page:Int,signature:IntArray,tiles:List<ChessWiki.Tile>,from:Int) {
+        if(heroTopic==at) return collectHero(at,heroIndex+1)
+        val t=topics[at]
+        if(from>=tiles.size||items>=MAX_TILES||
+            (ChessWiki.detailType(t,options)==null&&ChessWiki.nativeGroup(t,options)==null))
+            return nextPage(at,page,signature)
         collectItem(at,page,signature,tiles,from)
+    }
+
+    /** A duplicate popup at another ordinal is a navigation fault, not completion of that slot. */
+    private fun retryHero(at:Int,title:String,tries:Int=0) {
+        if(tries>=3) return fail("Không đóng được bảng chi tiết. Đóng dấu X rồi Tiếp tục.")
+        tap(.902,.081,timing.close) {
+            look(false) { l ->
+                val open=l.modal;l.discard()
+                if(open) retryHero(at,title,tries+1) else {
+                    resyncHero(at,title)
+                }
+            }
+        }
+    }
+
+    private fun resyncHero(at:Int,title:String) {
+        val count=(heroRetries[heroIndex]?:0)+1;heroRetries[heroIndex]=count
+        if(count>1) fail("Ô quân cờ ${heroIndex+1} vẫn không khớp vị trí ($title) sau khi tìm lại. "+
+            "Đã dừng để tránh bỏ sót tướng; kiểm tra danh sách rồi Tiếp tục.")
+        else {
+            screen.note("Ô ${heroIndex+1} không khớp vị trí: $title; về đầu và đo lại một lần.")
+            heroState.synced=false;heroState.ref=null
+            collectHero(at,heroIndex)
+        }
     }
 
     private fun collectItem(at:Int,page:Int,signature:IntArray,
@@ -617,10 +731,12 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         val item=tiles[from]
         val identity="item:"+t.key+":"+item.id
         val observation=if(item.label==null) identity+":page:"+page else identity
-        if(!tried.add(observation)) return collect(at,page,signature,tiles,from+1)
+        if(heroTopic!=at&&!tried.add(observation)) return collect(at,page,signature,tiles,from+1)
 
         fun detail() {
-            if(kind==null||screen.seen(identity)) return collect(at,page,signature,tiles,from+1)
+            if(kind==null||(screen.seen(identity)&&
+                (heroTopic!=at||heroSlots[heroIndex]==item.id)))
+                return collect(at,page,signature,tiles,from+1)
             screen.say(if(kind=="tuong") ChessWiki.heroProgress(heroes,item.label) else
                 t.label+": chi tiết "+(from+1)+"/"+tiles.size)
             tap(item.x,item.y,timing.tap) {
@@ -628,7 +744,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                     if(!l.modal) {
                         l.discard()
                         screen.note("Không mở được chi tiết "+(item.label?:"?")+
-                            " tại "+item.x+","+item.y+". Ảnh hàng đã lưu.")
+                            " tại "+item.x+","+item.y+". Ảnh toàn màn hình đã lưu.")
+                        if(heroTopic==at) return@look fail("Không mở được ô quân cờ ${heroIndex+1}; chưa đánh dấu hoàn tất. Kiểm tra danh sách rồi Tiếp tục.")
                         return@look collect(at,page,signature,tiles,from+1)
                     }
                     val header=if(kind=="tuong") ChessWiki.modalHeroTitle(l.words,item.label) else
@@ -641,16 +758,29 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                             else verified?:item.label
                         if(kind=="tuong"&&title==null) {
                             l.discard()
-                            return fail("Không đọc được tên quân cờ trong thẻ hoặc vùng tiêu đề. Ảnh hàng vẫn được giữ.")
+                            return fail("Không đọc được tên quân cờ trong thẻ hoặc vùng tiêu đề. Ảnh toàn màn hình vẫn được giữ.")
                         }
                         val slug=ChessWiki.safeName(title?:"muc")
                         val folder=if(kind=="tuong") slug else slug+"-"+item.id.take(8)
                         // The popup heading is authoritative. Never persist a noisy card label
                         // as a completed hero, or count the same popup again after scrolling.
                         val actual=if(kind=="tuong") item.copy(id="hero-"+slug,label=title) else item
+                        if(heroTopic==at&&heroSlots[heroIndex]!=null&&heroSlots[heroIndex]!=actual.id) {
+                            l.discard()
+                            return retryHero(at,title?:actual.id)
+                        }
                         if(kind=="tuong"&&screen.seen("item:"+t.key+":"+actual.id)) {
                             l.discard()
-                            return close(at,page,signature,tiles,from,actual)
+                            val elsewhere=heroSlots.any { (slot,id) -> slot!=heroIndex&&id==actual.id }
+                            // Old runs have verified names but no ordinal ledger. Bind an unread
+                            // or slightly noisy label only after verifying the popup. A clearly
+                            // different name is evidence of a wrong tap, never a skipped hero.
+                            val compatible=item.label==null||HeroFinder.same(
+                                ChessWiki.safeName(item.label),slug)
+                            val legacyMatch=heroSlots[heroIndex]==null&&!elsewhere&&compatible
+                            return if(heroTopic==at&&heroSlots[heroIndex]!=actual.id&&!legacyMatch)
+                                retryHero(at,title?:actual.id)
+                                else close(at,page,signature,tiles,from,actual)
                         }
                         if(kind=="tuong") screen.say(ChessWiki.heroProgress(heroes,title))
                         modal(at,page,signature,tiles,from,actual,kind,folder,1,l,null,0)
@@ -666,6 +796,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                         ", OCR toàn màn hình="+(header?:"không thấy")+
                         ". Đọc lại riêng vùng tên tướng.")
                     fun verify(attempt:Int,previous:String?=null) {
+                        if(!screen.alive||completed) { l.discard();return }
                         screen.readHeroTitle { precise ->
                             if(!screen.alive||completed) { l.discard();return@readHeroTitle }
                             val valid=precise?.let { ChessWiki.heroName(it) }?.takeIf { ChessWiki.isHeroName(it) }
@@ -682,7 +813,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                             } else {
                                 l.discard()
                                 fail("Chưa xác minh được tên quân cờ "+(item.label?:"?")+
-                                    " trong vùng tiêu đề sau 3 lần. Ảnh hàng vẫn được giữ; "+
+                                    " trong vùng tiêu đề sau 3 lần. Ảnh toàn màn hình vẫn được giữ; "+
                                     "kiểm tra popup rồi bấm Tiếp tục.")
                             }
                         }
@@ -709,6 +840,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                       tile:ChessWiki.Tile,kind:String,folder:String,number:Int,l:Look,
                       previous:IntArray?,still:Int) {
         val t=topics[at]
+        if(!l.modal) { l.discard();return fail("Chi tiết "+folder+" đã đóng ngoài dự kiến; kiểm tra rồi Tiếp tục.") }
         if(number>MAX_MODAL_PAGES) { l.discard();return fail("Chi tiết "+folder+" vẫn còn cuộn sau "+MAX_MODAL_PAGES+" ảnh. Kiểm tra bằng tay rồi tiếp tục.") }
         if(previous!=null&&!ChessWiki.changed(previous,l.signature)) {
             l.discard()
@@ -719,8 +851,16 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         }
         val shotName=ChessWiki.filename(t,kind,number,folder)
         val current=l.signature.copyOf()
+        val history=detailSignatures.getOrPut(t.key+":"+tile.id) { ArrayList() }
+        if(number==1) history.clear()
+        if(history.any { !ChessWiki.changed(it,current) }) {
+            l.discard()
+            return fail("Chi tiết "+folder+" cuộn quay lại nội dung cũ; đã dừng để tránh lưu lặp. Kiểm tra rồi Tiếp tục.")
+        }
+        history.add(current)
         val skillImages=if("chieu-quan-co" in options.nativeGroups) l.skillIcons() else emptyList()
-        save(l,shotName) {
+        val captureKey="detail-page:"+t.key+":"+tile.id+":"+number+":"+current.contentHashCode()
+        val afterSave={
             fun advance() {
                 swipe(.75,.82,.75,.42) {
                     look(false) { next ->
@@ -744,6 +884,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
             }
             nativeSkill(0,skillImages) { advance() }
         }
+        if(screen.seen(captureKey)) { l.discard();afterSave() }
+        else save(l,shotName) { screen.finished(captureKey);afterSave() }
     }
     private fun close(at:Int,page:Int,signature:IntArray,tiles:List<ChessWiki.Tile>,from:Int,
                       tile:ChessWiki.Tile,tries:Int=0) {
@@ -757,6 +899,10 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                     if(!screen.seen(identity)) {
                         screen.finished(identity);items++
                         if(topics[at].key=="tat-ca-quan-co") heroes++
+                    }
+                    if(heroTopic==at) {
+                        heroSlots[heroIndex]=tile.id
+                        screen.finished(ChessWiki.heroSlotKey(heroIndex,tile.id))
                     }
                     if(topics[at].key=="tat-ca-quan-co") screen.say(ChessWiki.heroProgress(heroes))
                     collect(at,page,signature,tiles,from+1)

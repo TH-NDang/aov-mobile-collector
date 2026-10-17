@@ -28,6 +28,7 @@ class ListNavigator(private val card:Int,private val state:State,private val scr
         fun words(then:(List<GameScreens.Word>)->Unit) { then(emptyList()) } }
     interface Screen {
         val alive:Boolean
+        val layout:HeroGrid.Layout get()=HeroGrid.DEFAULT_LAYOUT
         /** null when no screenshot could be read; an empty profile when the screen is not the hero list. */
         fun look(then:(Shot?)->Unit)
         /** Drags the content up by [d] screen heights (negative: down). Slow drags rest before lifting; [fling] is a quick flick. */
@@ -48,7 +49,7 @@ class ListNavigator(private val card:Int,private val state:State,private val scr
     private val maxMoves=16+5*(card/5)
 
     fun start() {
-        if(!state.synced) return toTop(0)
+        if(!state.synced||state.ref==null) return toTop(0)
         look { s ->
             // The list should be exactly where the previous pick left it; anything else is a different screen.
             val ref=state.ref
@@ -81,7 +82,7 @@ class ListNavigator(private val card:Int,private val state:State,private val scr
     }
     private fun page()="page-%02d-list".format(state.page)
     private fun aim(s:Shot,keep:Boolean) {
-        when(val plan=HeroGrid.plan(card,state.offset)) {
+        when(val plan=screen.layout.plan(card,state.offset)) {
             is HeroGrid.Plan.Move -> { s.done(if(keep) page() else null); move(plan.d*state.step) }
             is HeroGrid.Plan.Tap -> { val has=s.hasCard(plan.x,plan.y); decide(s,plan.x,plan.y,has,if(keep) page() else null,true) }
         }
@@ -109,11 +110,12 @@ class ListNavigator(private val card:Int,private val state:State,private val scr
     /** [interrupted]: the navigator had to come back to the list after this swipe, so a list that did not move proves nothing. */
     private fun settle(moved:Double,s:Shot,d:Double,interrupted:Boolean) {
         state.offset+=moved; state.ref=s.profile
+        screen.note("Độ cuộn đo được: "+(moved*s.height).toInt()+" px; ô "+(card+1))
         if(abs(moved)>=.01) { stalls=0; state.page++; return aim(s,true) }
         if(interrupted||++stalls<2) return aim(s,false)
         // The list stopped moving: past its end there is nothing more to collect.
-        val (x,y)=HeroGrid.centre(card,state.offset)
-        val has=d>0&&y<HeroGrid.LAST_ROW_LIMIT&&s.hasCard(x,y)
+        val (x,y)=screen.layout.centre(card,state.offset)
+        val has=d>0&&y<screen.layout.lastRowLimit&&s.hasCard(x,y)
         decide(s,x,y,has,null,d>0)
     }
     /** The list slid further than one screenshot can follow: drag back, measure against [before], and use smaller steps from now on. */
