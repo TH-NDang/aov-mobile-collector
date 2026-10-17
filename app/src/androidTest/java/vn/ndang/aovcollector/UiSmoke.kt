@@ -699,7 +699,10 @@ class UiSmoke:Instrumentation() {
             waitForIdleSync()
             val chosenZip=android.provider.DocumentsContract.createDocument(targetContext.contentResolver,photoRoot,"application/zip","selected-current-images.zip")!!
             val resultIntent=Intent().setData(chosenZip).addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-            val exportMonitor=addMonitor(android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT),Instrumentation.ActivityResult(Activity.RESULT_OK,resultIntent),true)
+            val exportFilter=android.content.IntentFilter(Intent.ACTION_CREATE_DOCUMENT).apply {
+                addCategory(Intent.CATEGORY_OPENABLE);addDataType("application/zip")
+            }
+            val exportMonitor=addMonitor(exportFilter,Instrumentation.ActivityResult(Activity.RESULT_OK,resultIntent),true)
             try {
                 previewAction("Chọn ảnh trong lượt")
                 previewAction("Chọn ${savedRow.name}")
