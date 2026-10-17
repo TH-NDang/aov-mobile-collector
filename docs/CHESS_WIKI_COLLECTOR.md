@@ -92,3 +92,12 @@ Kết quả cho biết **trước lượt bao nhiêu ảnh, sau lượt bao nhi�
 **Giới hạn và an toàn:** Nếu bạn đồng thời tạo ảnh cá nhân trong vài giây quanh một lần Save Photo của game, chỉ dùng thời điểm và số lượng không thể xác minh tuyệt đối ảnh nào thuộc game. Vì vậy nên tránh lưu ảnh khác trong lúc macro chạy, hoặc chọn thư mục con chỉ chứa ảnh game. File thiếu thời gian sửa và thuộc nhiều nhóm sẽ không được tự phân loại. Khi bố cục icon thay đổi, thao tác nhấn giữ có thể không mở hộp Save Photo; khi đó app lưu screenshot bình thường và nhật ký để hiệu chỉnh, không giả vờ ảnh gốc đã được lưu.
 
 Thư viện Lịch sử, tìm kiếm và xuất ZIP hỗ trợ PNG, JPEG và WebP đã sao chép. GitHub Actions kiểm thử nhận diện nhóm, đối chiếu trước/sau và nhận diện hộp xác nhận bằng các kịch bản giả lập; thao tác tải thực tế cần kiểm thử trên thiết bị đã đăng nhập Liên Quân.
+
+## Yêu cầu sửa lỗi: duyệt theo hàng (17/10/2026)
+
+- Tại **Tất cả quân cờ**, duyệt **trái sang phải rồi mới xuống hàng kế tiếp**. Không quét tùy ý các điểm ảnh nhiều màu và không bấm lại hàng 1 khi đã cuộn tới hàng 2.
+- **Trước khi chọn bất kỳ quân cờ nào của một hàng**, lưu ảnh toàn màn hình của hàng đó dưới `quan-co/tat-ca-quan-co/hang-NNN/danh-sach.png`. Chỉ đánh dấu hàng hoàn thành sau khi tất cả thẻ trong hàng đã được xử lý.
+- Mỗi thẻ mở ra phải kiểm tra **tên tướng ở đầu popup**, không lấy tên chiêu (ví dụ `Pháo đại`, `Hồn trảm`) làm tên thư mục. Nếu không đọc được tên tướng, ghi nhận `chua-xac-dinh` để rà soát, không gán nhầm.
+- Lưu chi tiết tại `hang-NNN/<ten-tuong>/chi-tiet-NNN.png`; lưu toàn bộ các trang chi tiết sau khi cuộn. Tránh tạo thư mục trùng cho cùng một tướng.
+- Sau mỗi lần cuộn, nhận diện lại các hàng **đang hiển thị trọn vẹn**. Loại bỏ hàng bị cắt ở mép trên, dùng tên tướng và fingerprint chân dung để đối chiếu những tướng đã chụp. Chỉ cuộn tiếp khi hết hàng hiện tại.
+- Thêm kiểm thử tái hiện ảnh trang 1, trang 2, các popup trong ZIP phản hồi, đặc biệt trường hợp trang 2 chỉ còn phần cuối hàng 1.
