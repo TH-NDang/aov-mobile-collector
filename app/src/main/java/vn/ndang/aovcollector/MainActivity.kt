@@ -632,7 +632,7 @@ class MainActivity : Activity() {
             (if(before>=0) "\nLượt gần nhất: "+run+
                 "\nSố ảnh trước lượt: "+before+
                 "\nSố thao tác Save Photo đã xác nhận: "+saved+
-                "\nĐã có trong app: "+state.optInt("imported",0)+
+                "\nĐã có trong app: "+(state?.optInt("imported",0)?:0)+
                 (if(state?.has("after")==true) "\nSố ảnh sau lượt: "+state.optInt("after") else "")+
                 (if(pending>0) "\nĐang chờ ảnh xuất hiện / đọc lại: "+pending else "")
              else "\nChưa có lượt tải ảnh gốc nào được ghi mốc.")+
