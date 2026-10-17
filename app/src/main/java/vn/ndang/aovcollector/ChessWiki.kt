@@ -340,6 +340,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         fun nativeTiles(topic:ChessWiki.Topic):List<ChessWiki.Tile> = tiles(topic)
         fun skillIcons():List<ChessWiki.Tile> = emptyList()
         fun keep(name:String,then:(Boolean)->Unit)
+        /** Crop the card row (with its name + portraits) before saving; also releases this Look. */
+        fun keepRow(name:String,top:Double,bottom:Double,then:(Boolean)->Unit) = keep(name,then)
         fun discard()
     }
     interface Screen {
@@ -487,32 +489,88 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         if(screen.seen(path)) { l.discard(); next() }
         else save(l,image) { screen.finished(path);next() }
     }
+    /** Save a dedicated screenshot for each fully visible row BEFORE opening its heroes. */
     private fun collect(at:Int,page:Int,signature:IntArray,tiles:List<ChessWiki.Tile>,from:Int) {
         val t=topics[at]
         val kind=ChessWiki.detailType(t,options)
         val originalGroup=ChessWiki.nativeGroup(t,options)
         if((kind==null&&originalGroup==null)||from>=tiles.size||items>=MAX_TILES)
             return nextPage(at,page,signature)
+        val newRow=t.key=="tat-ca-quan-co" &&
+            (from==0 || abs(tiles[from-1].y-tiles[from].y)>.075)
+        if(newRow) {
+            val row=ChessWiki.heroRows(tiles).firstOrNull { group ->
+                group.any { it.id==tiles[from].id }
+            }.orEmpty()
+            if(row.isNotEmpty()) {
+                val marker=ChessWiki.rowKey(t,row)
+                if(!screen.seen(marker)) {
+                    screen.say("Quân cờ: lưu ảnh hàng "+page+" ("+
+                        row.joinToString(", ") { it.label?:"?" }+")")
+                    return look(false) { rowShot ->
+                        if(rowShot.modal) {
+                            rowShot.discard()
+                            return@look fail("Có cửa sổ chi tiết khi chụp ảnh hàng. Đóng cửa sổ rồi bấm Tiếp tục.")
+                        }
+                        val top=(row.first().y-.17).coerceIn(.20,.80)
+                        val bottom=(row.first().y+.47).coerceIn(top+.15,.985)
+                        rowShot.keepRow(ChessWiki.rowFilename(t,page,row),top,bottom) { ok ->
+                            if(!screen.alive||completed) return@keepRow
+                            if(!ok) fail("Không lưu được ảnh hàng "+page+
+                                ". Ảnh danh sách được giữ lại; kiểm tra dung lượng rồi Tiếp tục.")
+                            else {
+                                pages++
+                                screen.finished(marker)
+                                collectItem(at,page,signature,tiles,from)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        collectItem(at,page,signature,tiles,from)
+    }
+
+    private fun collectItem(at:Int,page:Int,signature:IntArray,
+                            tiles:List<ChessWiki.Tile>,from:Int) {
+        val t=topics[at]
+        val kind=ChessWiki.detailType(t,options)
+        val originalGroup=ChessWiki.nativeGroup(t,options)
         val item=tiles[from]
         val identity="item:"+t.key+":"+item.id
         if(!tried.add(identity)) return collect(at,page,signature,tiles,from+1)
 
         fun detail() {
             if(kind==null||screen.seen(identity)) return collect(at,page,signature,tiles,from+1)
-            screen.say(t.label+": chi tiết "+(from+1)+"/"+tiles.size)
+            screen.say(t.label+": chi tiết "+(from+1)+"/"+tiles.size+
+                (item.label?.let { " ("+it+")" }?:""))
             tap(item.x,item.y,1250) {
                 look(true) { l ->
                     if(!l.modal) {
                         l.discard()
-                        screen.note("Không mở được chi tiết tại "+item.x+","+item.y+". Giữ ảnh danh sách.")
+                        screen.note("Không mở được chi tiết "+(item.label?:"?")+
+                            " tại "+item.x+","+item.y+". Ảnh hàng đã lưu.")
                         return@look collect(at,page,signature,tiles,from+1)
                     }
-                    val heading=l.words.firstOrNull {
-                        it.y in .215.. .335 && it.x in .35.. .79&&
-                        it.plain.length in 2..35&&!it.plain.contains("colienquan")
-                    }?.text
-                    val slug=ChessWiki.safeName(heading?:item.label?:"muc")
-                    val folder=slug+"-"+item.id.take(8)
+                    val header=if(kind=="tuong") ChessWiki.modalHeroTitle(l.words) else
+                        l.words.firstOrNull { it.y in .215.. .335 &&
+                            it.x in .35.. .79 && it.plain.length in 2..35 &&
+                            !it.plain.contains("colienquan") }?.text
+                    // NEVER use a skill name to label a hero directory.
+                    if(kind=="tuong" && header!=null && item.label!=null &&
+                       ChessWiki.safeName(header)!=ChessWiki.safeName(item.label)) {
+                        l.discard()
+                        return@look fail("Ô quân cờ "+item.label+" mở nhầm popup "+header+
+                            ". Đã dừng để tránh lưu ảnh vào sai thư mục.")
+                    }
+                    val title=header?:item.label
+                    if(kind=="tuong" && title==null) {
+                        l.discard()
+                        return@look fail("Không nhận dạng được tên quân cờ trong thẻ hoặc popup. "+
+                            "Ảnh hàng đã lưu, tránh lấy tên chiêu làm tên thư mục.")
+                    }
+                    val slug=ChessWiki.safeName(title?:"muc")
+                    val folder=if(kind=="tuong") slug else slug+"-"+item.id.take(8)
                     modal(at,page,signature,tiles,from,item,kind,folder,1,l,null,0)
                 }
             }
