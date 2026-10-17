@@ -96,11 +96,11 @@ Workflow Build APK chạy unit test, lint, build universal/ARM64 và Android emu
 
 Mục này **khác** ảnh chụp màn hình. Game có hộp **Save Photo** với hai nút **Sure** và **CANCEL** khi nhấn giữ hình phù hợp. Tác vụ ảnh gốc chỉ nhấn Sure sau khi nhận ra đầy đủ hộp thoại này; nếu màn hình không khớp, sẽ bỏ qua và ghi nhật ký thay vì chạm bừa.
 
-1. Trong **AOV Collector → Nhập file → Ảnh từ Pictures vào app**, chọn thư mục Pictures (hoặc thư mục con ảnh game) để cấp quyền đọc một lần bằng bộ chọn thư mục Android.
+1. Trong **AOV Collector → Nhập file → Ảnh từ Pictures vào app**, chọn đúng **Bộ nhớ trong → Pictures** (`/storage/emulated/0/Pictures`, theo ảnh thực tế; game lưu tên như `caYyujwz.png (1).jpg`) để cấp quyền đọc một lần bằng bộ chọn thư mục Android.
 2. Chọn macro **Cờ Liên Quân · Bách khoa**. Ở mục **Tải ảnh gốc từ game**, tick riêng các nhóm muốn tải: quân cờ, chiêu quân cờ, phe, nghề, trang bị và 3 loại Chúc Phúc. Đây là **chọn phạm vi**, không phải phân loại từng ảnh: app tự gán nhóm theo tab đang thu thập.
 3. Khi bắt đầu bước Bách khoa, app **đếm và ghi dấu toàn bộ mã tài liệu hiện có** trong thư mục được cấp quyền, lưu vào \`captures/<run-id>/pictures-session.json\`.
-4. Khi game xác nhận Save Photo, app ghi thời điểm và nhóm tương ứng. Sau khi bạn bấm **Về app**, ứng dụng tự quét lại Pictures và nhận diện ảnh **mới xuất hiện kể từ mốc đầu lượt**.
-5. App sao chép các ảnh mới tương ứng vào \`captures/anh-goc-co-lien-quan/<nhóm>/<lượt>/\`. Ảnh ngoài thời gian lưu hoặc không khớp nhóm không được tự gán. Không xóa/sửa ảnh trong Pictures. Có thể chọn **Đồng bộ ảnh mới** để quét lại sau đó.
+4. Khi game xác nhận Save Photo, app ghi thời điểm và nhóm tương ứng. Ứng dụng tự quét lại Pictures ngay sau Sure trên luồng nền riêng và nhận diện ảnh **mới xuất hiện kể từ mốc đầu lượt**.
+5. Trong app, bấm **Ảnh từ Pictures** → **Mở ảnh gốc đã nhập trong Lịch sử** để xem ảnh theo nhóm. Thư viện tự cập nhật khi đang mở. App sao chép các ảnh mới tương ứng vào \`captures/anh-goc-co-lien-quan/<nhóm>/<lượt>/\`. Ảnh ngoài thời gian lưu hoặc không khớp nhóm không được tự gán. Không xóa/sửa ảnh trong Pictures. Ảnh chưa xuất hiện được tự thử lại sau 30 giây khi tiến trình app còn hoạt động; khi mở lại app/dịch vụ cũng tiếp tục từ mốc đã lưu. Có thể chọn **Đồng bộ ảnh mới** để quét lại thủ công.
 
 Kết quả cho biết **trước lượt bao nhiêu ảnh, sau lượt bao nhiêu, số ảnh mới, số ảnh đã sao chép, số ảnh trùng và số ảnh chưa xác định**. File được lưu dưới tên có mã hash để tránh trùng, và sổ theo dõi giúp không nhập lại khi bạn đồng bộ nhiều lần.
 

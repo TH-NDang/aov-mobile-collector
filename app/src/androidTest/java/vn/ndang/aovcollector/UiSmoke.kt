@@ -75,6 +75,73 @@ class UiSmoke:Instrumentation() {
                 val title=try { GameText.chessHeroTitle(shot) } finally { shot.recycle() }
                 check(title=="Violet") { "Violet's gold price became part of her name: $title" }
             }
+            context.assets.open("chess-save-photo-sure.jpg").use { input ->
+                val screenshot=BitmapFactory.decodeStream(input)
+                val sure=try { ChessWiki.nativeConfirm(GameText.words(screenshot)) } finally { screenshot.recycle() }
+                check(sure!=null&&sure.first in .30.. .45&&sure.second in .48.. .65) {
+                    "Real Save Photo dialog did not locate Sure: $sure"
+                }
+            }
+            // Native Save Photo exports go through a real SAF provider, then appear in app history.
+            val photoTree=android.provider.DocumentsContract.buildTreeDocumentUri(
+                "vn.ndang.aovcollector.test.photos","Pictures")
+            context.grantUriPermission(targetContext.packageName,photoTree,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
+                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+            GamePhotoImport.choose(targetContext,photoTree)
+            val photoRoot=android.provider.DocumentsContract.buildDocumentUriUsingTree(photoTree,"Pictures")
+            fun nativeFile(name:String):android.net.Uri {
+                val uri=android.provider.DocumentsContract.createDocument(targetContext.contentResolver,
+                    photoRoot,"image/jpeg",name)!!
+                // Valid bytes from the bundled screenshot; the game can use .png (1).jpg names.
+                context.assets.open("chess-arduin-role-ocr.jpg").use { input ->
+                    targetContext.contentResolver.openOutputStream(uri)!!.use { output -> input.copyTo(output) }
+                }
+                return uri
+            }
+            val personal=nativeFile("personal-before.jpg")
+            val nativeRun="smoke-native-save"
+            check(GamePhotoSession.begin(targetContext,nativeRun)==1)
+            GamePhotoSession.mark(targetContext,nativeRun,"quan-co","Violet")
+            val waiting=GamePhotoSession.importNew(targetContext,nativeRun)
+            check(waiting.pending==1&&waiting.copied==0) { "Sure without a visible file was acknowledged" }
+            val violet=nativeFile("caYyujwz.png (1).jpg")
+            val copied=GamePhotoSession.importNew(targetContext,nativeRun)
+            check(copied.copied==1&&copied.pending==0) { "Late Pictures image was not imported: $copied" }
+            val imported=File(targetContext.filesDir,"captures/"+GamePhotoImport.ROOT)
+            val violetCopy=imported.walkTopDown().first { it.isFile&&it.name.startsWith("violet-") }
+            check(violetCopy.extension=="jpg"&&violetCopy.path.contains("quan-co/anh-quan-co"))
+            targetContext.contentResolver.openInputStream(violet)!!.use {
+                check(it.readBytes().contentEquals(violetCopy.readBytes())) { "Native image bytes changed" }
+            }
+            // A later different category cannot rename/reassign the already imported Violet.
+            SystemClock.sleep(50)
+            GamePhotoSession.mark(targetContext,nativeRun,"chieu-quan-co","Violet-skill")
+            val skill=nativeFile("skill.png (1).jpg")
+            val second=GamePhotoSession.importNew(targetContext,nativeRun)
+            check(second.copied==1&&second.already==1&&second.pending==0)
+            check(violetCopy.isFile&&imported.walkTopDown().count { GamePhotoImport.isImage(it) }==2)
+            check(GamePhotoSession.importNew(targetContext,nativeRun).copied==0) { "Sync duplicated native photos" }
+            violetCopy.delete()
+            check(GamePhotoSession.importNew(targetContext,nativeRun).copied==1) { "Deleted internal image cannot be restored" }
+            SystemClock.sleep(50)
+            GamePhotoSession.mark(targetContext,nativeRun,"phe","Doa-lac-gia")
+            val faction=nativeFile("faction.png (1).jpg")
+            val oldRevision=GamePhotoSync.revision
+            GamePhotoSync.request(targetContext)
+            val copyDeadline=SystemClock.uptimeMillis()+10_000
+            while((GamePhotoSync.revision==oldRevision||GamePhotoSync.busy)&&SystemClock.uptimeMillis()<copyDeadline)
+                SystemClock.sleep(100)
+            check(GamePhotoSync.revision>oldRevision&&!GamePhotoSync.busy) { "After-Sure background sync did not finish" }
+            check(imported.walkTopDown().any { it.isFile&&it.path.contains("tuong-tac/phe") })
+            check(GamePhotoImport.scan(targetContext,photoTree).size==4) { "Original Pictures files changed" }
+            File(targetContext.filesDir,"smoke/native-photos.txt").writeText("late-indexed=ok; bytes=identical; classified=ok; dedup=ok; restore=ok")
+            listOf(personal,violet,skill,faction).forEach { android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,it) }
+            targetContext.contentResolver.releasePersistableUriPermission(photoTree,Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            targetContext.getSharedPreferences("game-photo-source",0).edit().clear().commit()
+            File(targetContext.filesDir,"captures/$nativeRun").deleteRecursively()
+            imported.deleteRecursively()
+            File(targetContext.filesDir,"pictures-copy-ledger.json").delete()
             val chessOptions=ChessWiki.Options(setOf("tat-ca-quan-co"),openGame=false,heroDetails=true)
             val legacyChess=JSONObject(BuiltInMacros.chess(chessOptions)).apply { remove("fast") }
             check(BuiltInMacros.chessOptions(legacyChess).fast) { "Old chess macro did not default to fast mode" }
@@ -475,7 +542,7 @@ class UiSmoke:Instrumentation() {
             val verify=nodes().flatMap { it.findAccessibilityNodeInfosByText(verifyText) }
                 .firstOrNull { it.text?.toString()==verifyText }?:error("Missing account verification option")
             check(verify.isEnabled) { "No saved account still disables verification without a setup path" }
-            verify.performAction(AccessibilityNodeInfo.ACTION_SHOW_ON_SCREEN)
+            verify.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
             waitForIdleSync();SystemClock.sleep(400)
             click(verifyText)
             check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Tự mở game tới sảnh trước khi vào Cờ Liên Quân") }

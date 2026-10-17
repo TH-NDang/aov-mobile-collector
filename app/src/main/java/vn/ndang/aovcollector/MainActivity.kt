@@ -192,9 +192,11 @@ class MainActivity : Activity() {
         if(historyRoot!=null) showHistory()
         crashNotice()
         // Returning from the game: fetch exactly the photos marked by Save Photo in the last run.
-        historySearchHandler.postDelayed({ maybeSyncNewGamePhotos() },450)
+        GamePhotoSync.request(this)
+        photoRevision=GamePhotoSync.revision
+        historySearchHandler.postDelayed(photoRefresh,1500)
     }
-    override fun onPause() { if(FileJob.screen===jobDone) FileJob.screen=null;super.onPause() }
+    override fun onPause() { historySearchHandler.removeCallbacks(photoRefresh);if(FileJob.screen===jobDone) FileJob.screen=null;super.onPause() }
     override fun onDestroy() { historySearchToken++;historySearchTask?.let { historySearchHandler.removeCallbacks(it) };historySearchExecutor.shutdownNow();progress?.close();super.onDestroy() }
     override fun onNewIntent(intent:Intent) { super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob()
         if(intent.getBooleanExtra(Accounts.OPEN,false)) { intent.removeExtra(Accounts.OPEN);accountDialog() } }
@@ -532,7 +534,7 @@ class MainActivity : Activity() {
             .setNeutralButton("Sao chép") { _,_ -> (getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager).setPrimaryClip(android.content.ClipData.newPlainText("AOV Collector",text));Toast.makeText(this,"Đã sao chép nhật ký",Toast.LENGTH_SHORT).show() }.show()
     }
     private fun editable():Boolean {
-        if(CollectorService.libraryBusy) {
+        if(CollectorService.libraryBusy||GamePhotoSync.busy) {
             if(FileJob.running&&FileJob.dialog==null) AlertDialog.Builder(this).setMessage("${FileJob.title} ở nền. Vui lòng chờ hoàn tất.")
                 .setPositiveButton("Xem tiến độ") { _,_ -> showJob() }.setNegativeButton("Đóng",null).show()
             else message("Đang xử lý file. Vui lòng chờ hoàn tất.")
@@ -576,12 +578,16 @@ class MainActivity : Activity() {
             } catch(e:Exception) { field.error=e.message }
         }
     }
-    /** Normally no tap is needed: coming back to the app triggers a classified import once per batch. */
-    private fun maybeSyncNewGamePhotos() {
-        if(isFinishing||FileJob.running||CollectorService.libraryBusy||
-            CollectorService.current?.isWorking==true||!GamePhotoImport.hasSource(this)) return
-        val run=GamePhotoSession.pendingRun(this)?:return
-        syncGamePhotoRun(run)
+    private var photoRevision=0L
+    private val photoRefresh=object:Runnable {
+        override fun run() {
+            if(isFinishing||isDestroyed) return
+            if(photoRevision!=GamePhotoSync.revision) {
+                photoRevision=GamePhotoSync.revision
+                if(!FileJob.running&&!selecting) showHistory()
+            }
+            historySearchHandler.postDelayed(this,1500)
+        }
     }
 
     /** Import only files newly created by confirmed Cờ Liên Quân Save Photo actions in a run. */
@@ -603,7 +609,7 @@ class MainActivity : Activity() {
                         " ảnh mới không khớp thao tác Save Photo được xác nhận." else "")+
                     (if(stats.errors>0) " Lỗi đọc "+stats.errors+" ảnh." else "")+
                     (if(stats.pending>0) " Còn "+stats.pending+
-                        " lần lưu chưa thấy ảnh tương ứng trong Pictures; app sẽ thử lại khi quay về." else "")+
+                        " lần lưu chưa thấy ảnh tương ứng trong Pictures; app sẽ tự thử lại." else "")+
                     (if(stats.cancelled) " Đã hủy giữa chừng, có thể đồng bộ lại." else "")+
                     " Ảnh cá nhân trong Pictures vẫn giữ nguyên."
             } catch(e:Exception) {
@@ -611,6 +617,7 @@ class MainActivity : Activity() {
                     ". Bạn có thể chọn lại thư mục nguồn và thử lại; ảnh gốc không bị xóa."
             }
             FileJob.finish(result)
+            GamePhotoSync.request(this)
         }.start()
     }
 
@@ -621,10 +628,11 @@ class MainActivity : Activity() {
         val before=state?.optInt("before",-1)?:-1
         val saved=state?.optJSONArray("saves")?.length()?:0
         val pending=state?.optInt("pending",0)?:0
-        val info="Thư mục nguồn: "+GamePhotoImport.sourceLabel(this)+
+        val info="Game lưu tại /storage/emulated/0/Pictures. Hãy chọn đúng thư mục Pictures trong Bộ nhớ trong.\n\nThư mục nguồn: "+GamePhotoImport.sourceLabel(this)+
             (if(before>=0) "\nLượt gần nhất: "+run+
                 "\nSố ảnh trước lượt: "+before+
                 "\nSố thao tác Save Photo đã xác nhận: "+saved+
+                "\nĐã có trong app: "+state.optInt("imported",0)+
                 (if(state?.has("after")==true) "\nSố ảnh sau lượt: "+state.optInt("after") else "")+
                 (if(pending>0) "\nĐang chờ ảnh xuất hiện / đọc lại: "+pending else "")
              else "\nChưa có lượt tải ảnh gốc nào được ghi mốc.")+
@@ -638,6 +646,8 @@ class MainActivity : Activity() {
                     0 -> {
                         try {
                             startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                                putExtra(DocumentsContract.EXTRA_INITIAL_URI,android.net.Uri.parse(
+                                    "content://com.android.externalstorage.documents/document/primary%3APictures"))
                                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or
                                     Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or
                                     Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
@@ -730,7 +740,7 @@ class MainActivity : Activity() {
         super.onActivityResult(requestCode,resultCode,data);if(resultCode!=RESULT_OK) return;val uri=data?.data?:return
         if(!editable()) return
         if(requestCode==GamePhotoImport.REQUEST_FOLDER) {
-            try { GamePhotoImport.choose(this,uri);gamePhotosDialog() }
+            try { GamePhotoImport.choose(this,uri);GamePhotoSync.request(this);showHistory();gamePhotosDialog() }
             catch(e:Exception) { message("Không chọn được thư mục ảnh: "+(e.message?:"Lỗi quyền truy cập")) }
             return
         }

@@ -124,7 +124,19 @@ object GamePhotoSession {
         val old=(0 until baseline.length()).map { baseline.getString(it) }.toHashSet()
         val all=GamePhotoImport.scan(context,tree) { !cancelled() }
         if(cancelled()) return Imported(state.optInt("before"),all.size,0,0,0,0,0,true)
-        val diff=diff(old,all.map { Scanned(it.id,it.size,it.modified) },marks(state))
+        // Pin successful source/event pairs. A late-indexed image must not reassign an earlier
+        // imported picture to another hero or category on the next scan.
+        val assignments=state.optJSONObject("assignments")?:JSONObject()
+        val recorded=marks(state)
+        val pinned=assignments.keys().asSequence().mapNotNull { id ->
+            val a=assignments.optJSONObject(id)?:return@mapNotNull null
+            Pick(id,a.optString("group"),a.optString("item"),0L)
+        }.toList()
+        val usedTimes=assignments.keys().asSequence().map { assignments.getJSONObject(it).optLong("time") }.toSet()
+        val freshDiff=diff(old+assignments.keys().asSequence().toSet(),
+            all.map { Scanned(it.id,it.size,it.modified) },recorded.filter { it.time !in usedTimes })
+        val diff=Diff(old.size,all.size,all.count { it.id !in old },
+            pinned+freshDiff.matching,freshDiff.unrelated)
         val matches=all.associateBy { it.id }
         val destRoot=File(context.filesDir,"captures/"+GamePhotoImport.ROOT).apply { mkdirs() }
         val meta=File(destRoot,"run.json")
@@ -144,6 +156,8 @@ object GamePhotoSession {
                 val existing=File(destRoot,location)
                 if(location.isNotBlank()&&existing.isFile&&existing.length()>0) {
                     already++
+                    pin(assignments,pick,recorded)
+                    state.put("assignments",assignments);store(context,runId,state)
                     continue
                 }
                 // A user may have deleted the internal copy; the ledger must not suppress re-import.
@@ -159,6 +173,8 @@ object GamePhotoSession {
                     ledger.put(identity,target.relativeTo(destRoot).invariantSeparatorsPath)
                     ledgerFile.writeText(ledger.toString(2))
                     already++
+                    pin(assignments,pick,recorded)
+                    state.put("assignments",assignments);store(context,runId,state)
                     continue
                 }
                 require(image.size>=0 && image.size<=MAX_IMAGE) { "Ảnh vượt giới hạn 32 MB" }
@@ -184,6 +200,8 @@ object GamePhotoSession {
                 ledger.put(identity,target.relativeTo(destRoot).invariantSeparatorsPath)
                 ledgerFile.writeText(ledger.toString(2))
                 copied++
+                pin(assignments,pick,recorded)
+                state.put("assignments",assignments);store(context,runId,state)
             } catch(e:ZipFiles.Cancelled) {
                 partial.delete()
                 break
@@ -196,7 +214,8 @@ object GamePhotoSession {
         val resolved=copied+already
         val newCheckpoint=checkpoint(state.optInt("syncedMarks",0),totalMarks,resolved,errors,cancelled())
         val pending=(totalMarks-resolved).coerceAtLeast(0)
-        state.put("after",all.size).put("newFiles",diff.new)
+        meta.writeText(JSONObject(meta.readText()).put("updatedAt",System.currentTimeMillis()).toString(2))
+        state.put("assignments",assignments).put("after",all.size).put("newFiles",diff.new)
             .put("unrelated",diff.unrelated).put("imported",resolved)
             .put("syncedMarks",newCheckpoint)
             .put("lastAttemptedMarks",totalMarks)
@@ -210,6 +229,19 @@ object GamePhotoSession {
         store(context,runId,state)
         progress(diff.matching.size,diff.matching.size,"Đã lưu $copied ảnh mới")
         return Imported(diff.before,diff.after,diff.new,copied,already,diff.unrelated,errors,cancelled(),pending)
+    }
+
+    private fun pin(assignments:JSONObject,pick:Pick,marks:List<Mark>) {
+        if(assignments.has(pick.id)) return
+        val used=assignments.keys().asSequence().map { assignments.getJSONObject(it).optLong("time") }.toSet()
+        val mark=marks.firstOrNull { it.time !in used&&it.group==pick.group&&it.item==pick.item }?:return
+        assignments.put(pick.id,JSONObject().put("group",pick.group).put("item",pick.item).put("time",mark.time))
+    }
+
+    fun hasPending(context:Context):Boolean {
+        val source=GamePhotoImport.chosen(context)?.toString()?:return false
+        return sessions(context).any { (_,s) -> s.optString("tree")==source &&
+            (s.optJSONArray("saves")?.length()?:0)>s.optInt("syncedMarks",0) }
     }
 
     private fun sessions(context:Context):List<Pair<File,JSONObject>> =
@@ -236,3 +268,4 @@ object GamePhotoSession {
 
     fun state(context:Context,runId:String):JSONObject?=try { read(context,runId) } catch(_:Exception) { null }
 }
+

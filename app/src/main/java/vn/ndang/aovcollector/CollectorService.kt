@@ -150,6 +150,7 @@ class CollectorService : AccessibilityService() {
             prefs.edit().putBoolean("clean",false).commit()
             prefs.edit().putBoolean("running",false).commit(); save(); lastStatus="Lượt trước bị gián đoạn ở bước ${index+1}. Mở đúng màn hình rồi bấm Tiếp tục."
         }
+        GamePhotoSync.request(this)
         if(uiPrefs.getBoolean("panel",false)) handler.post { if(current===this && panel==null) showPanel() }
     }
     private val awayCheck=Runnable { val p=foreground(); if(running&&!entering&&p!=null&&p!=GAME&&p!=packageName) pause("Đã rời game (đang mở ${appName(p)}) — tạm dừng") }
@@ -780,7 +781,7 @@ class CollectorService : AccessibilityService() {
         body.addView(Ui.section(c,"Tải ảnh gốc từ game (tùy chọn)"))
         body.addView(Ui.text(c,
             "Game lưu ảnh bằng Save Photo → Sure vào Pictures. App ghi số ảnh trước lượt, " +
-            "ghi loại ảnh theo mục đang chụp, rồi khi về app chỉ sao chép ảnh mới tương ứng. " +
+            "tự chép ảnh mới vào thư viện app sau Sure và phân loại theo mục đang chụp. " +
             "Các ảnh cũ và ảnh không xác định sẽ không bị lấy.",12f,Ui.muted))
         body.addView(Ui.text(c,if(GamePhotoImport.hasSource(this))
             "Đã chọn nguồn: "+GamePhotoImport.sourceLabel(this)
@@ -987,7 +988,9 @@ class CollectorService : AccessibilityService() {
                                                     }
                                                     else {
                                                         val marked=try {
-                                                            GamePhotoSession.mark(this@CollectorService,runId,group,item);true
+                                                            GamePhotoSession.mark(this@CollectorService,runId,group,item)
+                                                            GamePhotoSync.request(this@CollectorService)
+                                                            true
                                                         } catch(e:Throwable) {
                                                             CrashLog.record(this@CollectorService,"Không ghi được ảnh gốc đã lưu",e);false
                                                         }

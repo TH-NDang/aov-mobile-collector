@@ -77,7 +77,9 @@ object GamePhotoImport {
         require(DocumentsContract.isTreeUri(uri)) { "Hãy chọn một thư mục ảnh, không phải một tệp riêng lẻ" }
         context.contentResolver.takePersistableUriPermission(uri,Intent.FLAG_GRANT_READ_URI_PERMISSION)
         val prefs=context.getSharedPreferences(PREFS,Context.MODE_PRIVATE)
-        prefs.edit().putString(URI,uri.toString()).putLong(SELECTED_AT,System.currentTimeMillis()).commit()
+        require(prefs.edit().putString(URI,uri.toString()).putLong(SELECTED_AT,System.currentTimeMillis()).commit()) {
+            "Không lưu được quyền thư mục Pictures"
+        }
     }
     data class Photo(val uri:Uri,val id:String,val name:String,val mime:String,val size:Long,
                      val modified:Long,val relativeDir:String) {
@@ -108,7 +110,9 @@ object GamePhotoImport {
         while(q.isNotEmpty()&&visited<MAX_ENTRIES&&allow()) {
             val (parent,path,depth)=q.removeFirst()
             val children=DocumentsContract.buildChildDocumentsUriUsingTree(tree,parent)
-            context.contentResolver.query(children,cols,null,null,null)?.use { cursor ->
+            requireNotNull(context.contentResolver.query(children,cols,null,null,null)) {
+                "Không đọc được thư mục Pictures. Hãy chọn lại đúng thư mục trong Bộ nhớ trong."
+            }.use { cursor ->
                 val idAt=cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
                 val nameAt=cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
                 val mimeAt=cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_MIME_TYPE)
@@ -188,3 +192,4 @@ object GamePhotoImport {
         return Result(copied,skipped,failed,cancelled(),root)
     }
 }
+
