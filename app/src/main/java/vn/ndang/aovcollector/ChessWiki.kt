@@ -483,7 +483,13 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         val image=ChessWiki.filename(t,"trang",page)
         val signature=l.signature.copyOf()
         val native=ChessWiki.nativeGroup(t,options)!=null
-        val candidates=if(native) l.nativeTiles(t) else if(ChessWiki.detailType(t,options)!=null) l.tiles(t) else emptyList()
+        // A row screenshot is mandatory for Quân cờ even when "Mở từng quân cờ" is off.
+        val candidates=when {
+            t.key=="tat-ca-quan-co" -> l.tiles(t)
+            native -> l.nativeTiles(t)
+            ChessWiki.detailType(t,options)!=null -> l.tiles(t)
+            else -> emptyList()
+        }
         val path="chess-page:"+t.key+":"+page
         val next={ collect(at,page,signature,candidates,0) }
         if(screen.seen(path)) { l.discard(); next() }
@@ -494,7 +500,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         val t=topics[at]
         val kind=ChessWiki.detailType(t,options)
         val originalGroup=ChessWiki.nativeGroup(t,options)
-        if((kind==null&&originalGroup==null)||from>=tiles.size||items>=MAX_TILES)
+        if(from>=tiles.size||items>=MAX_TILES||
+           (kind==null&&originalGroup==null&&t.key!="tat-ca-quan-co"))
             return nextPage(at,page,signature)
         val newRow=t.key=="tat-ca-quan-co" &&
             (from==0 || abs(tiles[from-1].y-tiles[from].y)>.075)
