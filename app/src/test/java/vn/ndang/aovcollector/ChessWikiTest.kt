@@ -252,6 +252,17 @@ class ChessWikiTest {
             ChessWiki.heroRows(first).single().map { it.label })
     }
 
+    @Test fun chessMissingCardNameUsesRolePositionWithoutCallingTheHeroDauSi() {
+        fun w(text:String,x:Double,y:Double)=GameScreens.Word(text,x-.045,y-.014,x+.045,y+.014)
+        val cards=ChessWiki.heroNameTiles(listOf(w("Violet",.275,.584),
+            w("A Đấu sĩ",.421,.638),w("Hayate",.567,.584)))
+        assertEquals(3,cards.size)
+        assertEquals(listOf("Violet",null,"Hayate"),cards.map { it.label })
+        assertEquals(.421,cards[1].x,.001)
+        assertEquals(.408,cards[1].y,.001)
+        assertTrue(cards[1].id.startsWith("unread-"))
+    }
+
     @Test fun chessModalHeroTitleIgnoresSkillHeading() {
         fun w(text:String,x:Double,y:Double)=
             GameScreens.Word(text,x-.055,y-.014,x+.055,y+.014)
@@ -387,6 +398,7 @@ class ChessWikiTest {
     }
 
     @Test fun chessCollectorCorrectsRoleLabelFromVerifiedArduinPopupAndDeduplicates() {
+        for(firstLabel in listOf("A Đấu sĩ",null)) {
         fun w(text:String,x:Double,y:Double)=GameScreens.Word(text,x-.04,y-.015,x+.04,y+.015)
         val seen=hashSetOf("item:tat-ca-quan-co:hero-violet") // resume an existing run
         val saved=ArrayList<String>()
@@ -408,8 +420,8 @@ class ChessWikiTest {
                     override val modal=modal
                     // Simulate an old/noisy card detection, then another OCR spelling after scrolling.
                     override fun tiles(topic:ChessWiki.Topic)=listOf(
-                        ChessWiki.Tile(.275,.408,if(page==1) "hero-a-dau-si" else "hero-ardvin",
-                            if(page==1) "A Đấu sĩ" else "Ardvin"))
+                        ChessWiki.Tile(.275,.408,if(page==1) "unread-0-408" else "hero-ardvin",
+                            if(page==1) firstLabel else "Ardvin"))
                     override fun keep(name:String,then:(Boolean)->Unit) { saved.add(name);then(true) }
                     override fun discard() {}
                 })
@@ -441,6 +453,7 @@ class ChessWikiTest {
         assertTrue(messages.any { it.contains("đã lưu 1 tướng")&&it.contains("tổng chưa xác định") })
         assertTrue(messages.any { it.contains("đã lưu 2 tướng")&&it.contains("tổng chưa xác định") })
         assertFalse(messages.any { it.contains("/1") || it.contains("đã lưu 3 tướng") })
+        }
     }
 
     @Test fun chessCollectorKeepsRowsButDoesNotGuessWhenCroppedTitlesAreUnreliable() {

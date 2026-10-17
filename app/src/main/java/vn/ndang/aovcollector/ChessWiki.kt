@@ -151,6 +151,7 @@ object ChessWiki {
     // A portrait is about 17% of the screen ABOVE its hero name. Reading the name first
     // prevents tapping remnants of the previous row when the list has been scrolled.
     private val HERO_COLUMNS=listOf(.275,.421,.567,.713,.858)
+    private val HERO_ROLES=setOf("phaothu","dausi","cungthu","phapsu","dodon","satthu","trothu")
     private val NON_HERO_NAMES=setOf(
         "phaothu","dausi","cungthu","phapsu","dodon","satthu","trothu",
         "phuthuy","cuongchien","thuve","chuatet","thanhquan",
@@ -171,23 +172,36 @@ object ChessWiki {
             (current?.let { " · đang mở $it" }?:"")
 
     /**
-     * Hero cards are keyed by their visible NAMES, never by a pixel patch of the card or
-     * by a skill heading. Position is the PORTRAIT, which is safely tappable even after
-     * the list moves. This pure helper is exercised with first/second-page OCR fixtures.
+     * Named cards use their visible names. A role-only observation has no hero label until
+     * the popup verifies it. Position is the portrait, safely tappable after scrolling.
      */
     fun heroNameTiles(words:List<GameScreens.Word>):List<Tile> {
         val result=ArrayList<Tile>()
+        val unnamed=ArrayList<Tile>()
         for(w in words) {
             val name=w.text.trim().replace(Regex("\\s+\\d+$"),"").trim()
             val slug=HeroNames.slug(name)
-            if(w.y !in .49.. .925 || slug.length !in 2..25 || !isHeroName(name)) continue
+            if(w.y !in .49.. .925 || slug.length !in 2..25) continue
             val x=HERO_COLUMNS.minByOrNull { abs(w.x-it) }?:continue
             if(abs(w.x-x)>.047) continue
+            if(!isHeroName(name)) {
+                val plain=GameScreens.plain(name)
+                // If the name itself was missed, a role identifies a card's position only.
+                // It sits below the name; never use this role text as the hero's identity.
+                if(HERO_ROLES.any { plain.endsWith(it)&&plain.length<=it.length+2 }) {
+                    val y=w.y-.23
+                    if(y in .29.. .77) unnamed.add(Tile(x,y,
+                        "unread-"+HERO_COLUMNS.indexOf(x)+"-"+(y*1000).toInt()))
+                }
+                continue
+            }
             val portraitY=w.y-.172
             if(portraitY !in .29.. .77) continue
             if(result.none { it.id=="hero-"+slug })
                 result.add(Tile(x,portraitY,"hero-"+slug,name))
         }
+        for(tile in unnamed) if(result.none { abs(it.x-tile.x)<.02&&abs(it.y-tile.y)<.10 })
+            result.add(tile)
         return heroRows(result).flatten()
     }
 
@@ -255,6 +269,7 @@ object ChessWiki {
     fun tiles(t:Topic,b:Bitmap,words:List<GameScreens.Word>):List<Tile> {
         if(t.key=="tat-ca-quan-co") {
             return heroNameTiles(words).filter { tile ->
+                if(tile.label==null) return@filter score(b,tile.x,tile.y,.022)>12
                 val title=words.firstOrNull { w ->
                     HeroNames.slug(w.text.trim().replace(Regex("\\s+\\d+$"),""))==
                         tile.id.removePrefix("hero-") &&
@@ -567,7 +582,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         val originalGroup=ChessWiki.nativeGroup(t,options)
         val item=tiles[from]
         val identity="item:"+t.key+":"+item.id
-        if(!tried.add(identity)) return collect(at,page,signature,tiles,from+1)
+        val observation=if(item.label==null) identity+":page:"+page else identity
+        if(!tried.add(observation)) return collect(at,page,signature,tiles,from+1)
 
         fun detail() {
             if(kind==null||screen.seen(identity)) return collect(at,page,signature,tiles,from+1)
