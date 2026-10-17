@@ -50,8 +50,8 @@ class CaptureImagePreview(private val c:Context,private val worker:Executor,priv
         box.addView(header)
         val message=Ui.text(c,"Đang mở ảnh…",11f,Color.LTGRAY);box.addView(message)
         box.addView(zoom,LinearLayout.LayoutParams(-1,0,1f))
-        val bounds=wm.currentWindowMetrics.bounds
-        val p=WindowManager.LayoutParams(bounds.width(),bounds.height(),WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+        // MATCH_PARENT uses the usable display area, including landscape navigation-bar insets.
+        val p=WindowManager.LayoutParams(WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.MATCH_PARENT,WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,PixelFormat.TRANSLUCENT).apply { gravity=Gravity.TOP or Gravity.START }
         wm.addView(box,p);frame=box;params=p;image=zoom;shield(hidden)
         worker.execute {

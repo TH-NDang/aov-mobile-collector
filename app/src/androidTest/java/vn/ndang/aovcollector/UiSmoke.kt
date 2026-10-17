@@ -609,6 +609,10 @@ class UiSmoke:Instrumentation() {
             waitFor("Large image did not load") { previewImage()?.stateDescription?.toString()=="Phóng to 100%" }
             val largeBounds=Rect().also { previewImage()!!.getBoundsInScreen(it) }
             check(largeBounds.width()>400&&largeBounds.height()>200) { "Image preview is not enlarged: $largeBounds" }
+            val closePreviewNode=nodes().flatMap { it.findAccessibilityNodeInfosByText("Đóng ảnh lớn") }
+                .first { it.contentDescription?.toString()=="Đóng ảnh lớn" }
+            val closePreviewBounds=Rect().also { closePreviewNode.getBoundsInScreen(it) }
+            check(closePreviewBounds.width()>=Ui.dp(targetContext,60)) { "Preview close button is clipped: $closePreviewBounds" }
             fun previewAction(label:String) {
                 val node=nodes().flatMap { it.findAccessibilityNodeInfosByText(label) }
                     .firstOrNull { it.contentDescription?.toString()==label }?:error("Missing preview action $label")
