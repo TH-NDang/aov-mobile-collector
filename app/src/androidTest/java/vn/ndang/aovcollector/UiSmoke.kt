@@ -193,7 +193,12 @@ class UiSmoke:Instrumentation() {
             val upgraded=Macro(MacroStore.current(targetContext).readText())
             check(upgraded.json.optInt("builtinVersion")==BuiltInMacros.VERSION&&upgraded.json.optInt("heroCount")==2) { "Old built-in macro was not upgraded" }
             MacroStore.current(targetContext).writeText(BuiltInMacros.create(""));runOnMainSync { service!!.reset() }
+            // Legacy users may have saved icon-only mode. It must no longer hide labels.
+            targetContext.getSharedPreferences("ui",0).edit().putBoolean("panelShowLabels",false).commit()
             runOnMainSync { service!!.showPanel() }
+            check(!targetContext.getSharedPreferences("ui",0).contains("panelShowLabels")) {
+                "Obsolete icon-only preference was not removed"
+            }
             // Exercise the actual chooser button, repeatedly, then after rotation.
             fun chooserClick() {
                 waitForIdleSync();SystemClock.sleep(500)
@@ -237,19 +242,21 @@ class UiSmoke:Instrumentation() {
             click("Chọn tác vụ")
             check(Macro(MacroStore.current(targetContext).readText()).json.let { it.optString("heroName")=="Violet"&&it.optString("collectionMode")=="single" })
             snap("04-panel")
-            // Selected macro occupies the small bar above the controls; icons still identify actions
-            // when the user switches to icon-only mode.
+            // The chosen macro is visible and each action shows its label with its icon.
             fun selectedMacroVisible()=nodes().flatMap { it.findAccessibilityNodeInfosByText("Lấy thông tin tướng") }
                 .any { it.text?.toString()=="Lấy thông tin tướng" && it.contentDescription?.toString()=="Chọn macro, có tìm kiếm" }
             check(selectedMacroVisible()) { "Selected macro is not shown in the compact picker" }
-            click("Ẩn chữ");SystemClock.sleep(400);snap("04a-icon-only")
-            check(selectedMacroVisible()) { "Icon-only mode hid the chosen macro's name" }
-            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Chụp") }
-                .any { it.contentDescription?.toString()=="Chụp" && it.text.isNullOrEmpty() }) {
-                "Icon-only capture button must retain its accessible name" }
-            click("Hiện chữ");SystemClock.sleep(400)
-            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Chụp") }
-                .any { it.text?.toString()=="Chụp" }) { "Show-labels mode did not restore action captions" }
+            for(caption in listOf("Chụp","Về app","Đóng","Dừng")) {
+                check(nodes().flatMap { it.findAccessibilityNodeInfosByText(caption) }
+                    .any { it.text?.toString()==caption && it.contentDescription?.toString()==caption }) {
+                    "Icon and readable label missing: $caption"
+                }
+            }
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Ẩn chữ") }
+                .none { it.text?.toString()=="Ẩn chữ" }) { "Obsolete hide-label option is still visible" }
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Hiện chữ") }
+                .none { it.text?.toString()=="Hiện chữ" }) { "Obsolete show-label option is still visible" }
+            snap("04a-always-labeled-controls")
             // No run yet: Dừng has nothing to end.
             check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Dừng") }.firstOrNull { it.text?.toString()=="Dừng" }?.isEnabled==false) { "Dừng is enabled before any run" }
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1500);snap("05-landscape")
