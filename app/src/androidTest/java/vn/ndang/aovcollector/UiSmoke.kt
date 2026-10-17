@@ -563,10 +563,10 @@ class UiSmoke:Instrumentation() {
             check(savedRow.state=="saved"&&savedRow.bytes>0&&File(targetContext.filesDir,"captures/"+savedRow.path).isFile)
             val failedOrder=CaptureHistory.begin(targetContext,"progress-smoke",File(historyDir,"failed.png"))
             CaptureHistory.finish(targetContext,failedOrder,false)
-            val interrupted=CaptureHistory.begin(targetContext,"progress-smoke",File(historyDir,"interrupted.png"))
+            val interruptedCapture=CaptureHistory.begin(targetContext,"progress-smoke",File(historyDir,"interrupted.png"))
             CaptureHistory.recover(targetContext)
             val journal=CaptureHistory.entries(targetContext)
-            check(journal.zipWithNext().all { (a,b)->a.order<b.order }&&journal.last().order==interrupted&&journal.last().state=="interrupted")
+            check(journal.zipWithNext().all { (a,b)->a.order<b.order }&&journal.last().order==interruptedCapture&&journal.last().state=="interrupted")
             check(journal.first { it.order==failedOrder }.state=="failed")
             click("Ảnh")
             waitFor("Missing live saved-image row") { nodes().any { it.findAccessibilityNodeInfosByText("history-real-save.png").isNotEmpty() } }
