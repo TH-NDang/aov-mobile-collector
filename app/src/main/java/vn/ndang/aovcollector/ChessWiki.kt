@@ -146,34 +146,111 @@ object ChessWiki {
 
 
     data class Tile(val x:Double,val y:Double,val id:String,val label:String?=null)
-    /** All coordinates are fractions of the complete landscape screenshot, including the game's side margins. */
+
+    // The five card centres in the chess encyclopedia (not the left edges of each card).
+    // A portrait is about 17% of the screen ABOVE its hero name. Reading the name first
+    // prevents tapping remnants of the previous row when the list has been scrolled.
+    private val HERO_COLUMNS=listOf(.275,.421,.567,.713,.858)
+    private val NON_HERO_NAMES=setOf(
+        "phaothu","dausi","cungthu","phapsu","dodon","satthu","trothu",
+        "phuthuy","cuongchien","thuve","chuatet","thanhquan",
+        "giaidieuhocduong","doalacgia","mianhduoitrang","langkhach",
+        "demdong","chihuy","hothien","hoily","phe","nghe"
+    )
+
+    /**
+     * Hero cards are keyed by their visible NAMES, never by a pixel patch of the card or
+     * by a skill heading. Position is the PORTRAIT, which is safely tappable even after
+     * the list moves. This pure helper is exercised with first/second-page OCR fixtures.
+     */
+    fun heroNameTiles(words:List<GameScreens.Word>):List<Tile> {
+        val result=ArrayList<Tile>()
+        for(w in words) {
+            val name=w.text.trim().replace(Regex("\\s+\\d+$"),"").trim()
+            val slug=HeroNames.slug(name)
+            if(w.y !in .49.. .925 || slug.length !in 2..25 ||
+               name.count { it.isLetter() }<2 || w.text.contains('…') ||
+               w.text.contains("...") || slug in NON_HERO_NAMES) continue
+            val x=HERO_COLUMNS.minByOrNull { abs(w.x-it) }?:continue
+            if(abs(w.x-x)>.047) continue
+            val portraitY=w.y-.172
+            if(portraitY !in .29.. .77) continue
+            if(result.none { it.id=="hero-"+slug })
+                result.add(Tile(x,portraitY,"hero-"+slug,name))
+        }
+        return result.sortedWith(compareBy({it.y},{it.x}))
+    }
+
+    /** Keep each row intact and visit its five heroes left-to-right. */
+    fun heroRows(tiles:List<Tile>):List<List<Tile>> {
+        val rows=ArrayList<MutableList<Tile>>()
+        for(tile in tiles.sortedWith(compareBy({it.y},{it.x}))) {
+            if(rows.isEmpty()||abs(rows.last().first().y-tile.y)>.075) rows.add(ArrayList())
+            rows.last().add(tile)
+        }
+        return rows
+    }
+
+    fun rowKey(topic:Topic,row:List<Tile>)=
+        "row:"+topic.key+":"+row.joinToString("|") { it.id }
+
+    /** A cropped screenshot of exactly this row, saved in .../tat-ca-quan-co/hang/. */
+    fun rowFilename(topic:Topic,page:Int,row:List<Tile>):String {
+        val digest=MessageDigest.getInstance("SHA-256").digest(rowKey(topic,row).toByteArray())
+            .take(5).joinToString("") { "%02x".format(it) }
+        val first=safeName(row.first().label?:"chua-ro-ten").take(20)
+        return "chess__"+topic.section+"__"+topic.key+"__hang__"+
+            "%03d".format(page)+"-"+first+"-"+digest
+    }
+
+    /** Hero's name lives at the top of the detail drawer; the skill title is lower down. */
+    fun modalHeroTitle(words:List<GameScreens.Word>):String? =
+        words.asSequence().filter { it.y in .215.. .335 && it.x in .355.. .66 }
+            .map { it.text.trim().replace(Regex("\\s+\\d+$"),"").trim() }
+            .firstOrNull { name ->
+                name.length in 2..35 && name.count { it.isLetter() }>=2 &&
+                HeroNames.slug(name) !in NON_HERO_NAMES &&
+                !name.contains('…') && !name.contains("...")
+            }
+
+    /**
+     * White title letters distinguish the hero's NAME from cyan faction/job labels.
+     * Read within ML Kit's own text bounds; no fixed row Y, so page 2 is recognized.
+     */
+    private fun looksLikeWhiteTitle(b:Bitmap,w:GameScreens.Word):Boolean {
+        val x0=(w.left*b.width).toInt().coerceIn(0,b.width-1)
+        val x1=(w.right*b.width).toInt().coerceIn(x0+1,b.width)
+        val y0=(w.top*b.height).toInt().coerceIn(0,b.height-1)
+        val y1=(w.bottom*b.height).toInt().coerceIn(y0+1,b.height)
+        val dx=max(1,(x1-x0)/26)
+        val dy=max(1,(y1-y0)/10)
+        var nearWhite=0;var total=0
+        for(y in y0 until y1 step dy) for(x in x0 until x1 step dx) {
+            val p=b.getPixel(x,y)
+            val red=Color.red(p);val green=Color.green(p);val blue=Color.blue(p)
+            if(red>166&&green>166&&blue>166&&abs(red-green)<48&&abs(green-blue)<48) nearWhite++
+            total++
+        }
+        return total>0 && nearWhite.toDouble()/total>.025
+    }
+
+    /** All coordinates are fractions of the full landscape screenshot. */
     fun tiles(t:Topic,b:Bitmap,words:List<GameScreens.Word>):List<Tile> {
+        if(t.key=="tat-ca-quan-co") {
+            return heroNameTiles(words).filter { tile ->
+                val title=words.firstOrNull { w ->
+                    HeroNames.slug(w.text.trim().replace(Regex("\\s+\\d+$"),""))==
+                        tile.id.removePrefix("hero-") &&
+                    abs(w.y-(tile.y+.172))<.015 && abs(w.x-tile.x)<.047
+                }
+                title!=null && looksLikeWhiteTitle(b,title) &&
+                    score(b,tile.x,tile.y,.022)>12
+            }
+        }
         val spots=ArrayList<Triple<Double,Double,String?>>()
         when(t.key) {
-            "tat-ca-quan-co" -> {
-                val cols=listOf(.292,.438,.583,.729,.875)
-                val banned=setOf("phaothu","dau si","dausi","cungthu","phapsu","dod on","dod on",
-                                 "satthu","trothu","langkhach","chuchien","phe","nghe")
-                for(w in words) {
-                    val p=w.plain
-                    if(w.y !in .43.. .91 || w.x !in .25.. .94 || p.length !in 2..22 || p in banned) continue
-                    val col=cols.minByOrNull { abs(it-w.x) }?:continue
-                    if(abs(col-w.x)>.047) continue
-                    val cy=w.y-.16
-                    if(cy !in .31.. .80) continue
-                    if(score(b,col,cy,.022) > 13) spots.add(Triple(col,cy,w.text))
-                }
-                // OCR can miss names on decorative cards. Scan for the vivid circular portraits in each column.
-                for(x in cols) {
-                    val peaks=(32..82 step 2).map { it/100.0 }.map { y -> y to score(b,x,y,.025) }
-                        .filter { it.second>30 && (it.first<.58 || it.second>35) }.sortedByDescending { it.second }
-                    for((y,_) in peaks) if(spots.none { abs(it.first-x)<.025&&abs(it.second-y)<.17 })
-                        spots.add(Triple(x,y,null))
-                }
-            }
             "tat-ca-trang-bi" -> {
                 val cols=listOf(.324,.388,.453,.520,.586,.651)
-                // Four rows in the provided screenshot; subsequent pages use the same safe content area.
                 for(y in listOf(.24,.428,.613,.80)) for(x in cols)
                     if(score(b,x,y,.019)>35) spots.add(Triple(x,y,null))
             }
