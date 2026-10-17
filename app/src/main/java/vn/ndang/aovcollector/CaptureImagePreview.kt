@@ -84,15 +84,16 @@ class CaptureImagePreview(private val c:Context,private val worker:Executor,priv
     }
     fun close() {
         token++;frame?.let { if(it.isAttachedToWindow) wm.removeView(it) };frame=null;params=null
-        image?.setImageDrawable(null);image=null;bitmap?.recycle();bitmap=null
+        image?.clear();image=null;bitmap?.recycle();bitmap=null
     }
 
-    private class ZoomImage(c:Context):android.widget.ImageView(c) {
+    private class ZoomImage(c:Context):FrameLayout(c) {
+        private val picture=ImageView(c).apply { scaleType=ImageView.ScaleType.MATRIX;importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         private var photo:Bitmap?=null
         private var factor=1f
         private var fit=1f
-        private var left=0f
-        private var top=0f
+        private var offsetX=0f
+        private var offsetY=0f
         private var lastX=0f
         private var lastY=0f
         private val transform=Matrix()
@@ -104,31 +105,36 @@ class CaptureImagePreview(private val c:Context,private val worker:Executor,priv
             override fun onDoubleTap(e:MotionEvent):Boolean { changeZoom(if(factor>1.1f) 1/factor else 2.5f,e.x,e.y);return true }
             override fun onSingleTapUp(e:MotionEvent):Boolean { performClick();return true }
         })
-        init { scaleType=ScaleType.MATRIX;isClickable=true }
-        fun show(b:Bitmap) { photo=b;setImageBitmap(b);resetFit() }
+        init { addView(picture,LayoutParams(-1,-1));isClickable=true }
+        fun clear() { photo=null;picture.setImageDrawable(null) }
+        fun show(b:Bitmap) { photo=b;picture.setImageBitmap(b);resetFit() }
         override fun onSizeChanged(w:Int,h:Int,oldw:Int,oldh:Int) { super.onSizeChanged(w,h,oldw,oldh);resetFit() }
         private fun resetFit() {
             val b=photo?:return;if(width==0||height==0) return
-            fit=minOf(width.toFloat()/b.width,height.toFloat()/b.height);factor=1f;left=0f;top=0f;drawPosition()
+            fit=minOf(width.toFloat()/b.width,height.toFloat()/b.height);factor=1f;offsetX=0f;offsetY=0f;drawPosition()
         }
         fun changeZoom(amount:Float,x:Float=width/2f,y:Float=height/2f) {
             if(photo==null) return
             val next=(factor*amount).coerceIn(1f,6f);val ratio=next/factor
-            left=x-(x-left)*ratio;top=y-(y-top)*ratio;factor=next;drawPosition()
+            offsetX=x-(x-offsetX)*ratio;offsetY=y-(y-offsetY)*ratio;factor=next;drawPosition()
         }
         private fun drawPosition() {
             val b=photo?:return;val w=b.width*fit*factor;val h=b.height*fit*factor
-            left=if(w<=width) (width-w)/2 else left.coerceIn(width-w,0f)
-            top=if(h<=height) (height-h)/2 else top.coerceIn(height-h,0f)
-            transform.setScale(fit*factor,fit*factor);transform.postTranslate(left,top);imageMatrix=transform
+            offsetX=if(w<=width) (width-w)/2 else offsetX.coerceIn(width-w,0f)
+            offsetY=if(h<=height) (height-h)/2 else offsetY.coerceIn(height-h,0f)
+            transform.setScale(fit*factor,fit*factor);transform.postTranslate(offsetX,offsetY);picture.imageMatrix=transform
             stateDescription="Phóng to ${(factor*100).toInt()}%"
         }
         override fun onTouchEvent(e:MotionEvent):Boolean {
             pinch.onTouchEvent(e);taps.onTouchEvent(e)
             when(e.actionMasked) {
-                MotionEvent.ACTION_DOWN,MotionEvent.ACTION_POINTER_UP -> { lastX=e.x;lastY=e.y }
+                MotionEvent.ACTION_DOWN -> { lastX=e.x;lastY=e.y }
+                MotionEvent.ACTION_POINTER_UP -> {
+                    val remaining=if(e.actionIndex==0&&e.pointerCount>1) 1 else 0
+                    lastX=e.getX(remaining);lastY=e.getY(remaining)
+                }
                 MotionEvent.ACTION_MOVE -> {
-                    if(!pinch.isInProgress&&e.pointerCount==1) { left+=e.x-lastX;top+=e.y-lastY;drawPosition() }
+                    if(!pinch.isInProgress&&e.pointerCount==1) { offsetX+=e.x-lastX;offsetY+=e.y-lastY;drawPosition() }
                     lastX=e.x;lastY=e.y
                 }
             }
