@@ -85,9 +85,8 @@ class UiSmoke:Instrumentation() {
             // Native Save Photo exports go through a real SAF provider, then appear in app history.
             val photoTree=android.provider.DocumentsContract.buildTreeDocumentUri(
                 "vn.ndang.aovcollector.test.photos","Pictures")
-            context.grantUriPermission(targetContext.packageName,photoTree,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION or
-                    Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION)
+            context.startActivity(Intent(context,PhotoGrantActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            waitForIdleSync();SystemClock.sleep(700)
             GamePhotoImport.choose(targetContext,photoTree)
             val photoRoot=android.provider.DocumentsContract.buildDocumentUriUsingTree(photoTree,"Pictures")
             fun nativeFile(name:String):android.net.Uri {

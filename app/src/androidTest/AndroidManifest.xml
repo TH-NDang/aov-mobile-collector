@@ -2,6 +2,8 @@
     <application>
         <provider android:name="vn.ndang.aovcollector.PhotoTestProvider"
             android:authorities="vn.ndang.aovcollector.test.photos"
-            android:exported="true" android:grantUriPermissions="true" />
+            android:exported="true" android:grantUriPermissions="true"
+            android:permission="android.permission.MANAGE_DOCUMENTS" />
+        <activity android:name="vn.ndang.aovcollector.PhotoGrantActivity" android:exported="true" />
     </application>
 </manifest>
