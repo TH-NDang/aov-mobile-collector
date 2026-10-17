@@ -21,7 +21,6 @@ class CaptureImagePreview(private val c:Context,private val worker:Executor,priv
     internal val view:View? get()=frame
     private var params:WindowManager.LayoutParams?=null
     private var image:ZoomImage?=null
-    private var bitmap:Bitmap?=null
     private var token=0
     private var hidden=false
     private fun dp(n:Int)=Ui.dp(c,n)
@@ -70,7 +69,7 @@ class CaptureImagePreview(private val c:Context,private val worker:Executor,priv
                 if(request!=token||frame!==box) loaded?.recycle()
                 else if(loaded==null) message.text="Không mở được ảnh. File có thể đã bị xóa hoặc không còn đọc được."
                 else {
-                    bitmap=loaded;zoom.show(loaded)
+                    zoom.show(loaded)
                     message.text="${loaded.width} × ${loaded.height} · Chụm hai ngón hoặc dùng +/− để phóng to · Kéo để xem"
                 }
             }
@@ -84,7 +83,8 @@ class CaptureImagePreview(private val c:Context,private val worker:Executor,priv
     }
     fun close() {
         token++;frame?.let { if(it.isAttachedToWindow) wm.removeView(it) };frame=null;params=null
-        image?.clear();image=null;bitmap?.recycle();bitmap=null
+        // A removed overlay can still have a pending draw; never recycle an image already displayed.
+        image?.clear();image=null
     }
 
     private class ZoomImage(c:Context):FrameLayout(c) {

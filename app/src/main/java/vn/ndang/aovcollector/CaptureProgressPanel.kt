@@ -28,7 +28,6 @@ class CaptureProgressPanel(private val c:Context,private val swallowed:()->Unit,
     private var summary:TextView?=null
     private var rows:LinearLayout?=null
     private var scroll:ScrollView?=null
-    private var bitmaps=emptyList<Bitmap>()
     @Volatile private var signature=""
     private var epoch=0
     private var loading=false
@@ -112,7 +111,9 @@ class CaptureProgressPanel(private val c:Context,private val swallowed:()->Unit,
                         status?.text=details
                         summary?.text=if(entries.isEmpty()) "Chưa có ảnh. Lịch sử bắt đầu từ bản này."
                             else "${entries.size} ảnh gần nhất · cũ → mới · tự cập nhật"
-                        if(changed) { signature=key;render(entries,thumbs);val old=bitmaps;bitmaps=images;old.forEach { it.recycle() } }
+                        // Window removal/rotation may still draw the previous view for another frame.
+                        // Let Android release displayed bitmaps after its drawables stop referencing them.
+                        if(changed) { signature=key;render(entries,thumbs) }
                         main.postDelayed(tick,750)
                     }
                 }
@@ -153,7 +154,6 @@ class CaptureProgressPanel(private val c:Context,private val swallowed:()->Unit,
         preview.close()
         epoch++;main.removeCallbacks(tick)
         layout?.let { if(it.isAttachedToWindow) wm.removeView(it) };layout=null;rows=null;scroll=null;status=null;summary=null
-        bitmaps.forEach { it.recycle() };bitmaps=emptyList()
     }
     fun destroy() { close();worker.shutdown() }
 }
