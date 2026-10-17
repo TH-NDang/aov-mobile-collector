@@ -212,24 +212,24 @@ class CollectorService : AccessibilityService() {
         if(params!=null && view.isAttachedToWindow) try { wm.updateViewLayout(view,params) } catch(e:Exception) { CrashLog.record(this,"Không cập nhật được bảng nổi",e) }
     }
     private fun detach(view:View) { try { wm.removeView(view) } catch(e:Exception) { CrashLog.record(this,"Không gỡ được bảng nổi",e) } }
-    /** Native vector (SVG-style) icon shown on every panel action; only labels are optional. */
-    private fun panelButtonIcon(button:Button,icon:Int,caption:String,showLabels:Boolean,color:Int=Color.WHITE) {
+    /** Every panel action always shows its vector icon AND readable label. */
+    private fun panelButtonIcon(button:Button,icon:Int,caption:String,color:Int=Color.WHITE) {
         val drawable=getDrawable(icon)?.mutate()?.apply {
             setTint(color)
             setBounds(0,0,dp(18),dp(18))
         }
-        // With icon-only mode use the TOP drawable: it is centered instead of left-aligned.
-        button.setCompoundDrawables(if(showLabels) drawable else null,if(showLabels) null else drawable,null,null)
-        button.compoundDrawablePadding=if(showLabels) dp(5) else 0
-        button.text=if(showLabels) caption else ""
+        button.setCompoundDrawables(drawable,null,null,null)
+        button.compoundDrawablePadding=dp(5)
+        button.text=caption
         button.gravity=Gravity.CENTER
-        button.textSize=if(showLabels) 12f else 11f
+        button.textSize=12f
         button.setPadding(dp(6),0,dp(6),0)
         button.contentDescription=caption
         button.tooltipText=caption
     }
     private fun rebuildPanel() {
-        val showLabels=uiPrefs.getBoolean("panelShowLabels",true)
+        // Discard obsolete icon-only preference from previous versions.
+        if(uiPrefs.contains("panelShowLabels")) uiPrefs.edit().remove("panelShowLabels").apply()
         dismissMacroPicker()
         panel?.let { detach(it) }; panel=null
         label=null; primary=null; stopView=null; choose=null; taskLabel=null; taskDetail=null; progress=null; bubble=null
@@ -269,16 +269,6 @@ class CollectorService : AccessibilityService() {
             val header=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
             val title=Ui.text(this,"AOV · KÉO ĐỂ DI CHUYỂN",10f,Color.rgb(220,224,237),true)
             header.addView(title,LinearLayout.LayoutParams(0,dp(32),1f));drag(title)
-            val labelsToggle=Ui.button(this,if(showLabels) "Ẩn chữ" else "Hiện chữ") {
-                uiPrefs.edit().putBoolean("panelShowLabels",!showLabels).apply()
-                rebuildPanel()
-            }.apply {
-                textSize=10f
-                setTextColor(Color.WHITE)
-                background=Ui.shape(Color.rgb(48,53,78),dp(9))
-                contentDescription=if(showLabels) "Ẩn chữ các thao tác" else "Hiện chữ các thao tác"
-            }
-            header.addView(labelsToggle,LinearLayout.LayoutParams(dp(75),dp(32)).apply { marginEnd=dp(5) })
             val collapse=Ui.button(this,"−") { compact=true;rebuildPanel() }.apply {
                 contentDescription="Thu gọn bảng nổi";setTextColor(Color.WHITE)
                 background=Ui.shape(Color.rgb(47,52,74),dp(10))
@@ -287,7 +277,7 @@ class CollectorService : AccessibilityService() {
             layout.addView(header)
 
             // Small macro selector ABOVE the status/actions. Its text always displays the current macro,
-            // including an imported JSON macro's own name, even when the action labels are hidden.
+            // including an imported JSON macro's own name.
             val macroRow=LinearLayout(this).apply { gravity=Gravity.CENTER_VERTICAL }
             macroRow.addView(Ui.text(this,"MACRO",10f,Color.rgb(166,169,202),true).apply {
                 includeFontPadding=false;setPadding(0,0,dp(4),0)
@@ -308,13 +298,11 @@ class CollectorService : AccessibilityService() {
             macroRow.addView(choose,LinearLayout.LayoutParams(0,dp(36),1f))
             layout.addView(macroRow,LinearLayout.LayoutParams(-1,dp(38)).apply { topMargin=dp(5) })
 
-            if(showLabels) {
-                taskDetail=Ui.text(this,"",11f,Color.rgb(226,230,240)).apply {
-                    setPadding(0,dp(3),0,0);includeFontPadding=false
-                    maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END
-                }
-                layout.addView(taskDetail)
+            taskDetail=Ui.text(this,"",11f,Color.rgb(226,230,240)).apply {
+                setPadding(0,dp(3),0,0);includeFontPadding=false
+                maxLines=1;ellipsize=android.text.TextUtils.TruncateAt.END
             }
+            layout.addView(taskDetail)
             progress=ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal).apply {
                 max=100
                 progressTintList=android.content.res.ColorStateList.valueOf(Color.rgb(159,139,255))
@@ -340,9 +328,7 @@ class CollectorService : AccessibilityService() {
                 setTextColor(Color.rgb(255,213,220))
                 background=Ui.shape(Color.argb(190,112,43,64),dp(11))
             }
-            actions.addView(stopButton,
-                if(showLabels) LinearLayout.LayoutParams(dp(86),dp(42)).apply { leftMargin=dp(7) }
-                else LinearLayout.LayoutParams(0,dp(42),1f).apply { leftMargin=dp(7) })
+            actions.addView(stopButton,LinearLayout.LayoutParams(dp(86),dp(42)).apply { leftMargin=dp(7) })
             layout.addView(actions)
 
             val footer=LinearLayout(this)
@@ -350,7 +336,7 @@ class CollectorService : AccessibilityService() {
                 val b=Ui.button(this,caption,action=action).apply {
                     setTextColor(Color.WHITE)
                     background=Ui.shape(Color.argb(155,53,60,84),dp(10))
-                    panelButtonIcon(this,icon,caption,showLabels)
+                    panelButtonIcon(this,icon,caption)
                 }
                 footer.addView(b,LinearLayout.LayoutParams(0,dp(39),1f).apply {
                     topMargin=dp(7);if(footer.childCount>0) leftMargin=dp(6)
@@ -388,10 +374,9 @@ class CollectorService : AccessibilityService() {
         val caption=when { running -> "Tạm dừng";busy||manualBusy -> "Đang xử lý…";ended() -> "Tạo lượt mới";step>0 -> "Tiếp tục";else -> "Chạy" }
         val glyph=when { running -> R.drawable.ic_panel_pause;busy||manualBusy -> R.drawable.ic_panel_check
             ended() -> R.drawable.ic_panel_reset;else -> R.drawable.ic_panel_play }
-        val showLabels=uiPrefs.getBoolean("panelShowLabels",true)
-        primary?.let { panelButtonIcon(it,glyph,caption,showLabels) }
+        primary?.let { panelButtonIcon(it,glyph,caption) }
         primary?.isEnabled=running || (!busy && !manualBusy && m!=null)
-        stopView?.let { panelButtonIcon(it,R.drawable.ic_panel_stop,"Dừng",showLabels,Color.rgb(255,213,220)) }
+        stopView?.let { panelButtonIcon(it,R.drawable.ic_panel_stop,"Dừng",Color.rgb(255,213,220)) }
         // Dừng ends a run: nothing to end before one starts or after it ended.
         val stoppable=canStop(); stopView?.isEnabled=stoppable; stopView?.alpha=if(stoppable) 1f else .4f
         bubble?.text=if(running) "AOV\n${progress?.progress ?: if(m!=null) step*100/maxOf(1,m.steps.length()) else 0}%" else "AOV"
