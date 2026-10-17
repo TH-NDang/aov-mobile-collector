@@ -44,6 +44,10 @@ object AfterRunSettings {
             if(last.optString("stage") in setOf("failed","chat-failed")) body.addView(Ui.button(c,"Thử lại bước chưa xong") {
                 AfterRun.retry(c,last.getString("run"));dialog.dismiss();onSaved()
             })
+            if(last.optString("stage") in setOf("queued","writing","waiting-drive","drive-confirmed","chat-opening","prompt-filled","sending"))
+                body.addView(Ui.button(c,"Dừng thao tác sau lượt",dangerous=true) {
+                    AfterRun.cancel(c,last.getString("run"));dialog.dismiss();onSaved()
+                })
             if(last.optString("stage")=="waiting-drive") body.addView(Ui.button(c,"Mở Drive kiểm tra") {
                 try {
                     val launch=c.packageManager.getLaunchIntentForPackage(AfterRunProtocol.DRIVE)?:error("Chưa cài Google Drive")

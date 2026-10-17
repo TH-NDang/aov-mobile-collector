@@ -19,7 +19,7 @@ class PhotoTestProvider:DocumentsProvider() {
         val file=if(id=="Pictures") directory else File(directory,id)
         val data=mapOf<String,Any>(Document.COLUMN_DOCUMENT_ID to id,
             Document.COLUMN_DISPLAY_NAME to id,
-            Document.COLUMN_MIME_TYPE to if(id=="Pictures") Document.MIME_TYPE_DIR else "image/jpeg",
+            Document.COLUMN_MIME_TYPE to if(id=="Pictures") Document.MIME_TYPE_DIR else if(id.endsWith(".zip")) "application/zip" else "image/jpeg",
             Document.COLUMN_SIZE to file.length(),Document.COLUMN_LAST_MODIFIED to file.lastModified(),
             Document.COLUMN_FLAGS to if(id=="Pictures") Document.FLAG_DIR_SUPPORTS_CREATE else Document.FLAG_SUPPORTS_WRITE)
         cursor.addRow(cursor.columnNames.map { data[it] }.toTypedArray())

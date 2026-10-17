@@ -85,7 +85,7 @@ class UiSmoke:Instrumentation() {
             // Native Save Photo exports go through a real SAF provider, then appear in app history.
             val photoTree=android.provider.DocumentsContract.buildTreeDocumentUri(
                 "vn.ndang.aovcollector.test.photos","Pictures")
-            context.startActivity(Intent(context,PhotoGrantActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            targetContext.startActivity(Intent(context,PhotoGrantActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
             waitForIdleSync();SystemClock.sleep(700)
             GamePhotoImport.choose(targetContext,photoTree)
             val photoRoot=android.provider.DocumentsContract.buildDocumentUriUsingTree(photoTree,"Pictures")
@@ -165,6 +165,16 @@ class UiSmoke:Instrumentation() {
             check(sentText=="dot\n"+savedCommand) { "Command went to the wrong destination: $sentText" }
             AfterRun.finished(targetContext,nativeRun)
             check(AfterRun.state(targetContext,nativeRun)!!.getString("stage")=="done")
+            val interrupted="smoke-after-interrupted"
+            AfterRun.finished(targetContext,interrupted)
+            AfterRun.update(targetContext,interrupted,"sending","Simulate process death after send attempt")
+            AfterRun.recover(targetContext)
+            check(AfterRun.state(targetContext,interrupted)!!.getString("stage")=="send-uncertain")
+            AfterRun.retry(targetContext,interrupted)
+            check(AfterRun.state(targetContext,interrupted)!!.getString("stage")=="send-uncertain")
+            val cancelled="smoke-after-cancelled"
+            AfterRun.finished(targetContext,cancelled);AfterRun.cancel(targetContext,cancelled)
+            check(AfterRun.state(targetContext,cancelled)!!.getString("stage")=="cancelled")
             File(targetContext.filesDir,"smoke/after-run.txt").writeText("zip-readback=verified; wait-for-drive=ok; dot-navigation=ok; sent-once=ok")
             android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,android.net.Uri.parse(upload.getString("uri")))
             targetContext.getSharedPreferences("after-run",0).edit().clear().commit()

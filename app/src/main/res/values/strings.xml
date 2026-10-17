@@ -1,1 +1,1 @@
-<resources><string name="service_description">Chỉ chạy macro do bạn chọn để điều hướng menu và chụp ảnh. Có nút Dừng. Ảnh lưu trên máy, không gửi qua mạng.</string></resources>
+<resources><string name="service_description">Chạy macro do bạn chọn để điều hướng menu và chụp ảnh. Ảnh lưu trên máy. Khi bạn bật Sau khi hoàn tất, ứng dụng lưu ZIP vào thư mục Drive đã chọn, đọc thông báo Drive để xác nhận tải xong rồi mở ChatGPT → dot của bạn để gửi câu lệnh đã lưu. Có thể dừng tác vụ và tắt tính năng này trong app.</string></resources>

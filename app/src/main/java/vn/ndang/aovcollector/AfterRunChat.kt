@@ -11,7 +11,7 @@ import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 
 /** Operates only inside ChatGPT, and persists a send attempt before touching its send button. */
-class AfterRunChat(private val service:CollectorService,private val run:String,private val done:()->Unit) {
+class AfterRunChat(private val service:CollectorService,val run:String,private val done:()->Unit) {
     private val handler=Handler(Looper.getMainLooper())
     private var ended=false
     private var deadline=0L

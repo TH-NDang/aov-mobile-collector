@@ -155,6 +155,7 @@ class CollectorService : AccessibilityService() {
         AfterRun.recover(this)
         if(uiPrefs.getBoolean("panel",false)) handler.post { if(current===this && panel==null) showPanel() }
     }
+    fun cancelAfterRunChat(run:String) { if(afterRunChat?.run==run) afterRunChat?.cancel() }
     fun startAfterRunChat(run:String) {
         if(isWorking) return
         hidePanel()

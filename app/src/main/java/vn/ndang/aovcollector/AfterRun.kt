@@ -104,7 +104,7 @@ object AfterRun {
                 upload(c,run,tree)
                 "Đã ghi ZIP và kiểm tra dữ liệu đọc lại. Chờ Google Drive báo tải lên thành công đúng tên file."
             } catch(e:Exception) {
-                update(c,run,"failed",if(FileJob.cancelled) "Đã hủy lưu Drive; ảnh trong app được giữ lại"
+                if(state(c,run)?.optString("stage")!="cancelled") update(c,run,"failed",if(FileJob.cancelled) "Đã hủy lưu Drive; ảnh trong app được giữ lại"
                     else "Chưa lưu được Drive: "+(e.message?:"Lỗi ghi file"))
                 "Chưa hoàn tất lưu Drive: "+(e.message?:"Đã hủy")
             }
@@ -156,6 +156,7 @@ object AfterRun {
             "ZIP đọc lại chưa trùng với dữ liệu đã ghi"
         }
         synchronized(this) {
+            if(FileJob.cancelled) throw ZipFiles.Cancelled()
             val current=state(c,run)?:error("Mất tiến độ")
             current.put("bytes",readBytes).put("verified",true)
             if(current.optBoolean("driveProof")) current.put("stage","drive-confirmed").put("message","Drive đã báo tải lên thành công")
@@ -182,6 +183,16 @@ object AfterRun {
             if(task.optBoolean("verified")) task.put("stage","drive-confirmed").put("message","Drive đã tải lên thành công")
             put(c,task);resume(c)
         }
+    }
+    @Synchronized fun cancel(c:Context,run:String) {
+        val task=state(c,run)?:return
+        val stage=task.optString("stage")
+        if(stage in setOf("done","send-uncertain","cancelled")) return
+        if(stage=="writing") FileJob.cancel()
+        CollectorService.current?.cancelAfterRunChat(run)
+        update(c,run,if(stage=="sending") "send-uncertain" else "cancelled",
+            if(stage=="sending") "Đã dừng theo dõi lần gửi. Kiểm tra ChatGPT; app không gửi lại."
+            else "Đã dừng thao tác sau lượt; dữ liệu trong app được giữ lại")
     }
     @Synchronized fun retry(c:Context,run:String) {
         val task=state(c,run)?:return
