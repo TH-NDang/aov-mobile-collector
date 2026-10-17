@@ -158,6 +158,38 @@ class UiSmoke:Instrumentation() {
             val account=Accounts.load(targetContext)
             check(account!=null&&account.user=="test@example.com"&&account.password=="p@ss word"&&Accounts.uid(targetContext)=="17514483308299377") { "Test account did not survive saving" }
             check(!targetContext.getSharedPreferences("test-account",0).all.values.joinToString().contains("p@ss")) { "The password is stored in clear" }
+            val accountPrefs=targetContext.getSharedPreferences("test-account",0)
+            val firstRow=org.json.JSONArray(accountPrefs.getString("accounts-v2","[]")).getJSONObject(0)
+            // Recreate v0.8.2's single-account layout with the original encrypted fields.
+            accountPrefs.edit().clear().putString("uid",firstRow.getString("uid"))
+                .putString("user",firstRow.getString("user")).putString("password",firstRow.getString("password")).commit()
+            val migrated=Accounts.list(targetContext).single()
+            check(migrated.ready&&Accounts.load(targetContext,migrated.id)?.password=="p@ss word") { "Legacy account migration lost credentials" }
+            check(!accountPrefs.contains("uid")) { "Legacy fields were not atomically migrated" }
+            val secondAccount=Accounts.save(targetContext,"17514483308299378","second@example.com","second-password",label="Tài khoản B")
+            check(Accounts.list(targetContext).size==2) { "Saving account B overwrote account A" }
+            Accounts.select(targetContext,migrated.id)
+            check(Accounts.load(targetContext,secondAccount)?.user=="second@example.com") { "Explicit account selection fell back to default" }
+            Accounts.save(targetContext,migrated.uid,"test@example.com","",migrated.id,"Tài khoản A")
+            check(Accounts.load(targetContext,migrated.id)?.password=="p@ss word") { "Blank edit erased the old password" }
+            // A damaged/lost key must leave an account visible so its password can be repaired.
+            val savedRows=org.json.JSONArray(accountPrefs.getString("accounts-v2","[]"))
+            for(i in 0 until savedRows.length()) if(savedRows.getJSONObject(i).getString("id")==migrated.id)
+                savedRows.getJSONObject(i).put("password","unreadable-ciphertext")
+            accountPrefs.edit().putString("accounts-v2",savedRows.toString()).commit()
+            check(Accounts.list(targetContext).first { it.id==migrated.id }.let { !it.ready&&it.uid==migrated.uid }) { "Unreadable password hid the old account" }
+            Accounts.save(targetContext,migrated.uid,"test@example.com","repaired-password",migrated.id,"Tài khoản A")
+            check(Accounts.load(targetContext,migrated.id)?.password=="repaired-password") { "Account repair failed" }
+            Accounts.remove(targetContext,secondAccount)
+            check(Accounts.list(targetContext).size==1&&Accounts.load(targetContext,migrated.id)!=null) { "Deleting B erased A" }
+            check(Accounts.load(targetContext,secondAccount)==null) { "Deleted account silently fell back to A" }
+            val validAccountData=accountPrefs.getString("accounts-v2",null)
+            accountPrefs.edit().putString("accounts-v2","{").commit()
+            check(Accounts.list(targetContext).isEmpty()&&Accounts.problem(targetContext)!=null) { "Unreadable account data was not reported" }
+            var preventedOverwrite=false
+            try { Accounts.save(targetContext,"17514483308299379","new@example.com","new-password") } catch(_:Exception) { preventedOverwrite=true }
+            check(preventedOverwrite&&accountPrefs.getString("accounts-v2",null)=="{") { "Unreadable records were overwritten" }
+            accountPrefs.edit().putString("accounts-v2",validAccountData).commit()
             Accounts.clear(targetContext);check(Accounts.load(targetContext)==null) { "Test account was not cleared" }
             check(HeroNames.slug("Điêu Thuyền")=="dieu-thuyen")
             // The skills are one step read at run time: at least the four icons' two tabs, more for five icons or other forms.
@@ -238,6 +270,49 @@ class UiSmoke:Instrumentation() {
                 val progress=bar(service!!.panelView?:error("Missing chess panel"))
                     ?:error("Missing chess progress bar")
                 check(progress.visibility==View.GONE) { "Chess showed a percentage before knowing its total" }
+            }
+            // Choose B for this run, then change the global default to A: resume must stay on B.
+            run {
+                fun window(title:String)=automation.windows.mapNotNull { it.root }
+                    .firstOrNull { it.findAccessibilityNodeInfosByText(title).isNotEmpty() }
+                fun press(title:String,text:String) {
+                    waitForIdleSync()
+                    val node=window(title)?.findAccessibilityNodeInfosByText(text)?.firstOrNull { it.text?.toString()==text }
+                        ?:error("Missing $text in $title")
+                    check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK)||node.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK)==true)
+                    waitForIdleSync();SystemClock.sleep(350)
+                }
+                runOnMainSync {
+                    check(service!!.selectMacro(BuiltInMacros.chess(ChessWiki.Options(
+                        setOf("tat-ca-quan-co"),openGame=true,checkAccount=true,traceEntry=false))))
+                    service!!.start()
+                }
+                check(window("Chưa có tài khoản đã lưu")!=null) { "Missing account silently disabled UID verification" }
+                press("Chưa có tài khoản đã lưu","Hủy")
+                val a=Accounts.save(targetContext,"17514483308299377","a@example.com","password-a",label="Tài khoản A")
+                val b=Accounts.save(targetContext,"17514483308299378","b@example.com","password-b",label="Tài khoản B")
+                Accounts.select(targetContext,a)
+                runOnMainSync { service!!.start() }
+                val title="Chọn tài khoản cho lượt chạy"
+                check(window(title)!=null) { "Run did not offer the account picker" }
+                press(title,Accounts.list(targetContext).first { it.id==b }.caption)
+                snap("01d-account-picker")
+                press(title,"Chạy")
+                val runPrefs=targetContext.getSharedPreferences("collector",0)
+                waitFor("Chosen account was not pinned to the run") { runPrefs.getString("accountId",null)==b }
+                waitFor("Missing game did not end the test entry step") { var idle=false;runOnMainSync { idle=!service!!.isWorking };idle }
+                check(runPrefs.getString("accountUid",null)=="17514483308299378") { "Run pinned the wrong UID" }
+                Accounts.select(targetContext,a)
+                runOnMainSync { service!!.start() }
+                waitFor("Resume entry did not settle") { var idle=false;runOnMainSync { idle=!service!!.isWorking };idle }
+                check(window(title)==null&&runPrefs.getString("accountId",null)==b) { "Resume switched to the new default account" }
+                Accounts.remove(targetContext,b)
+                runOnMainSync { service!!.start() }
+                // The selected account has gone: no fallback to A and no game interaction.
+                var idle=false;runOnMainSync { idle=!service!!.isWorking }
+                check(idle&&runPrefs.getString("accountId",null)==b&&Accounts.load(targetContext,a)!=null) { "Deleted run account fell back to A" }
+                Accounts.clear(targetContext)
+                runOnMainSync { service!!.reset() }
             }
             // A built-in macro saved by an older version is regenerated when a new run is created.
             MacroStore.current(targetContext).writeText(JSONObject(BuiltInMacros.create("Danh sách tướng",2,true)).apply { remove("builtinVersion") }.toString())
@@ -387,6 +462,25 @@ class UiSmoke:Instrumentation() {
             click("Lấy thông tin tướng");SystemClock.sleep(800)
             val darkForm=luma();snap("10-dark-form")
             check(darkForm<90) { "The dark task form is not dark: mean brightness $darkForm" }
+            click("Hủy")
+            // No saved accounts: UID verification remains selectable and turns on game entry.
+            targetContext.getSharedPreferences("ui",0).edit().putBoolean("chessOpenGame",false)
+                .putBoolean("chessCheckAccount",false).commit()
+            chooserClick()
+            check(nodes().firstNotNullOfOrNull { findEdit(it) }!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,
+                Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"co lien quan") }))
+            waitForIdleSync();SystemClock.sleep(400)
+            click("Cờ Liên Quân · Bách khoa")
+            val verifyText="Kiểm tra UID · chọn tài khoản khi bấm Chạy"
+            val verify=nodes().flatMap { it.findAccessibilityNodeInfosByText(verifyText) }
+                .firstOrNull { it.text?.toString()==verifyText }?:error("Missing account verification option")
+            check(verify.isEnabled) { "No saved account still disables verification without a setup path" }
+            verify.performAction(AccessibilityNodeInfo.ACTION_SHOW_ON_SCREEN)
+            waitForIdleSync();SystemClock.sleep(400)
+            click(verifyText)
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Tự mở game tới sảnh trước khi vào Cờ Liên Quân") }
+                .any { it.isChecked }) { "Enabling account verification did not enable game entry" }
+            snap("11-account-setup-enabled")
             click("Hủy")
             targetContext.getSharedPreferences("ui",0).edit().remove("theme").commit()
             result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")

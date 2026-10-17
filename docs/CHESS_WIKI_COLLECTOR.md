@@ -74,6 +74,8 @@ captures/
 
 **Chạy nhanh** mặc định bật trong tùy chọn Cờ Liên Quân, dùng cùng thời gian chờ sau chạm **600 ms** và chuyển tab **450 ms** như chế độ Chạy nhanh của Lấy thông tin tướng; thao tác kéo và giữ cuối kéo cũng ngắn hơn. Có thể bỏ chọn để dùng nhịp chậm hơn. Macro cũ chưa có trường `fast` dùng nhịp nhanh khi chạy bản này. Giới hạn chụp màn hình của Android vẫn được giữ. Nút **Tạo lượt mới** dùng biểu tượng khởi động lại nét liền, giữ nguyên thao tác tạo lượt mới.
 
+**Từ v0.9.0:** lưu nhiều tài khoản tại **Tài khoản (N)** trong app. Bật **Kiểm tra UID · chọn tài khoản khi bấm Chạy** để tự bật Tự mở game và chọn tài khoản cho từng lượt mới. Nút **Quản lý tài khoản** trong form dẫn đến danh sách Thêm/Sửa/Xóa; không khóa ô kiểm tra chỉ vì chưa có UID. Lượt đang dở giữ tài khoản đã chọn, kể cả khi đổi tài khoản mặc định. Tài khoản cũ được chuyển sang danh sách mới; nếu không đọc được mật khẩu thì vẫn giữ UID để nhập lại. Lượt cũ chưa gắn tài khoản và đã qua bước vào game cần tạo lượt mới để xác minh đúng UID; ảnh cũ được giữ.
+
 **Tạm dừng / Dừng / Tiếp tục** dùng chung bảng nổi. Những mục và tab đã hoàn tất được lưu vào `chess-progress.json`. Khi tiếp tục, ứng dụng tìm lại Bách khoa, bỏ qua các mục đã hoàn tất. Quân cờ được đánh dấu bằng tên popup đã xác minh (không bằng fingerprint pixel dễ đổi sau cuộn); hàng được đánh dấu bằng tập tên trong hàng. Nếu dừng ở giữa tab, chương trình có thể phải kéo lại từ đầu tab nhưng không chủ động đánh dấu lại item đã hoàn tất.
 
 ## Giới hạn và kiểm thử

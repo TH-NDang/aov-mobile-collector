@@ -251,13 +251,21 @@ Mở rộng tùy chọn **Tự mở game** của v0.4.7 với các màn bạn g�
   - ML Kit có sẵn trong máy, đọc trên ảnh thu nhỏ một nửa;
   - cây trợ năng của Android, đọc được trang web và form.
 
-### Tài khoản test
+### Nhiều tài khoản (v0.9.0)
 
-- **Mục Tài khoản trên header của app:** nhập UID, tài khoản Garena và mật khẩu.
+- Mở **Tài khoản (N)** trên đầu app để **Thêm tài khoản**, **Sửa**, **Xóa từng tài khoản** hoặc chọn **Mặc định**. Mỗi tài khoản có tên gợi nhớ, UID, tên đăng nhập Garena và mật khẩu riêng. Khi sửa, để trống mật khẩu sẽ giữ mật khẩu cũ nếu còn đọc được.
+- Trong tác vụ, bật **Kiểm tra UID · chọn tài khoản khi bấm Chạy**. Tùy chọn này tự bật **Tự mở game**; thiếu tài khoản vẫn cho thiết lập và có nút **Quản lý tài khoản** hướng dẫn thêm tài khoản, thay vì khóa ô chọn.
+- Khi bắt đầu lượt mới có kiểm tra UID, app hiện **Chọn tài khoản cho lượt chạy**. Tài khoản đó được gắn với lượt và dùng cho cả UID cần kiểm tra lẫn thông tin đăng nhập Garena. Đổi tài khoản mặc định không đổi tài khoản của lượt đang dở. Tiếp tục lượt dùng đúng tài khoản đã chọn; nếu tài khoản bị xóa hoặc UID bị sửa thì app dừng và hướng dẫn sửa/tạo lượt mới, không tự chuyển sang tài khoản khác.
+- Tài khoản đơn từ phiên bản cũ tự chuyển sang danh sách mới, giữ nguyên dữ liệu mã hóa. Nếu dữ liệu còn UID nhưng khóa/mật khẩu không đọc được, tài khoản vẫn hiện với trạng thái **cần nhập lại mật khẩu** để sửa. Không thể khôi phục thông tin đã bị xóa khỏi dữ liệu ứng dụng. Lượt cũ đã qua bước vào game nhưng chưa gắn tài khoản cần tạo lượt mới để xác minh đúng tài khoản; ảnh cũ được giữ.
+- Tên đăng nhập và mật khẩu tiếp tục được mã hóa AES-GCM bằng Android Keystore, không ghi vào macro, nhật ký hoặc file ZIP. Lựa chọn tài khoản của lượt chỉ nằm trong dữ liệu riêng của app. App không có quyền Internet.
+
+### Kiểm tra UID trong game
+
+- **Mục Tài khoản trên header của app:** lưu các tài khoản và chọn tài khoản muốn dùng khi chạy.
   - Mật khẩu (và tên tài khoản) được mã hóa AES-GCM bằng khóa nằm trong Android Keystore của máy, không lấy ra được.
   - Mật khẩu không nằm trong file ZIP, không ghi vào nhật ký, và không hiện lại (chỉ Lưu lại hoặc Xóa).
   - App vẫn không có quyền Internet.
-- **Tùy chọn "Kiểm tra UID là tài khoản test"** trong tác vụ Danh sách tướng, dùng cùng Tự mở game.
+- **Tùy chọn "Kiểm tra UID · chọn tài khoản khi bấm Chạy"** trong các tác vụ có Tự mở game: Danh sách tướng, Thống kê tướng, Chiến khu và Cờ Liên Quân.
   - **Đọc UID:**
     - Ở sảnh, app đọc dòng "UID: …" mờ ở cuối màn hình. Dòng này được cắt riêng, chuyển chữ đen nền trắng và phóng to 3 lần cho dễ đọc.
     - Đọc không được 3 lần thì app mở **hồ sơ** (avatar) → **UID** → đọc số trong hộp "Xem UID" → bấm X → quay lại sảnh.
@@ -656,3 +664,4 @@ Các tùy chọn chạy nhanh, chỉ chụp Chi tiết, chuyển thẳng giữa 
 
 - **Trên máy ảo CI**, UiSmoke chọn giao diện Tối rồi chụp màn Lịch sử, danh sách tác vụ và form Lấy thông tin tướng. Nó kiểm tra độ sáng trung bình của màn hình là tối.
 - Toàn bộ kiểm tra cũ vẫn chạy với tên mục mới trong danh sách tác vụ.
+

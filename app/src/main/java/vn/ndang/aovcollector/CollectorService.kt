@@ -46,6 +46,8 @@ class CollectorService : AccessibilityService() {
     private var busy = false
     private var generation = 0
     private var runId = ""
+    private var runAccountId:String?=null
+    private var runAccountUid:String?=null
     private var manualBusy = false
     private var stopped = false
     private var pendingSaves = 0
@@ -394,6 +396,39 @@ class CollectorService : AccessibilityService() {
         dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
         dialog.setOnDismissListener { activeDialog=null;refreshPanel() };dialog.show()
     }
+    private fun manageAccounts() {
+        hidePanel()
+        startActivity(Intent(this,MainActivity::class.java).putExtra(Accounts.OPEN,true)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
+    }
+    private fun accountHelp(c:android.content.Context,body:LinearLayout) {
+        val all=Accounts.list(this)
+        body.addView(Ui.text(c,Accounts.problem(this)?:if(all.isEmpty())
+            "Chưa có tài khoản. Thêm tài khoản bên dưới; khi bấm Chạy, app sẽ cho chọn tài khoản cần kiểm tra."
+            else "Đã lưu ${all.size} tài khoản. Kiểm tra UID sẽ bật Tự mở game và cho chọn tài khoản khi bắt đầu lượt.",12f,Ui.muted))
+        body.addView(Ui.button(c,"Quản lý tài khoản") { manageAccounts() })
+    }
+    private fun chooseRunAccount() {
+        val all=Accounts.list(this)
+        if(all.isEmpty()) {
+            display(AlertDialog.Builder(themed()).setTitle("Chưa có tài khoản đã lưu")
+                .setMessage(Accounts.problem(this)?:"Vào Quản lý tài khoản để thêm UID và tài khoản Garena, rồi chọn lại khi bấm Chạy.")
+                .setPositiveButton("Quản lý tài khoản") { _,_ -> manageAccounts() }.setNegativeButton("Hủy",null).create())
+            return
+        }
+        var selected=all.indexOfFirst { it.id==Accounts.selectedId(this) }.coerceAtLeast(0)
+        val dialog=AlertDialog.Builder(themed()).setTitle("Chọn tài khoản cho lượt chạy")
+            .setSingleChoiceItems(all.map { it.caption }.toTypedArray(),selected) { _,which -> selected=which }
+            .setPositiveButton("Chạy",null).setNegativeButton("Hủy",null)
+            .setNeutralButton("Quản lý tài khoản") { _,_ -> manageAccounts() }.create()
+        display(dialog)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val account=all[selected]
+            if(Accounts.load(this,account.id)==null) {
+                Toast.makeText(this,"Tài khoản này cần nhập lại thông tin. Chọn Quản lý tài khoản → Sửa.",Toast.LENGTH_LONG).show()
+            } else { dialog.dismiss();handler.post { startWithAccount(account.id) } }
+        }
+    }
     fun showTaskPicker() {
         val c=themed()
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
@@ -513,8 +548,8 @@ class CollectorService : AccessibilityService() {
         val directSkills=option("Chuyển thẳng giữa các chiêu: bấm sang chiêu kế tiếp khi bảng chiêu còn mở, chỉ đóng sau chiêu cuối","directSkills")
         body.addView(Ui.section(c,"Vào game"))
         val openGame=option("Tự mở game và vào Danh sách tướng: đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện, rồi bấm Tướng ở sảnh","openGame")
-        val savedUid=Accounts.uid(this)
-        val checkAccount=option(if(savedUid!=null) "Kiểm tra UID là tài khoản test ($savedUid); khác thì đăng xuất và đăng nhập tài khoản test" else "Kiểm tra UID tài khoản test (lưu tài khoản ở mục Tài khoản trong app trước)","checkAccount").apply { if(savedUid==null) { isChecked=false;isEnabled=false } }
+        val checkAccount=option("Kiểm tra UID · chọn tài khoản khi bấm Chạy","checkAccount")
+        accountHelp(c,body)
         val traceEntry=CheckBox(c).apply { text="Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)";textSize=14f;isChecked=uiPrefs.getBoolean("traceEntry",true) }.also { body.addView(it) }
         var known=emptyList<HeroIndex.Entry>()
         val chosen=LinkedHashSet(uiPrefs.getString("pickNames","").orEmpty().split('\n').map { it.trim() }.filter { it.isNotEmpty() })
@@ -523,7 +558,9 @@ class CollectorService : AccessibilityService() {
         /** The heroes a by-name run would take: those ticked, else the name typed. */
         fun picked()=chosen.toList().ifEmpty { listOfNotNull(typed().takeIf { it.count { c -> c.isLetter() }>=2 }) }
         // The way into the game, the account check and the trace: only for runs that start on the list.
-        fun follow() { val list=mode()<2; openGame.isEnabled=list; val on=list&&openGame.isChecked; checkAccount.isEnabled=on&&savedUid!=null; traceEntry.isEnabled=on }
+        fun follow() { val list=mode()<2; openGame.isEnabled=list; val on=list&&openGame.isChecked
+            checkAccount.isEnabled=list;if(!on) checkAccount.isChecked=false;traceEntry.isEnabled=on }
+        checkAccount.setOnCheckedChangeListener { _,on -> if(on) openGame.isChecked=true }
         val shot=averageShot(); val total=uiPrefs.getInt("heroTotal",0).takeIf { it>0 }
         fun updateEstimate() {
             val m=mode(); val batch=m<2
@@ -613,10 +650,11 @@ class CollectorService : AccessibilityService() {
         fun option(text:String,key:String,default:Boolean=false)=check(text,uiPrefs.getBoolean(key,default)).also { body.addView(it) }
         body.addView(Ui.section(c,"Vào game"))
         val openGame=option("Tự mở game và vào sảnh: đóng game còn chạy, đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện","rankOpenGame")
-        val savedUid=Accounts.uid(this)
-        val checkAccount=option(if(savedUid!=null) "Kiểm tra UID là tài khoản test ($savedUid)" else "Kiểm tra UID tài khoản test (lưu tài khoản ở mục Tài khoản trong app trước)","checkAccount").apply { if(savedUid==null) { isChecked=false;isEnabled=false } }
+        val checkAccount=option("Kiểm tra UID · chọn tài khoản khi bấm Chạy","checkAccount")
+        accountHelp(c,body)
         val traceEntry=option("Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)","traceEntry",true)
-        fun follow() { checkAccount.isEnabled=openGame.isChecked&&savedUid!=null; traceEntry.isEnabled=openGame.isChecked }
+        fun follow() { if(!openGame.isChecked) checkAccount.isChecked=false;traceEntry.isEnabled=openGame.isChecked }
+        checkAccount.setOnCheckedChangeListener { _,on -> if(on) openGame.isChecked=true }
         fun updateEstimate() {
             val n=chosen().size
             if(n==0) { estimate.text="Chọn ít nhất một bảng và một chế độ.";estimate.setTextColor(Ui.danger);return }
@@ -667,10 +705,11 @@ class CollectorService : AccessibilityService() {
         val deep=check("Kéo hết danh sách các bảng đã chọn (lâu hơn nhiều)",uiPrefs.getBoolean("boardDeep",false))
         body.addView(Ui.section(c,"Vào game"))
         val openGame=check("Tự mở game và vào sảnh: đóng game còn chạy, đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện",uiPrefs.getBoolean("boardOpenGame",false))
-        val savedUid=Accounts.uid(this)
-        val checkAccount=check(if(savedUid!=null) "Kiểm tra UID là tài khoản test ($savedUid)" else "Kiểm tra UID tài khoản test (lưu tài khoản ở mục Tài khoản trong app trước)",uiPrefs.getBoolean("checkAccount",false)).apply { if(savedUid==null) { isChecked=false;isEnabled=false } }
+        val checkAccount=check("Kiểm tra UID · chọn tài khoản khi bấm Chạy",uiPrefs.getBoolean("checkAccount",false))
+        accountHelp(c,body)
         val traceEntry=check("Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)",uiPrefs.getBoolean("traceEntry",true))
-        fun follow() { checkAccount.isEnabled=openGame.isChecked&&savedUid!=null; traceEntry.isEnabled=openGame.isChecked }
+        fun follow() { if(!openGame.isChecked) checkAccount.isChecked=false;traceEntry.isEnabled=openGame.isChecked }
+        checkAccount.setOnCheckedChangeListener { _,on -> if(on) openGame.isChecked=true }
         fun chosen()=order.filter { tabs.getValue(it).isChecked }.map { BoardScreens.Want(it,if(deep.isChecked&&it!=BoardScreens.Tab.TOP) BoardScreens.ALL else BoardScreens.defaultTop(it)) }
         fun updateEstimate() {
             val asked=count.text.toString().toIntOrNull()?.coerceIn(0,BuiltInMacros.ALL)?:0
@@ -756,13 +795,12 @@ class CollectorService : AccessibilityService() {
         body.addView(Ui.section(c,"Bắt đầu và an toàn"))
         val openGame=check("Tự mở game tới sảnh trước khi vào Cờ Liên Quân",
             uiPrefs.getBoolean("chessOpenGame",true))
-        val uid=Accounts.uid(this)
-        val checkAccount=check(if(uid!=null) "Xác minh UID tài khoản thử nghiệm ("+uid+")" else
-            "Xác minh UID (hãy lưu UID trong mục Tài khoản trước)",uiPrefs.getBoolean("chessCheckAccount",false))
+        val checkAccount=check("Kiểm tra UID · chọn tài khoản khi bấm Chạy",uiPrefs.getBoolean("chessCheckAccount",false))
+        accountHelp(c,body)
         val trace=check("Lưu ảnh các bước đăng nhập / vào sảnh",uiPrefs.getBoolean("chessTraceEntry",true))
-        fun update() { checkAccount.isEnabled=openGame.isChecked&&uid!=null
-            if(!checkAccount.isEnabled) checkAccount.isChecked=false
+        fun update() { if(!openGame.isChecked) checkAccount.isChecked=false
             trace.isEnabled=openGame.isChecked }
+        checkAccount.setOnCheckedChangeListener { _,on -> if(on) openGame.isChecked=true }
         openGame.setOnCheckedChangeListener { _,_ -> update() };update()
         body.addView(Ui.text(c,
             "Nếu bỏ Tự mở game, hãy mở sẵn sảnh Cờ Liên Quân hoặc Bách khoa trước khi bấm Chạy. " +
@@ -1046,19 +1084,43 @@ class CollectorService : AccessibilityService() {
         return true
     }
     private fun readMacro() = Macro(File(filesDir,"macro.json").readText())
-    fun start() {
+    fun start()=startWithAccount(null)
+    private fun startWithAccount(pickedAccount:String?) {
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
         if(running || busy || manualBusy || activeDialog!=null || macroPicker!=null) return
         upgradeBuiltIn()
         try {
             val m=readMacro()
-            val at=if(prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
+            val same=prefs.getString("hash","")==m.hash
+            val at=if(same) prefs.getInt("step",0) else 0
+            val existing=same&&!prefs.getString("run","").isNullOrBlank()
+            val checking=m.json.optBoolean("checkAccount")
+            if(same&&prefs.getBoolean("stopped",false)) { status("Lượt đã kết thúc. Bấm Tạo lượt mới.");return }
+            if(at>=m.steps.length()) { status("Đã hoàn tất. Bấm Tạo lượt mới.");return }
+            val pinned=if(existing) prefs.getString("accountId",null)?:pickedAccount else pickedAccount
+            var selectedUid:String?=null
+            if(checking) {
+                if(!m.json.optBoolean("openGame")) { status("Bật Tự mở game để kiểm tra tài khoản trước khi thu thập.");return }
+                if(existing&&pinned==null&&at>0) {
+                    display(AlertDialog.Builder(themed()).setTitle("Chọn tài khoản cho lượt mới")
+                        .setMessage("Lượt cũ chưa ghi tài khoản đã chọn. Tạo lượt mới để kiểm tra đúng UID trước khi chạy; ảnh của lượt cũ được giữ lại.")
+                        .setPositiveButton("Tạo lượt mới") { _,_ -> reset();handler.post { start() } }.setNegativeButton("Hủy",null).create())
+                    return
+                }
+                if(pinned==null) { chooseRunAccount();return }
+                val account=Accounts.load(this,pinned)
+                if(account==null) { status("Tài khoản của lượt đã bị xóa hoặc cần nhập lại mật khẩu. Vào Quản lý tài khoản để sửa.");return }
+                val oldUid=if(existing) prefs.getString("accountUid",null) else null
+                if(oldUid!=null&&oldUid!=account.uid) { status("UID tài khoản của lượt đã thay đổi. Bấm Dừng → Tạo lượt mới để chọn lại.");return }
+                selectedUid=account.uid
+            }
             if(!entryStep(m,at)&&!ready(m)) return
             macro=m
             stopped=prefs.getString("hash","")==m.hash && prefs.getBoolean("stopped",false)
             if(stopped) { status("Lượt đã kết thúc. Bấm Tạo lượt mới."); return }
             if(prefs.getString("hash","")==m.hash) { index=prefs.getInt("step",0); runId=prefs.getString("run","")?:""; entryMs=prefs.getLong("entryMs",0L) } else { index=0; runId="" }
             if(index>=m.steps.length()) { status("Đã hoàn tất. Bấm Tạo lượt mới."); return }
+            runAccountId=if(checking) pinned else null;runAccountUid=selectedUid
             if(runId.isEmpty()) {
                 val mode=m.json.optString("collectionMode","custom")
                 val slug=m.json.optString("heroName","").replace(Regex("[^a-zA-Z0-9_-]"),"-").take(40)
@@ -1070,7 +1132,7 @@ class CollectorService : AccessibilityService() {
             setRunning(true); generation++; save(); note(if(index==0) "Bắt đầu lượt" else "Tiếp tục"); next(generation)
         } catch(e:Exception) { pause("Lỗi macro: ${e.message}") }
     }
-    fun reset() { if(busy || manualBusy) { status("Chờ bước hiện tại xong"); return }; setRunning(false); activeMs=0L; listTotal=null; generation++; stopped=false; index=0; runId=""; macro=null; listRef=null; prefs.edit().clear().commit(); upgradeBuiltIn(); status("Sẵn sàng lượt mới") }
+    fun reset() { if(busy || manualBusy) { status("Chờ bước hiện tại xong"); return }; setRunning(false); activeMs=0L; listTotal=null; generation++; stopped=false; index=0; runId=""; runAccountId=null;runAccountUid=null;macro=null; listRef=null; prefs.edit().clear().commit(); upgradeBuiltIn(); status("Sẵn sàng lượt mới") }
     /**
      * A built-in macro selected before an app update keeps its old steps in macro.json. Regenerate it with the
      * same settings unless a run of it is still unfinished, so a new run always uses the current steps.
@@ -1111,7 +1173,8 @@ class CollectorService : AccessibilityService() {
     }
     private fun save() {
         val m=macro ?: return
-        prefs.edit().putString("hash",m.hash).putInt("step",index).putString("run",runId).putBoolean("stopped",stopped).putBoolean("running",running).putLong("activeMs",elapsed()).commit()
+        prefs.edit().putString("hash",m.hash).putInt("step",index).putString("run",runId).putString("accountId",runAccountId)
+            .putString("accountUid",runAccountUid).putBoolean("stopped",stopped).putBoolean("running",running).putLong("activeMs",elapsed()).commit()
         if(runId.isNotEmpty()) try {
             val dir=File(filesDir,"captures/$runId"); dir.mkdirs()
             if(!File(dir,"macro.json").exists()) File(dir,"macro.json").writeText(m.raw)
@@ -1448,7 +1511,11 @@ class CollectorService : AccessibilityService() {
     private fun enterGame(toLobby:Boolean,alive:()->Boolean,finish:(GameEntry.Outcome)->Unit) {
         val stamp="%04d".format(index+1)
         val m=macro
-        val expected=if(m?.json?.optBoolean("checkAccount")==true) Accounts.uid(this) else null
+        val account=if(m?.json?.optBoolean("checkAccount")==true) Accounts.load(this,runAccountId) else null
+        if(m?.json?.optBoolean("checkAccount")==true&&(account==null||account.uid!=runAccountUid)) {
+            finish(GameEntry.Outcome.Failed("Không đọc được tài khoản đã chọn cho lượt. Hãy lưu lại tài khoản trước khi chạy."));return
+        }
+        val expected=account?.uid
         val trace=if(m?.json?.optBoolean("traceEntry",true)!=false) File(filesDir,"captures/$runId/${GameEntry.TRACE_DIR}") else null
         var traced=trace?.listFiles()?.count { it.extension=="jpg" }?:0
         /** One line of the trace, with the screenshot [small] scaled down when there is one; it is recycled here. */
@@ -1562,7 +1629,7 @@ class CollectorService : AccessibilityService() {
      * is never typed anywhere else, as into a chat box.
      */
     private fun signInGarena(then:(Boolean)->Unit) {
-        val account=Accounts.load(this)?:return then(false)
+        val account=Accounts.load(this,runAccountId)?.takeIf { it.uid==runAccountUid }?:return then(false)
         val root=try { rootInActiveWindow } catch(_:Exception) { null }?:return then(false)
         if(root.packageName==packageName) return then(false)
         val all=nodes(root)

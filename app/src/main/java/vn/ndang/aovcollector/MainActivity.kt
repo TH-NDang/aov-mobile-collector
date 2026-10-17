@@ -184,6 +184,7 @@ class MainActivity : Activity() {
         window.decorView.systemUiVisibility=if(Ui.colors===Ui.DARK) 0 else View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR or View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
         showHistory()
         if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob()
+        if(intent.getBooleanExtra(Accounts.OPEN,false)) { intent.removeExtra(Accounts.OPEN);accountDialog() }
     }
     override fun onSaveInstanceState(out:Bundle) { super.onSaveInstanceState(out);out.putString("folder",folder?.path);out.putString("history-search",historyQueries[(folder?:captures).path].orEmpty());out.putStringArrayList("export",ArrayList(pendingExport.map { it.path }));out.putStringArrayList("copy",ArrayList(pendingCopy.map { it.path })) }
     override fun onResume() {
@@ -195,7 +196,8 @@ class MainActivity : Activity() {
     }
     override fun onPause() { if(FileJob.screen===jobDone) FileJob.screen=null;super.onPause() }
     override fun onDestroy() { historySearchToken++;historySearchTask?.let { historySearchHandler.removeCallbacks(it) };historySearchExecutor.shutdownNow();progress?.close();super.onDestroy() }
-    override fun onNewIntent(intent:Intent) { super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob() }
+    override fun onNewIntent(intent:Intent) { super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob()
+        if(intent.getBooleanExtra(Accounts.OPEN,false)) { intent.removeExtra(Accounts.OPEN);accountDialog() } }
     private fun crashNotice() {
         val log=CrashLog.file(this);if(!log.exists()) return
         val prefs=getPreferences(MODE_PRIVATE);if(log.lastModified()<=prefs.getLong("crash-seen",0L)) return
@@ -224,7 +226,7 @@ class MainActivity : Activity() {
         val connected=CollectorService.current!=null
         headerAction(row,"access",if(connected) "Đã bật Trợ năng" else "Bật Trợ năng",if(connected) Ui.success else Ui.accent) { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         headerAction(row,"import","Nhập file",Ui.accent) { importMenu() }
-        headerAction(row,"account",if(Accounts.uid(this)!=null) "Tài khoản test" else "Tài khoản",Ui.accent) { accountDialog() }
+        headerAction(row,"account","Tài khoản ("+Accounts.list(this).size+")",Ui.accent) { accountDialog() }
         headerAction(row,"theme","Giao diện",Ui.accent) { themeDialog() }
         headerAction(row,"float","Bảng nổi",Ui.accent) { val service=CollectorService.current;if(service==null) message("Bấm Bật Trợ năng, bật AOV Collector rồi quay lại.") else { service.showPanel();Toast.makeText(this,"Mở game, bấm Chọn macro trên bảng nổi để chọn cách chụp.",Toast.LENGTH_LONG).show() } }
         top.addView(row)
@@ -800,20 +802,46 @@ class MainActivity : Activity() {
      * password is encrypted by the phone's keystore and never shown again; only the UID and account name are.
      */
     private fun accountDialog() {
-        val saved=Accounts.uid(this)
+        val accounts=Accounts.list(this)
         val body=Ui.stack(this).apply { setPadding(dp(22),dp(6),dp(22),0) }
-        body.addView(Ui.text(this,if(saved!=null) "Đã lưu: UID $saved · tài khoản ${Accounts.user(this)?:"?"}" else "Chưa lưu tài khoản test.",13f,Ui.muted))
-        body.addView(Ui.text(this,"Khi Lấy thông tin tướng từ danh sách có Tự mở game và Kiểm tra UID, app đọc UID trong game. Khác UID này thì app đăng xuất và đăng nhập tài khoản dưới đây trên trang Garena, mỗi lượt một lần. Mật khẩu được mã hóa trong máy, không nằm trong file ZIP và không hiện lại.",12f,Ui.muted).apply { setPadding(0,dp(6),0,dp(6)) })
-        val uid=Ui.field(this,"UID (xem trong game: hồ sơ → UID)",saved?:"",true)
-        val user=Ui.field(this,"Tài khoản Garena, email hoặc số điện thoại",Accounts.user(this)?:"")
+        body.addView(Ui.text(this,Accounts.problem(this)?:if(accounts.isEmpty()) "Chưa có tài khoản đã lưu. Bấm Thêm tài khoản để thiết lập."
+            else "Đã lưu ${accounts.size} tài khoản. Chọn tài khoản muốn dùng mỗi khi bắt đầu lượt có Kiểm tra UID.",13f,Ui.muted))
+        val dialog=AlertDialog.Builder(this).setTitle("Tài khoản đã lưu")
+            .setView(ScrollView(this).apply { addView(body) }).setPositiveButton("Thêm tài khoản",null).setNegativeButton("Đóng",null).create()
+        for(account in accounts) {
+            body.addView(Ui.text(this,account.caption+
+                if(account.id==Accounts.selectedId(this)) " · mặc định" else "",14f,Ui.ink,true).apply { setPadding(0,dp(14),0,0) })
+            val actions=LinearLayout(this)
+            fun action(label:String,then:()->Unit) { actions.addView(Ui.button(this,label,action=then),LinearLayout.LayoutParams(0,dp(44),1f)) }
+            action("Mặc định") { try { Accounts.select(this,account.id);dialog.dismiss();showHistory();accountDialog() }
+                catch(e:Exception) { Toast.makeText(this,e.message,Toast.LENGTH_SHORT).show() } }
+            action("Sửa") { dialog.dismiss();accountEditor(account) }
+            action("Xóa") { AlertDialog.Builder(this).setTitle("Xóa tài khoản đã lưu?")
+                .setMessage(account.caption).setPositiveButton("Xóa") { _,_ ->
+                    try { Accounts.remove(this,account.id);dialog.dismiss();showHistory();accountDialog() }
+                    catch(e:Exception) { Toast.makeText(this,e.message,Toast.LENGTH_SHORT).show() }
+                }.setNegativeButton("Giữ lại",null).show() }
+            body.addView(actions)
+        }
+        dialog.show()
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener { dialog.dismiss();accountEditor(null) }
+    }
+    private fun accountEditor(account:Accounts.Summary?) {
+        val body=Ui.stack(this).apply { setPadding(dp(22),dp(6),dp(22),0) }
+        body.addView(Ui.text(this,"Bật Kiểm tra UID và Tự mở game trong tác vụ. Khi bấm Chạy, chọn tài khoản muốn dùng; app kiểm tra UID và đăng nhập Garena nếu cần. Mật khẩu được mã hóa trong máy và không xuất vào ZIP.",12f,Ui.muted))
+        val label=Ui.field(this,"Tên gợi nhớ (tùy chọn)",account?.label?:"")
+        val uid=Ui.field(this,"UID (xem trong game: hồ sơ → UID)",account?.uid?:"",true)
+        val user=Ui.field(this,"Tài khoản Garena, email hoặc số điện thoại",account?.user?:"")
         val password=Ui.field(this,"Mật khẩu","").apply { inputType=android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD }
-        listOf(uid,user,password).forEach { body.addView(it) }
-        val dialog=AlertDialog.Builder(this).setTitle("Tài khoản test").setView(body).setPositiveButton("Lưu",null).setNegativeButton("Đóng",null)
-            .apply { if(saved!=null) setNeutralButton("Xóa") { _,_ -> Accounts.clear(this@MainActivity);showHistory();Toast.makeText(this@MainActivity,"Đã xóa tài khoản test",Toast.LENGTH_SHORT).show() } }.create()
+        if(account?.ready==true) password.hint="Mật khẩu (để trống để giữ mật khẩu cũ)"
+        listOf(label,uid,user,password).forEach { body.addView(it) }
+        if(account!=null&&!account.ready) body.addView(Ui.text(this,"Tài khoản cũ vẫn còn UID; hãy nhập lại tên đăng nhập và mật khẩu để dùng tiếp.",12f,Ui.warning))
+        val dialog=AlertDialog.Builder(this).setTitle(if(account==null) "Thêm tài khoản" else "Sửa tài khoản")
+            .setView(ScrollView(this).apply { addView(body) }).setPositiveButton("Lưu",null).setNegativeButton("Hủy",null).create()
         dialog.show()
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            try { Accounts.save(this,uid.text.toString().trim(),user.text.toString(),password.text.toString());dialog.dismiss();showHistory()
-                Toast.makeText(this,"Đã lưu tài khoản test",Toast.LENGTH_SHORT).show() }
+            try { Accounts.save(this,uid.text.toString().trim(),user.text.toString(),password.text.toString(),account?.id,label.text.toString())
+                dialog.dismiss();showHistory();accountDialog();Toast.makeText(this,"Đã lưu tài khoản",Toast.LENGTH_SHORT).show() }
             catch(e:Exception) { password.error=e.message?:"Không lưu được" }
         }
     }
@@ -869,3 +897,4 @@ class MainActivity : Activity() {
         override fun setAlpha(alpha:Int) {} override fun setColorFilter(filter:ColorFilter?) {} @Deprecated("Deprecated API") override fun getOpacity()=PixelFormat.TRANSLUCENT
     }
 }
+
