@@ -437,6 +437,21 @@ class UiSmoke:Instrumentation() {
                     ?:error("Missing chess progress bar")
                 check(progress.visibility==View.GONE) { "Chess showed a percentage before knowing its total" }
             }
+            // Exact task timing persists across new Macro objects, without borrowing another configuration.
+            val timingMacro=Macro(MacroStore.current(targetContext).readText())
+            val timingPrefs=targetContext.getSharedPreferences("ui",0)
+            check(RunTimes.get(timingPrefs,RunTimes.task(timingMacro.hash))==null)
+            RunTimes.recordTask(timingPrefs,timingMacro.hash,120.0)
+            RunTimes.recordTask(timingPrefs,timingMacro.hash,180.0)
+            check(RunTimes.taskSamples(timingPrefs,timingMacro.hash)==listOf(120.0,180.0))
+            check(RunTimes.get(timingPrefs,RunTimes.task(Macro(timingMacro.raw).hash))==150.0)
+            val differentTiming=Macro(BuiltInMacros.chess(ChessWiki.Options(setOf("phe"),openGame=false)))
+            check(RunTimes.get(timingPrefs,RunTimes.task(differentTiming.hash))==null)
+            runOnMainSync { service!!.showPanel() }
+            waitFor("Learned duration missing from floating controller") {
+                automation.windows.mapNotNull { it.root }.any { it.findAccessibilityNodeInfosByText("Ước tính ~2:30").isNotEmpty() }
+            }
+            timingPrefs.edit().remove(RunTimes.task(timingMacro.hash)).remove(RunTimes.task(timingMacro.hash)+":samples").commit()
             // Choose B for this run, then change the global default to A: resume must stay on B.
             run {
                 fun window(title:String)=automation.windows.mapNotNull { it.root }
@@ -552,27 +567,70 @@ class UiSmoke:Instrumentation() {
             snap("04a-always-labeled-controls")
             // The real asynchronous image writer feeds a durable, ordered second overlay.
             val historyDir=File(targetContext.filesDir,"captures/progress-smoke").apply { mkdirs() }
-            val saved=java.util.concurrent.CountDownLatch(1)
-            val saveOK=java.util.concurrent.atomic.AtomicBoolean(false)
-            runOnMainSync {
-                service!!.store(Bitmap.createBitmap(80,60,Bitmap.Config.ARGB_8888).apply { eraseColor(Color.CYAN) },
-                    "progress-smoke","history-real-save") { saveOK.set(it);saved.countDown() }
+            File(historyDir,"hero.json").writeText(JSONObject().put("name","Violet").toString())
+            fun savePreviewImage(name:String):CaptureHistory.Entry {
+                val ready=java.util.concurrent.CountDownLatch(1)
+                val success=java.util.concurrent.atomic.AtomicBoolean(false)
+                runOnMainSync {
+                    service!!.store(Bitmap.createBitmap(800,600,Bitmap.Config.ARGB_8888).apply { eraseColor(Color.CYAN) },
+                        "progress-smoke",name) { success.set(it);ready.countDown() }
+                }
+                check(ready.await(10,java.util.concurrent.TimeUnit.SECONDS)&&success.get()) { "History writer did not save" }
+                return CaptureHistory.entries(targetContext).last()
             }
-            check(saved.await(10,java.util.concurrent.TimeUnit.SECONDS)&&saveOK.get()) { "History writer did not save" }
-            val savedRow=CaptureHistory.entries(targetContext).last()
+            val savedRow=savePreviewImage("hero-001-overview")
+            val secondRow=savePreviewImage("hero-001-skill-1-detail")
+            check(savedRow.name=="violet-1"&&secondRow.name=="violet-2") { "Unfriendly or unordered image names: ${savedRow.name}, ${secondRow.name}" }
             check(savedRow.state=="saved"&&savedRow.bytes>0&&File(targetContext.filesDir,"captures/"+savedRow.path).isFile)
-            val failedOrder=CaptureHistory.begin(targetContext,"progress-smoke",File(historyDir,"failed.png"))
+            val failedOrder=CaptureHistory.begin(targetContext,"progress-smoke",File(targetContext.filesDir,"captures/progress-errors/failed.png"))
             CaptureHistory.finish(targetContext,failedOrder,false)
-            val interruptedCapture=CaptureHistory.begin(targetContext,"progress-smoke",File(historyDir,"interrupted.png"))
+            val interruptedCapture=CaptureHistory.begin(targetContext,"progress-smoke",File(targetContext.filesDir,"captures/progress-errors/interrupted.png"))
             CaptureHistory.recover(targetContext)
             val journal=CaptureHistory.entries(targetContext)
             check(journal.zipWithNext().all { (a,b)->a.order<b.order }&&journal.last().order==interruptedCapture&&journal.last().state=="interrupted")
             check(journal.first { it.order==failedOrder }.state=="failed")
             click("Ảnh")
-            waitFor("Missing live saved-image row") { nodes().any { it.findAccessibilityNodeInfosByText("history-real-save.png").isNotEmpty() } }
+            waitFor("Missing live saved-image row") { nodes().any { it.findAccessibilityNodeInfosByText(savedRow.name).isNotEmpty() } }
             check(nodes().any { it.findAccessibilityNodeInfosByText("Đã lưu trong app").isNotEmpty() })
             check(nodes().any { it.findAccessibilityNodeInfosByText("Lưu thất bại").isNotEmpty() })
             snap("04c-live-capture-history")
+            check(nodes().none { it.findAccessibilityNodeInfosByText("progress-smoke/").isNotEmpty() }) { "History exposes storage paths" }
+            fun openHistoryImage(name:String) {
+                val node=nodes().flatMap { it.findAccessibilityNodeInfosByText("Mở ảnh $name") }
+                    .firstOrNull { it.contentDescription?.toString()=="Mở ảnh $name" }?:error("Missing image $name")
+                check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK));waitForIdleSync()
+            }
+            fun previewImage()=nodes().flatMap { it.findAccessibilityNodeInfosByText("Ảnh lớn số ${savedRow.order}") }
+                .firstOrNull { it.contentDescription?.toString()=="Ảnh lớn số ${savedRow.order}" }
+            openHistoryImage(savedRow.name)
+            waitFor("Large image did not load") { previewImage()?.stateDescription?.toString()=="Phóng to 100%" }
+            val largeBounds=Rect().also { previewImage()!!.getBoundsInScreen(it) }
+            check(largeBounds.width()>400&&largeBounds.height()>200) { "Image preview is not enlarged: $largeBounds" }
+            fun previewAction(label:String) {
+                val node=nodes().flatMap { it.findAccessibilityNodeInfosByText(label) }
+                    .firstOrNull { it.contentDescription?.toString()==label }?:error("Missing preview action $label")
+                check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK));waitForIdleSync()
+            }
+            previewAction("Phóng to ảnh")
+            waitFor("Image did not zoom") { previewImage()?.stateDescription?.toString()=="Phóng to 150%" }
+            snap("04d-large-image-preview")
+            previewAction("Thu nhỏ ảnh")
+            waitFor("Image did not zoom out") { previewImage()?.stateDescription?.toString()=="Phóng to 100%" }
+            val previewShotDone=java.util.concurrent.CountDownLatch(1)
+            val previewShotOK=java.util.concurrent.atomic.AtomicBoolean(false)
+            runOnMainSync {
+                service!!.grab(true) { previewShotOK.set(it!=null);it?.recycle();previewShotDone.countDown() }
+                check(service!!.capturePreviewView?.visibility==View.INVISIBLE) { "Large preview not hidden for screenshot" }
+            }
+            check(previewShotDone.await(10,java.util.concurrent.TimeUnit.SECONDS)&&previewShotOK.get())
+            runOnMainSync { check(service!!.capturePreviewView?.visibility==View.VISIBLE) }
+            previewAction("Đóng ảnh lớn")
+            runOnMainSync { check(service!!.capturePreviewView==null&&service!!.captureProgressView!=null) }
+            // Removing an older file must not renumber the next image or break a stale thumbnail tap.
+            File(targetContext.filesDir,"captures/"+savedRow.path).delete()
+            check(CaptureHistory.entries(targetContext).first { it.order==secondRow.order }.name=="violet-2")
+            val thirdRow=savePreviewImage("hero-001-attributes")
+            check(thirdRow.name=="violet-3") { "Image counter reset after deleting an older image" }
             File(targetContext.filesDir,"captures/"+savedRow.path).delete()
             waitFor("Removed image still reported as saved") { nodes().any { it.findAccessibilityNodeInfosByText("File đã bị xóa").isNotEmpty() } }
             fun closeHistory() {
@@ -614,10 +672,10 @@ class UiSmoke:Instrumentation() {
             }
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1500);snap("05-landscape")
             click("Ảnh")
-            waitFor("History did not reopen") { nodes().any { it.findAccessibilityNodeInfosByText("history-real-save.png").isNotEmpty() } }
+            waitFor("History did not reopen") { nodes().any { it.findAccessibilityNodeInfosByText(savedRow.name).isNotEmpty() } }
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_PORTRAIT };SystemClock.sleep(1000)
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1000)
-            waitFor("History did not restore after rotation") { nodes().any { it.findAccessibilityNodeInfosByText("history-real-save.png").isNotEmpty() } }
+            waitFor("History did not restore after rotation") { nodes().any { it.findAccessibilityNodeInfosByText(savedRow.name).isNotEmpty() } }
             snap("05b-right-progress-panel")
             val shotFinished=java.util.concurrent.CountDownLatch(1)
             var cleanShot:Bitmap?=null
@@ -736,7 +794,7 @@ class UiSmoke:Instrumentation() {
             check(!AfterRun.config(targetContext).enabled) { "Cancelling the Drive picker enabled automation" }
             click("Đóng")
             targetContext.getSharedPreferences("ui",0).edit().remove("theme").commit()
-            result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, live capture progress, saved/missing/failed files, shielded screenshot, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
+            result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, live capture progress, named images, enlarged preview and zoom, learned task time, saved/missing/failed files, shielded screenshot, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")
             finish(Activity.RESULT_OK,result)
         } catch(t:Throwable) {
             try {

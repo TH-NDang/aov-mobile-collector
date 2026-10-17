@@ -18,6 +18,19 @@ object RunTimes {
         prefs.edit().putFloat(key,blend(get(prefs,key),seconds).toFloat()).apply()
     }
     fun blend(kept:Double?,seconds:Double)=if(kept==null) seconds else (kept+seconds)/2
+    /** Exact macro configuration: topics, speed, native saves and game entry all affect its hash. */
+    fun task(hash:String)="time:task:$hash"
+    fun taskSamples(prefs:SharedPreferences,hash:String):List<Double> =
+        prefs.getString(task(hash)+":samples","").orEmpty().split(',').mapNotNull { it.toDoubleOrNull() }
+            .filter { it.isFinite()&&it>0 }.takeLast(8)
+    fun recordTask(prefs:SharedPreferences,hash:String,seconds:Double) {
+        if(!seconds.isFinite()||seconds<=0) return
+        val samples=(taskSamples(prefs,hash)+seconds).takeLast(8)
+        var estimate:Double?=null
+        samples.forEach { estimate=blend(estimate,it) }
+        prefs.edit().putString(task(hash)+":samples",samples.joinToString(","))
+            .putFloat(task(hash),estimate!!.toFloat()).apply()
+    }
     /**
      * Seconds left for [left] more units when this run took [spent] seconds for [done]: the [kept] pace of earlier
      * clean runs at first, then more and more this run's own, all of it after ten units. Null with neither.
@@ -28,3 +41,4 @@ object RunTimes {
         return maxOf(0,left)*pace
     }
 }
+

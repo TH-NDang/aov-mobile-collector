@@ -19,6 +19,8 @@ class CaptureProgressPanel(private val c:Context,private val swallowed:()->Unit,
     private val wm=c.getSystemService(WindowManager::class.java)
     private val main=Handler(Looper.getMainLooper())
     private val worker=Executors.newSingleThreadExecutor()
+    private val preview=CaptureImagePreview(c,worker,swallowed)
+    internal val previewView:View? get()=preview.view
     private var layout:LinearLayout?=null
     internal val view:View? get()=layout
     private var params:WindowManager.LayoutParams?=null
@@ -36,6 +38,7 @@ class CaptureProgressPanel(private val c:Context,private val swallowed:()->Unit,
     fun rotate() { if(layout!=null) { close();params=null;show() } }
     fun shield(on:Boolean) {
         hidden=on
+        preview.shield(on)
         val v=layout?:return;val p=params?:return
         p.flags=if(on) p.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE else p.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
         v.visibility=if(on) View.INVISIBLE else View.VISIBLE
@@ -131,10 +134,14 @@ class CaptureProgressPanel(private val c:Context,private val swallowed:()->Unit,
         val time=SimpleDateFormat("HH:mm:ss",Locale.getDefault())
         entries.forEachIndexed { i,e ->
             val row=LinearLayout(c).apply { setPadding(0,dp(6),0,dp(6));gravity=Gravity.CENTER_VERTICAL }
+            if(e.state=="saved") row.setOnClickListener { preview.show(e,e.name) }
+            row.contentDescription="${e.name} · ${CaptureHistory.status(e.state)}"
             row.addView(ImageView(c).apply { setImageBitmap(thumbs[i]);scaleType=ImageView.ScaleType.FIT_CENTER
-                contentDescription="Ảnh số ${e.order}" },LinearLayout.LayoutParams(dp(56),dp(54)))
-            row.addView(Ui.text(c,"#${e.order} · ${time.format(Date(e.time))}\n${CaptureHistory.status(e.state)}"+
-                (if(e.bytes>0) " · ${Format.size(e.bytes)}" else "")+"\n${e.path}",10f,
+                contentDescription=if(e.state=="saved") "Mở ảnh ${e.name}" else "Ảnh ${e.name} chưa xem được"
+                if(e.state=="saved") setOnClickListener { preview.show(e,e.name) }
+            },LinearLayout.LayoutParams(dp(62),dp(62)))
+            row.addView(Ui.text(c,"${e.name} · ${time.format(Date(e.time))}\n${CaptureHistory.description(e.path)}\n${CaptureHistory.status(e.state)}"+
+                (if(e.bytes>0&&e.state=="saved") " · ${Format.size(e.bytes)}" else ""),11f,
                 if(e.state in setOf("failed","missing","interrupted")) Color.rgb(255,170,170) else Color.WHITE).apply {
                     setPadding(dp(6),0,0,0)
                 },LinearLayout.LayoutParams(0,-2,1f))
@@ -143,6 +150,7 @@ class CaptureProgressPanel(private val c:Context,private val swallowed:()->Unit,
         if(follow) s.post { if(scroll===s) s.fullScroll(View.FOCUS_DOWN) }
     }
     fun close() {
+        preview.close()
         epoch++;main.removeCallbacks(tick)
         layout?.let { if(it.isAttachedToWindow) wm.removeView(it) };layout=null;rows=null;scroll=null;status=null;summary=null
         bitmaps.forEach { it.recycle() };bitmaps=emptyList()

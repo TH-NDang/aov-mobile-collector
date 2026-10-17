@@ -39,8 +39,9 @@ class CollectorService : AccessibilityService() {
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
     private var panel: LinearLayout? = null
-    private val captureProgress by lazy { CaptureProgressPanel(this,{ swallowed=true }) { runId to lastStatus } }
+    private val captureProgress by lazy { CaptureProgressPanel(this,{ swallowed=true }) { runId to listOf(lastStatus,timingSummary()).filter { it.isNotBlank() }.joinToString("\n") } }
     internal val captureProgressView:View? get()=captureProgress.view
+    internal val capturePreviewView:View? get()=captureProgress.previewView
     private var label: TextView? = null
     private var macro: Macro? = null
     private var index = 0
@@ -116,6 +117,19 @@ class CollectorService : AccessibilityService() {
     /** Kept times of Chiến khu runs are per hero, for the same tabs and depths. */
     private fun boardKey(wanted:List<BoardScreens.Want>)="time:board:"+wanted.joinToString(",") { "${it.tab.slug}${it.top}" }
     private fun heroKey(m:Macro)=RunTimes.hero(m.json.optString("collectionMode") in LISTED,m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills"))
+    private fun timingSummary():String {
+        val m=selected()?:return ""
+        val estimate=RunTimes.get(uiPrefs,RunTimes.task(m.hash))?:return "Ước lượng: cần một lượt hoàn tất trước"
+        val matching=prefs.getString("hash","")==m.hash
+        if(matching&&(stopped||index>=m.steps.length())) return ""
+        val spent=if(matching) elapsed()/1000.0 else 0.0
+        val learned="theo ${RunTimes.taskSamples(uiPrefs,m.hash).size} lượt gần đây"
+        return when {
+            spent<=0 -> "Ước tính ~${clock((estimate*1000).toLong())} · $learned"
+            spent<estimate -> "Đã chạy ${clock((spent*1000).toLong())} · còn ~${clock(((estimate-spent)*1000).toLong())} · $learned"
+            else -> "Đã chạy ${clock((spent*1000).toLong())} · lâu hơn các lượt trước"
+        }
+    }
     /** Time the way into the game took in this run, from its start; part of no hero. */
     private var entryMs=0L
     /**
@@ -124,6 +138,7 @@ class CollectorService : AccessibilityService() {
      */
     private fun recordTimes(m:Macro,heroes:Int) {
         if(!prefs.getBoolean("clean",false)) return
+        RunTimes.recordTask(uiPrefs,m.hash,elapsed()/1000.0)
         val spent=(elapsed()-entryMs)/1000.0
         when(m.json.optString("collectionMode")) {
             "all","pick" -> if(heroes>0) RunTimes.record(uiPrefs,heroKey(m),spent/heroes)
@@ -349,7 +364,7 @@ class CollectorService : AccessibilityService() {
             layout.addView(progress,LinearLayout.LayoutParams(-1,dp(7)).apply { topMargin=dp(8) })
             label=Ui.text(this,"",11f,Color.rgb(205,211,225)).apply {
                 setPadding(0,dp(3),0,dp(4));includeFontPadding=false
-                maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END
+                maxLines=3;ellipsize=android.text.TextUtils.TruncateAt.END
             }
             layout.addView(label)
 
@@ -413,7 +428,7 @@ class CollectorService : AccessibilityService() {
         progress?.isIndeterminate=unknownChessTotal&&running
         progress?.visibility=if(unknownChessTotal&&!running) View.GONE else View.VISIBLE
         progress?.progress=if(unknownChessTotal) 0 else if(m!=null) step*100/maxOf(1,m.steps.length()) else 0
-        label?.text=lastStatus
+        label?.text=listOf(lastStatus,timingSummary()).filter { it.isNotBlank() }.joinToString("\n")
         val caption=when { running -> "Tạm dừng";busy||manualBusy -> "Đang xử lý…";ended() -> "Tạo lượt mới";step>0 -> "Tiếp tục";else -> "Chạy" }
         val glyph=when { running -> R.drawable.ic_panel_pause;busy||manualBusy -> R.drawable.ic_panel_check
             ended() -> R.drawable.ic_panel_reset;else -> R.drawable.ic_panel_play }
