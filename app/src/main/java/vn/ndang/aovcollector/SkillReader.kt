@@ -31,6 +31,8 @@ class SkillReader(private val prefix:String,private val options:Options,private 
         fun firstForm(row:SkillRow.Row) {}
     }
     companion object {
+        const val FAST_SETTLE_MS=600L
+        const val FAST_TAB_WAIT_MS=450L
         /** Most heroes have two forms; a few cycle through three. */
         const val MAX_FORMS=4
         /** Empty space on the hero page, which closes a skill or attribute panel. */
@@ -46,8 +48,8 @@ class SkillReader(private val prefix:String,private val options:Options,private 
             return icons*icon+(if(o.directSkills) 1 else icons)*(.28+settle)+.6
         }
     }
-    private val settle=if(options.fast) 600L else 900L
-    private val tabWait=if(options.fast) 450L else 900L
+    private val settle=if(options.fast) FAST_SETTLE_MS else 900L
+    private val tabWait=if(options.fast) FAST_TAB_WAIT_MS else 900L
     private val forms=ArrayList<SkillRow.Row>()
     private val changes=ArrayList<String>()
     private var ended=false
@@ -133,3 +135,4 @@ class SkillReader(private val prefix:String,private val options:Options,private 
         end(Outcome.Done("$icons ô chiêu"+if(forms.size>1) " · ${forms.size} dạng (${changes.joinToString("; ")})" else ""))
     }
 }
+

@@ -70,6 +70,10 @@ captures/
 
 **Tiến trình:** trong khi dò danh sách, chỉ hiện **đã lưu N tướng · tổng chưa xác định** và tên đang mở. Số đã lưu tính theo quân cờ đã hoàn tất, kể cả các quân cờ đã lưu trước khi tạm dừng. Thanh chạy thể hiện đang xử lý; bảng nổi và nút thu gọn không hiện phần trăm từ số bước macro hay coi số ô trên trang hiện tại là tổng tướng.
 
+**Từ v0.8.2:** các dòng phe bị cắt ngắn như **4 Giai Điệu H.**, **9 Giai Điệu H..** được loại khỏi danh sách tướng; chữ phe màu xanh không được coi là tên màu trắng chỉ vì có biểu tượng trắng bên cạnh. Sau 5 quân cờ hàng đầu, tác vụ kéo danh sách xuống hàng tiếp theo. Nhật ký ghi rõ số ô nhận diện và mỗi lần kéo danh sách. Giá vàng bị OCR ghép vào tên (**Arduin1**, **Violet O1**, **Violet 01**) được tách bỏ; khi tiếp tục lượt cũ, dấu hoàn tất **violet-o1** được tính cùng **violet**, không cộng thành hai tướng. Ảnh cũ vẫn được giữ.
+
+**Chạy nhanh** mặc định bật trong tùy chọn Cờ Liên Quân, dùng cùng thời gian chờ sau chạm **600 ms** và chuyển tab **450 ms** như chế độ Chạy nhanh của Lấy thông tin tướng; thao tác kéo và giữ cuối kéo cũng ngắn hơn. Có thể bỏ chọn để dùng nhịp chậm hơn. Macro cũ chưa có trường `fast` dùng nhịp nhanh khi chạy bản này. Giới hạn chụp màn hình của Android vẫn được giữ. Nút **Tạo lượt mới** dùng biểu tượng khởi động lại nét liền, giữ nguyên thao tác tạo lượt mới.
+
 **Tạm dừng / Dừng / Tiếp tục** dùng chung bảng nổi. Những mục và tab đã hoàn tất được lưu vào `chess-progress.json`. Khi tiếp tục, ứng dụng tìm lại Bách khoa, bỏ qua các mục đã hoàn tất. Quân cờ được đánh dấu bằng tên popup đã xác minh (không bằng fingerprint pixel dễ đổi sau cuộn); hàng được đánh dấu bằng tập tên trong hàng. Nếu dừng ở giữa tab, chương trình có thể phải kéo lại từ đầu tab nhưng không chủ động đánh dấu lại item đã hoàn tất.
 
 ## Giới hạn và kiểm thử

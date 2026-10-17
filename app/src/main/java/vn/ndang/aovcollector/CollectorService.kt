@@ -730,6 +730,8 @@ class CollectorService : AccessibilityService() {
         body.addView(quick)
         fun check(text:String,on:Boolean)=CheckBox(c).apply { this.text=text;textSize=14f;isChecked=on }.also { body.addView(it) }
         body.addView(Ui.section(c,"Thu thập nội dung"))
+        val fast=check("Chạy nhanh: tốc độ như Lấy thông tin tướng · Chạy nhanh",
+            uiPrefs.getBoolean("chessFast",true))
         val heroDetails=check("Mở từng quân cờ trong Tất cả quân cờ; chụp thuộc tính, kỹ năng và kéo chi tiết",
             uiPrefs.getBoolean("chessHeroDetails",false))
         val synergyDetails=check("Mở từng biểu tượng phe và nghề trong Tương tác",
@@ -778,10 +780,11 @@ class CollectorService : AccessibilityService() {
             val selected=checks.filterValues { it.isChecked }.keys.toSet()+ChessWiki.topicsForNative(native)
             if(selected.isEmpty()) { status("Chọn ít nhất một mục Bách khoa hoặc nhóm ảnh gốc");return@setOnClickListener }
             val options=ChessWiki.Options(selected,openGame.isChecked,checkAccount.isChecked&&checkAccount.isEnabled,
-                trace.isChecked,heroDetails.isChecked,synergyDetails.isChecked,equipmentDetails.isChecked,native)
+                trace.isChecked,heroDetails.isChecked,synergyDetails.isChecked,equipmentDetails.isChecked,native,fast.isChecked)
             uiPrefs.edit().putString("chessTopics",selected.joinToString(","))
                 .putString("chessNativeGroups",native.joinToString(","))
                 .putBoolean("chessHeroDetails",heroDetails.isChecked)
+                .putBoolean("chessFast",fast.isChecked)
                 .putBoolean("chessSynergyDetails",synergyDetails.isChecked).putBoolean("chessEquipmentDetails",equipmentDetails.isChecked)
                 .putBoolean("chessOpenGame",openGame.isChecked).putBoolean("chessCheckAccount",checkAccount.isChecked)
                 .putBoolean("chessTraceEntry",trace.isChecked).apply()
@@ -797,8 +800,9 @@ class CollectorService : AccessibilityService() {
         val stamp="%04d".format(index+1)
         val ledger=File(filesDir,"captures/"+runId+"/chess-progress.json")
         val doneIds=try { val array=JSONObject(ledger.readText()).optJSONArray("finished")
-            (0 until (array?.length()?:0)).map { array!!.getString(it) }.toMutableSet()
+            (0 until (array?.length()?:0)).map { ChessWiki.heroIdentity(array!!.getString(it)) }.toMutableSet()
         } catch(_:Exception) { mutableSetOf<String>() }
+        val timing=ChessWiki.Timing(BuiltInMacros.chessOptions(readMacro().json).fast)
         val screen=object:ChessWikiReader.Screen {
             override val alive get()=alive()
             override val completedHeroes get()=doneIds.count { it.startsWith("item:tat-ca-quan-co:hero-") }
@@ -873,14 +877,14 @@ class CollectorService : AccessibilityService() {
             }
             override fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit) {
                 if(kotlin.math.abs(x-toX)<.003) {
-                    touchGame(drag(x,y,toY,700,400),false,then)
+                    touchGame(drag(x,y,toY,timing.move,timing.hold),false,then)
                 } else {
                     val b=screen()
                     val path=Path().apply {
                         moveTo((x*(b.width()-1)).toFloat(),(y*(b.height()-1)).toFloat())
                         lineTo((toX*(b.width()-1)).toFloat(),(toY*(b.height()-1)).toFloat())
                     }
-                    val gesture=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path,0,700)).build()
+                    val gesture=GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path,0,timing.move)).build()
                     touchGame(gesture,false,then)
                 }
             }

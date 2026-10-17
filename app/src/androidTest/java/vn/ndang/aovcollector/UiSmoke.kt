@@ -52,6 +52,38 @@ class UiSmoke:Instrumentation() {
                 val title=try { GameText.chessHeroTitle(shot) } finally { shot.recycle() }
                 check(title!=null&&HeroNames.slug(title)=="arduin") { "Chess heading OCR read $title for Arduin" }
             }
+            // ZIP regression: exactly five heroes, not another row made from truncated cyan factions.
+            context.assets.open("chess-first-row.png").use { input ->
+                val shot=BitmapFactory.decodeStream(input)
+                try {
+                    val topic=ChessWiki.TOPICS.first { it.key=="tat-ca-quan-co" }
+                    val words=GameText.words(shot)
+                    val cards=ChessWiki.tiles(topic,shot,words)
+                    File(targetContext.filesDir,"smoke/ocr-chess.txt").writeText(
+                        cards.joinToString { it.label?:"?" }+"\n"+
+                        words.joinToString("\n") { "%.3f %.3f %s".format(it.x,it.y,it.text) })
+                    check(cards.map { it.label }==listOf("Violet","Arduin","Hayate","Raz","Lumburr")) {
+                        "Chess first row has false/missing cards: $cards"
+                    }
+                    // A white faction icon beside cyan letters is not a white hero title.
+                    val injected=words+GameScreens.Word("Unknown faction",.218,.672,.326,.709)
+                    check(ChessWiki.tiles(topic,shot,injected).size==5) { "Cyan faction became another hero row" }
+                } finally { shot.recycle() }
+            }
+            context.assets.open("chess-violet-price.png").use { input ->
+                val shot=BitmapFactory.decodeStream(input)
+                val title=try { GameText.chessHeroTitle(shot) } finally { shot.recycle() }
+                check(title=="Violet") { "Violet's gold price became part of her name: $title" }
+            }
+            val chessOptions=ChessWiki.Options(setOf("tat-ca-quan-co"),openGame=false,heroDetails=true)
+            val legacyChess=JSONObject(BuiltInMacros.chess(chessOptions)).apply { remove("fast") }
+            check(BuiltInMacros.chessOptions(legacyChess).fast) { "Old chess macro did not default to fast mode" }
+            for(fast in listOf(false,true)) {
+                val selected=chessOptions.copy(fast=fast)
+                check(BuiltInMacros.chessOptions(JSONObject(BuiltInMacros.chess(selected)))==selected) {
+                    "Chess speed setting did not survive save/load"
+                }
+            }
             // The way into the game: a list run that opens the game starts with the entry step, and a popup shot on
             // the user's phone, fading in, is read on Android as in the unit tests.
             check(Macro(BuiltInMacros.create("",2,true,openGame=true)).steps.getJSONObject(0).getString("type")=="enter") { "Tự vào game should start with the entry step" }
@@ -279,6 +311,34 @@ class UiSmoke:Instrumentation() {
             snap("04a-always-labeled-controls")
             // No run yet: Dừng has nothing to end.
             check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Dừng") }.firstOrNull { it.text?.toString()=="Dừng" }?.isEnabled==false) { "Dừng is enabled before any run" }
+            // The actual completed-run action renders the restart vector and resets without starting a run.
+            val chosen=Macro(MacroStore.current(targetContext).readText())
+            targetContext.getSharedPreferences("collector",0).edit().putString("hash",chosen.hash)
+                .putInt("step",chosen.steps.length()).commit()
+            runOnMainSync {
+                service!!.showPanel()
+                fun restart(view:View):android.widget.Button? {
+                    if(view is android.widget.Button&&view.text.toString()=="Tạo lượt mới") return view
+                    if(view is android.view.ViewGroup) for(i in 0 until view.childCount)
+                        restart(view.getChildAt(i))?.let { return it }
+                    return null
+                }
+                val button=restart(service!!.panelView?:error("Missing panel"))?:error("Missing new-run action")
+                val icon=button.compoundDrawables[0]?:error("Missing restart icon")
+                check(icon.bounds.width()>0&&icon.bounds.height()>0) { "Restart icon has no size" }
+                val preview=Bitmap.createBitmap(96,96,Bitmap.Config.ARGB_8888)
+                val original=Rect(icon.bounds)
+                val canvas=Canvas(preview);canvas.drawColor(Color.rgb(96,75,209))
+                icon.setBounds(12,12,84,84);icon.draw(canvas);icon.bounds=original
+                File(dest,"reset-icon.png").outputStream().use { preview.compress(Bitmap.CompressFormat.PNG,100,it) }
+                preview.recycle()
+            }
+            snap("04b-create-new-run")
+            click("Tạo lượt mới")
+            check(targetContext.getSharedPreferences("collector",0).getInt("step",0)==0) { "New-run action did not reset" }
+            check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Chạy") }.any { it.text?.toString()=="Chạy" }) {
+                "New-run action did not return to the ready state"
+            }
             runOnMainSync { activity.requestedOrientation=ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE };SystemClock.sleep(1500);snap("05-landscape")
             // v0.3.1 regression: a macro tap under the floating panel pressed its hidden buttons
             // (Đóng removed the panel mid-run) instead of reaching the game.

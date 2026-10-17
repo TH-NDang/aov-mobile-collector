@@ -225,6 +225,8 @@ class ChessWikiTest {
         val first=ChessWiki.heroNameTiles(listOf(
             w("Đấu sĩ",.421,.638), w("A Đấu sĩ",.421,.638),
             w("© Pháo thủ",.275,.638), w("Giải Điệu H...",.275,.694),
+            w("4 Giai Điệu H.",.275,.694),w("9 Giai Điệu H..",.713,.694),
+            w("Giai Điệu H",.713,.694),w("Mị Ảnh Dướ",.567,.694),
             w("Raz",.713,.583),w("Arduin",.421,.588),
             w("Lumburr",.858,.590),w("Hayate",.567,.580),w("Violet",.275,.586)
         ))
@@ -279,6 +281,8 @@ class ChessWikiTest {
         val header=listOf(w("Bách khoa",.23,.064),w("Cờ Liên Quân",.43,.064))
         val allSaved=ArrayList<String>()
         val clicked=ArrayList<String>()
+        val actions=ArrayList<String>()
+        val waits=ArrayList<Long>()
         val progress=HashSet<String>()
         var listPage=1
         var opened:String?=null
@@ -290,10 +294,11 @@ class ChessWikiTest {
                 val names=if(listPage==1) first else second
                 val content=when {
                     currentHero!=null -> listOf(
-                        w(currentHero,.410,.281),w("Pháo đại",.49,.499))
+                        w(currentHero+" O1",.410,.281),w("Pháo đại",.49,.499))
                     listPage==1 -> header+first.mapIndexed { i,name ->
                         w(name,cols[i],.584+(i%3)*.004)
-                    }+listOf(w("Pháo thủ",cols[0],.64),w("Đấu sĩ",cols[1],.64))
+                    }+listOf(w("Pháo thủ",cols[0],.64),w("Đấu sĩ",cols[1],.64),
+                        w("4 Giai Điệu H.",cols[0],.694),w("9 Giai Điệu H..",cols[3],.694))
                     else -> header+second.mapIndexed { i,name ->
                         w(name,cols[i],.802+(i%3)*.004)
                     }+listOf(w("Pháo thủ",cols[0],.23))
@@ -315,14 +320,18 @@ class ChessWikiTest {
                     val names=if(listPage==1) first else second
                     opened=names[cols.indices.minByOrNull { kotlin.math.abs(cols[it]-x) }!!]
                     clicked.add(opened!!)
+                    actions.add("open:"+opened)
                 }
                 then(true)
             }
             override fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit) {
-                if(opened==null && listPage<2) listPage=2
+                if(opened==null) {
+                    actions.add("scroll-list")
+                    if(listPage<2) listPage=2
+                }
                 then(true)
             }
-            override fun later(ms:Long,then:()->Unit)=then()
+            override fun later(ms:Long,then:()->Unit) { waits.add(ms);then() }
             override fun seen(id:String)=id in progress
             override fun finished(id:String) { progress.add(id) }
             override fun note(message:String) {}
@@ -332,13 +341,32 @@ class ChessWikiTest {
             openGame=false,heroDetails=true), { outcome=it }).start()
         assertTrue(outcome is ChessWikiReader.Outcome.Done)
         assertEquals(first+second,clicked)
+        assertEquals(first.map { "open:"+it }+"scroll-list",actions.take(6))
+        assertEquals("open:Fennik",actions[6]) // row 2 follows the list drag, not another row-1 popup
+        assertTrue(waits.contains(SkillReader.FAST_SETTLE_MS))
+        assertTrue(waits.contains(SkillReader.FAST_TAB_WAIT_MS))
+        assertTrue(waits.all { it<=SkillReader.FAST_SETTLE_MS })
         val rowImages=allSaved.filter { "__hang__" in it }
         assertEquals(2,rowImages.size)
         assertEquals(10,allSaved.count { "__tuong__" in it })
         assertTrue(allSaved.any { "__tuong__violet__001" in it })
         assertTrue(allSaved.any { "__tuong__fennik__001" in it })
         assertFalse(allSaved.any { "__tuong__phao-dai" in it })
+        assertFalse(allSaved.any { "violet-o1" in it || "giai-dieu" in it })
         assertEquals(10,progress.count { it.startsWith("item:tat-ca-quan-co:hero-") })
+    }
+
+    @Test fun heroPriceOcrNeverCreatesAnotherHeroWhenContinuingOldRuns() {
+        for(text in listOf("Violet 1","Violet1","Violet O1","Violet 01","Violet © 1"))
+            assertEquals("Violet",ChessWiki.heroName(text))
+        assertEquals("Arduin",ChessWiki.heroName("Arduin1"))
+        val ids=setOf("item:tat-ca-quan-co:hero-violet","item:tat-ca-quan-co:hero-violet-o1",
+            "item:tat-ca-quan-co:hero-arduin","topic:tat-ca-quan-co")
+            .map { ChessWiki.heroIdentity(it) }.toSet()
+        assertEquals(2,ids.count { it.startsWith("item:") })
+        assertTrue("topic:tat-ca-quan-co" in ids)
+        assertFalse(ChessWiki.isHeroName("4 Giai Điệu H."))
+        assertFalse(ChessWiki.isHeroName("Giai Điệu H"))
     }
 
     @Test fun chessHeroTitlePrefersTheExpectedCardEvenWhenSkillOcrAppearsFirst() {

@@ -37,12 +37,23 @@ object ChessWiki {
     data class Options(val selected:Set<String>,val openGame:Boolean=true,val checkAccount:Boolean=false,
                        val traceEntry:Boolean=true,
                        val heroDetails:Boolean=false,val synergyDetails:Boolean=false,
-                       val equipmentDetails:Boolean=false,val nativeGroups:Set<String> =emptySet()) {
+                       val equipmentDetails:Boolean=false,val nativeGroups:Set<String> =emptySet(),
+                       val fast:Boolean=true) {
         fun topics()=TOPICS.filter { it.key in selected }
         init {
             require(selected.isNotEmpty() && selected.all { key -> TOPICS.any { it.key==key } })
             require(nativeGroups.all { group -> GamePhotoImport.GROUPS.any { it.key==group&&group!="chua-phan-loai" } })
         }
+    }
+    /** Same tap/tab waits as the hero collector's fast mode; screenshot rate limits still apply. */
+    class Timing(fast:Boolean) {
+        val tap=if(fast) SkillReader.FAST_SETTLE_MS else 1250L
+        val tab=if(fast) SkillReader.FAST_TAB_WAIT_MS else 1000L
+        val scroll=if(fast) SkillReader.FAST_TAB_WAIT_MS else 1100L
+        val close=if(fast) SkillReader.FAST_SETTLE_MS else 900L
+        val move=if(fast) 350L else 700L
+        val hold=if(fast) 120L else 400L
+        val modalStill=if(fast) 1 else 2
     }
     fun detailType(t:Topic,o:Options)=when(t.key) {
         "tat-ca-quan-co" -> if(o.heroDetails||"chieu-quan-co" in o.nativeGroups) "tuong" else null
@@ -159,11 +170,22 @@ object ChessWiki {
         "demdong","chihuy","hothien","hoily","phe","nghe"
     )
 
+    /** Price glyphs may be merged with a title: "Arduin1", "Violet O1", "Violet 01". */
+    fun heroName(text:String)=text.trim()
+        .replace(Regex("(?:\\s*[oO0©●◉]\\s*)?\\s*[1-5]\\s*$"),"").trim()
+
+    /** Normalize old completed IDs as well, so resuming v0.8.1 does not count Violet O1 twice. */
+    fun heroIdentity(id:String):String {
+        val prefix="item:tat-ca-quan-co:hero-"
+        return if(id.startsWith(prefix)) prefix+safeName(heroName(id.removePrefix(prefix))) else id
+    }
+
     /** OCR can include the role icon as a letter: "A Đấu sĩ" is still a role label. */
     fun isHeroName(name:String):Boolean {
         val plain=GameScreens.plain(name)
         return name.length in 2..35 && name.count { it.isLetter() }>=2 &&
-            !name.contains('…') && !name.contains("...") &&
+            name.none { it.isDigit() } && !name.contains('…') && !name.endsWith('.') &&
+            !plain.contains("giaidieu") && !plain.contains("mianhduo") &&
             NON_HERO_NAMES.none { plain==it || (plain.endsWith(it)&&plain.length<=it.length+2) }
     }
 
@@ -179,7 +201,7 @@ object ChessWiki {
         val result=ArrayList<Tile>()
         val unnamed=ArrayList<Tile>()
         for(w in words) {
-            val name=w.text.trim().replace(Regex("\\s+\\d+$"),"").trim()
+            val name=heroName(w.text)
             val slug=HeroNames.slug(name)
             if(w.y !in .49.. .925 || slug.length !in 2..25) continue
             val x=HERO_COLUMNS.minByOrNull { abs(w.x-it) }?:continue
@@ -233,7 +255,7 @@ object ChessWiki {
         // to the heading strip ABOVE faction labels and choose the expected card name first.
         val candidates=words.asSequence()
             .filter { it.x in .345.. .67 && it.y in .175.. .345 }
-            .map { word -> word to word.text.trim().replace(Regex("\\s+\\d+$"),"").trim() }
+            .map { word -> word to heroName(word.text) }
             .filter { (_,name) ->
                 isHeroName(name)
             }.toList()
@@ -255,14 +277,15 @@ object ChessWiki {
         val y1=(w.bottom*b.height).toInt().coerceIn(y0+1,b.height)
         val dx=max(1,(x1-x0)/26)
         val dy=max(1,(y1-y0)/10)
-        var nearWhite=0;var total=0
+        var nearWhite=0;var cyan=0
         for(y in y0 until y1 step dy) for(x in x0 until x1 step dx) {
             val p=b.getPixel(x,y)
             val red=Color.red(p);val green=Color.green(p);val blue=Color.blue(p)
             if(red>166&&green>166&&blue>166&&abs(red-green)<48&&abs(green-blue)<48) nearWhite++
-            total++
+            if(blue>150&&green>125&&blue-red>35&&green-red>25) cyan++
         }
-        return total>0 && nearWhite.toDouble()/total>.025
+        // A white faction icon in the same OCR box must not turn cyan faction text into a name.
+        return nearWhite>=3 && nearWhite.toDouble()/(nearWhite+cyan)>.65
     }
 
     /** All coordinates are fractions of the full landscape screenshot. */
@@ -271,7 +294,7 @@ object ChessWiki {
             return heroNameTiles(words).filter { tile ->
                 if(tile.label==null) return@filter score(b,tile.x,tile.y,.022)>12
                 val title=words.firstOrNull { w ->
-                    HeroNames.slug(w.text.trim().replace(Regex("\\s+\\d+$"),""))==
+                    HeroNames.slug(heroName(w.text))==
                         tile.id.removePrefix("hero-") &&
                     abs(w.y-(tile.y+.172))<.015 && abs(w.x-tile.x)<.047
                 }
@@ -406,6 +429,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
     private var completed=false;private var pages=0;private var items=0;private var navigation=0;private var selectedChess=false
     private var veteranAttempts=0;private var tipAttempts=0
     private var heroes=screen.completedHeroes
+    private val timing=ChessWiki.Timing(options.fast)
     private val tried=HashSet<String>()
     fun start()=navigate()
     private fun end(out:Outcome) { if(!completed) { completed=true;finish(out) } }
@@ -418,11 +442,11 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                 else -> then(l) }
         }
     }
-    private fun tap(x:Double,y:Double,wait:Long=WAIT_MS,next:()->Unit) {
+    private fun tap(x:Double,y:Double,wait:Long=timing.tap,next:()->Unit) {
         if(!screen.alive) return
         screen.tap(x,y) { ok -> if(!ok) fail("Không chạm được màn hình.") else screen.later(wait,next) }
     }
-    private fun swipe(x:Double,y:Double,toX:Double,toY:Double,wait:Long=WAIT_MS,next:()->Unit) {
+    private fun swipe(x:Double,y:Double,toX:Double,toY:Double,wait:Long=timing.scroll,next:()->Unit) {
         if(!screen.alive) return
         screen.swipe(x,y,toX,toY) { ok -> if(!ok) fail("Không cuộn được nội dung.") else screen.later(wait,next) }
     }
@@ -493,11 +517,11 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         val t=topics[at]
         if(screen.seen("topic:"+t.key)) return topic(at+1)
         screen.say("Bách khoa: "+t.side+" → "+t.label)
-        tap(.129,t.sidebarY,1000) {
+        tap(.129,t.sidebarY,timing.tab) {
             if(t.tabX==0.0) scan(at,1,null,0,0)
             else if(t.sweepHeader) swipe(.83,.18,.37,.18,700) {
-                tap(t.tabX,.18) { scan(at,1,null,0,0) }
-            } else tap(t.tabX,.18) { scan(at,1,null,0,0) }
+                tap(t.tabX,.18,timing.tab) { scan(at,1,null,0,0) }
+            } else tap(t.tabX,.18,timing.tab) { scan(at,1,null,0,0) }
         }
     }
     private fun scan(at:Int,page:Int,previous:IntArray?,still:Int,retries:Int):Unit=look(true) { l ->
@@ -514,7 +538,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                 return@look topic(at+1)
             }
             // Two extra slow drags: a game list sometimes ignores its first drag near a transition.
-            return@look screen.later(650) { swipe(.76,.80,.76,.38) { scan(at,page,previous,still+1,retries) } }
+            screen.note(t.label+": thử kéo lại danh sách ("+(still+1)+"/"+MAX_STILL+")")
+            return@look swipe(.76,.80,.76,.38) { scan(at,page,previous,still+1,retries) }
         }
         // The first screenshot of each page is saved *before* clicking any item.
         val image=ChessWiki.filename(t,"trang",page)
@@ -528,6 +553,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
             else -> emptyList()
         }
         val path="chess-page:"+t.key+":"+page
+        if(t.key=="tat-ca-quan-co") screen.note("Quân cờ: trang "+page+" · "+candidates.size+
+            " ô: "+candidates.joinToString(", ") { it.label?:"chưa rõ tên" })
         val next={ collect(at,page,signature,candidates,0) }
         if(screen.seen(path)) { l.discard(); next() }
         else save(l,image) { screen.finished(path);next() }
@@ -589,7 +616,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
             if(kind==null||screen.seen(identity)) return collect(at,page,signature,tiles,from+1)
             screen.say(if(kind=="tuong") ChessWiki.heroProgress(heroes,item.label) else
                 t.label+": chi tiết "+(from+1)+"/"+tiles.size)
-            tap(item.x,item.y,1250) {
+            tap(item.x,item.y,timing.tap) {
                 look(true) { l ->
                     if(!l.modal) {
                         l.discard()
@@ -603,7 +630,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                             !it.plain.contains("colienquan") }?.text
                     fun capture(verified:String?) {
                         if(!screen.alive||completed) { l.discard();return }
-                        val title=verified?:item.label
+                        val title=if(kind=="tuong") (verified?:item.label)?.let { ChessWiki.heroName(it) }
+                            else verified?:item.label
                         if(kind=="tuong"&&title==null) {
                             l.discard()
                             return fail("Không đọc được tên quân cờ trong thẻ hoặc vùng tiêu đề. Ảnh hàng vẫn được giữ.")
@@ -633,7 +661,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                     fun verify(attempt:Int,previous:String?=null) {
                         screen.readHeroTitle { precise ->
                             if(!screen.alive||completed) { l.discard();return@readHeroTitle }
-                            val valid=precise?.takeIf { ChessWiki.isHeroName(it) }
+                            val valid=precise?.let { ChessWiki.heroName(it) }?.takeIf { ChessWiki.isHeroName(it) }
                             val matchesCard=valid!=null&&item.label!=null&&
                                 ChessWiki.safeName(valid)==ChessWiki.safeName(item.label)
                             val confirmed=valid!=null&&previous!=null&&
@@ -677,7 +705,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         if(number>MAX_MODAL_PAGES) { l.discard();return fail("Chi tiết "+folder+" vẫn còn cuộn sau "+MAX_MODAL_PAGES+" ảnh. Kiểm tra bằng tay rồi tiếp tục.") }
         if(previous!=null&&!ChessWiki.changed(previous,l.signature)) {
             l.discard()
-            if(still>=2) return close(at,page,signature,tiles,from,tile)
+            if(still>=timing.modalStill) return close(at,page,signature,tiles,from,tile)
             return swipe(.75,.81,.75,.40) {
                 look(false) { next -> modal(at,page,signature,tiles,from,tile,kind,folder,number,next,previous,still+1) }
             }
@@ -713,7 +741,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
     private fun close(at:Int,page:Int,signature:IntArray,tiles:List<ChessWiki.Tile>,from:Int,
                       tile:ChessWiki.Tile,tries:Int=0) {
         if(tries>=3) return fail("Không đóng được bảng chi tiết. Đóng dấu X bằng tay rồi bấm Tiếp tục.")
-        tap(.902,.081,900) {
+        tap(.902,.081,timing.close) {
             look(false) { l ->
                 val stillOpen=l.modal;l.discard()
                 if(stillOpen) close(at,page,signature,tiles,from,tile,tries+1)
@@ -730,7 +758,9 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         }
     }
     private fun nextPage(at:Int,page:Int,signature:IntArray) {
-        swipe(.76,.82,.76,.40,1100) { scan(at,page+1,signature,0,0) }
+        screen.say(topics[at].label+": kéo xuống hàng tiếp theo")
+        screen.note(topics[at].label+": cuộn sang trang "+(page+1))
+        swipe(.76,.82,.76,.40) { scan(at,page+1,signature,0,0) }
     }
 }
 
