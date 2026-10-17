@@ -670,13 +670,23 @@ class UiSmoke:Instrumentation() {
                 android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("run-as com.openai.chatgpt cat files/pasted-image.bin")).use { it.readBytes() }.contentEquals(originalBytes)
             }
             targetContext.startActivity(Intent(targetContext,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP))
-            waitForIdleSync()
+            waitFor("Collector did not return to landscape after pasting") {
+                targetContext.resources.configuration.orientation==android.content.res.Configuration.ORIENTATION_LANDSCAPE
+            }
+            waitForIdleSync();SystemClock.sleep(500)
+            // The receiving app can rotate the device; rotation intentionally closes the large preview.
+            var needsPreview=false
+            runOnMainSync { needsPreview=service!!.capturePreviewView==null }
+            if(needsPreview) openHistoryImage(savedRow.name)
+            waitFor("Preview did not reopen after clipboard app") { previewImage()?.stateDescription?.toString()=="Phóng to 100%" }
             val previewShotDone=java.util.concurrent.CountDownLatch(1)
             val previewShotOK=java.util.concurrent.atomic.AtomicBoolean(false)
+            var previewHidden=false
             runOnMainSync {
                 service!!.grab(true) { previewShotOK.set(it!=null);it?.recycle();previewShotDone.countDown() }
-                check(service!!.capturePreviewView?.visibility==View.INVISIBLE) { "Large preview not hidden for screenshot" }
+                previewHidden=service!!.capturePreviewView?.visibility==View.INVISIBLE
             }
+            check(previewHidden) { "Large preview not hidden for screenshot" }
             check(previewShotDone.await(10,java.util.concurrent.TimeUnit.SECONDS)&&previewShotOK.get())
             runOnMainSync { check(service!!.capturePreviewView?.visibility==View.VISIBLE) }
             previewAction("Đóng ảnh lớn")
