@@ -9,6 +9,7 @@ import kotlin.math.max
 /** Blessing identity follows the visible cyan title, never a moving patch of icon pixels. */
 object ChessBlessings {
     const val PREFIX="blessing-title-v1:"
+    private const val ART_PREFIX="blessing-art-v1:"
     private val GROUPS=setOf("chuc-phuc-thuong","chuc-phuc-huyen-thoai-su-thi","chuc-phuc-truyen-thuyet")
     fun isGroup(group:String)=group in GROUPS
     fun key(title:String)=PREFIX+Normalizer.normalize(title,Normalizer.Form.NFD)
@@ -16,14 +17,84 @@ object ChessBlessings {
         .replace("'","").replace("\u2019","").replace(Regex("[^a-z0-9]+"),"-").trim('-')
     fun isKey(value:String)=value.startsWith(PREFIX)&&value.removePrefix(PREFIX).matches(Regex("[a-z0-9]+(?:-[a-z0-9]+)*"))
 
-    /** A recognized title needs the same recognized title in history; artwork alone proves no name. */
+    /** OCR can attach a stray letter to one word after scrolling (phi -> phif). Keep all
+     * other words, numeric tiers and word boundaries exact. Never match artwork alone,
+     * substitutions, short names, or more than one insertion/deletion. */
+    fun sameTitle(first:String,second:String):Boolean {
+        if(!isKey(first)||!isKey(second)) return false
+        if(first==second) return true
+        val a=first.removePrefix(PREFIX).split('-')
+        val b=second.removePrefix(PREFIX).split('-')
+        if(a.size<3||a.size!=b.size) return false
+        val changed=a.indices.filter { a[it]!=b[it] }
+        if(changed.size!=1) return false
+        val at=changed.single()
+        val x=a[at];val y=b[at]
+        if(x.length<3||y.length<3||!x.all { it in 'a'..'z' }||!y.all { it in 'a'..'z' }||
+            abs(x.length-y.length)!=1) return false
+        val short=if(x.length<y.length) x else y
+        val long=if(x.length<y.length) y else x
+        return long.indices.any { long.removeRange(it,it+1)==short }
+    }
+
+    /** A recognized title needs matching title evidence in history; artwork proves no name. */
     fun sameSave(group:String,previous:Set<String>,requested:Set<String>):Boolean {
         if(ChessBlessings.isGroup(group)) {
             val oldNames=previous.filter(::isKey).toSet()
             val newNames=requested.filter(::isKey).toSet()
-            if(newNames.isNotEmpty()) return oldNames.any { it in newNames }
+            if(newNames.isNotEmpty()) return oldNames.any { it in newNames } ||
+                (sameArtwork(previous,requested)&&oldNames.any { old -> newNames.any { sameTitle(old,it) } })
         }
         return previous.any { it in requested }
+    }
+
+    /** Keep the first verified title as the anchor; never chain A~B~C OCR aliases. */
+    fun mergeSavedNames(group:String,previous:Set<String>,requested:Set<String>):Set<String> {
+        val anchored=if(isGroup(group)&&previous.any(::isKey))
+            requested.filterNot { isKey(it)&&it !in previous }.toSet() else requested
+        return previous+anchored
+    }
+
+    /** A full, tightly bounded pictogram is stable across scroll offsets; old point hashes
+     * are deliberately excluded because they can sample card backing or neighboring icons. */
+    fun artwork(bitmap:Bitmap,x:Double,y:Double):String? =
+        artwork(bitmap.width,bitmap.height,x,y,bitmap::getPixel)
+
+    fun artwork(width:Int,height:Int,x:Double,y:Double,pixel:(Int,Int)->Int):String? {
+        val left=((x-.042)*width).toInt().coerceAtLeast(0)
+        val right=((x+.042)*width).toInt().coerceAtMost(width-1)
+        val top=((y-.115)*height).toInt().coerceAtLeast(0)
+        val bottom=((y+.115)*height).toInt().coerceAtMost(height-1)
+        var x0=right;var x1=left;var y0=bottom;var y1=top
+        for(yy in top..bottom) for(xx in left..right) if(white(pixel(xx,yy))) {
+            x0=minOf(x0,xx);x1=maxOf(x1,xx);y0=minOf(y0,yy);y1=maxOf(y1,yy)
+        }
+        if(x1-x0<16||y1-y0<16||x0<=left||x1>=right||y0<=top||y1>=bottom) return null
+        val bits=StringBuilder()
+        for(row in 0 until 16) for(col in 0 until 16) {
+            val xa=x0+col*(x1-x0+1)/16;val xb=x0+(col+1)*(x1-x0+1)/16
+            val ya=y0+row*(y1-y0+1)/16;val yb=y0+(row+1)*(y1-y0+1)/16
+            var count=0;var total=0
+            for(yy in ya until yb) for(xx in xa until xb) { total++;if(white(pixel(xx,yy))) count++ }
+            bits.append(if(count*4>=total) '1' else '0')
+        }
+        return ART_PREFIX+((x1-x0+1)*1000/(y1-y0+1))+":"+bits
+    }
+
+    fun sameArtwork(first:Set<String>,second:Set<String>):Boolean {
+        fun parse(value:String):Pair<Int,String>? {
+            if(!value.startsWith(ART_PREFIX)) return null
+            val parts=value.removePrefix(ART_PREFIX).split(':')
+            if(parts.size!=2) return null
+            val ratio=parts[0].toIntOrNull()?.takeIf { it>0 }?:return null
+            val bits=parts[1]
+            if(bits.length!=256||!bits.all { it=='0'||it=='1' }||bits.count { it=='1' } !in 16..240) return null
+            return ratio to bits
+        }
+        return first.mapNotNull(::parse).any { a -> second.mapNotNull(::parse).any { b ->
+            abs(a.first.toLong()-b.first)*100<=maxOf(a.first,b.first).toLong()*8&&
+                a.second.indices.count { a.second[it]!=b.second[it] }<=12
+        } }
     }
 
     /** Grey body copy and blue card backing must not be mistaken for a blessing's cyan heading. */

@@ -108,7 +108,7 @@ object GamePhotoSession {
             if(saved.getString("group")!=group) continue
             val previous=savedItems(saved)
             if(!ChessBlessings.sameSave(group,previous,names)) continue
-            val merged=previous+names
+            val merged=ChessBlessings.mergeSavedNames(group,previous,names)
             if(merged!=previous) {
                 saved.put("aliases",JSONArray((merged-saved.getString("item")).sorted()))
                 store(context,runId,state)
@@ -132,7 +132,7 @@ object GamePhotoSession {
         // whose imported original is still readable and byte-for-byte intact.
         return names.filter(ChessBlessings::isKey).any { key ->
             BlessingPhotoIndex.hasSaved(File(context.filesDir,BlessingPhotoIndex.FILE),
-                File(context.filesDir,"captures/"+GamePhotoImport.ROOT),group,key)
+                File(context.filesDir,"captures/"+GamePhotoImport.ROOT),group,key,names)
         }
     }
 
@@ -141,12 +141,11 @@ object GamePhotoSession {
         if(!ChessBlessings.isGroup(pick.group)) return
         val saves=state.getJSONArray("saves")
         val key=ChessBlessings.key(pick.item)
-        val verified=(0 until saves.length()).any { index ->
-            val saved=saves.getJSONObject(index)
+        val verified=(0 until saves.length()).map { saves.getJSONObject(it) }.firstOrNull { saved ->
             saved.getString("group")==pick.group&&saved.getString("item")==pick.item&&key in savedItems(saved)
         }
-        if(verified) BlessingPhotoIndex.record(File(context.filesDir,BlessingPhotoIndex.FILE),
-            File(context.filesDir,"captures/"+GamePhotoImport.ROOT),pick.group,key,file)
+        if(verified!=null) BlessingPhotoIndex.record(File(context.filesDir,BlessingPhotoIndex.FILE),
+            File(context.filesDir,"captures/"+GamePhotoImport.ROOT),pick.group,key,file,savedItems(verified))
     }
 
     private fun savedItems(saved:JSONObject):Set<String> {

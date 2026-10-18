@@ -119,7 +119,8 @@ object ChessWiki {
             // title as the durable identity. A fixed probe never authorizes a new save.
             val old=listOf(.40,.68,.91).filter { abs(it-tile.y)<.105 }
                 .map { fingerprint(bitmap,tile.x,it) }.toSet()
-            tile.copy(aliases=old+fingerprint(bitmap,tile.x,tile.y))
+            tile.copy(aliases=old+fingerprint(bitmap,tile.x,tile.y)+
+                listOfNotNull(ChessBlessings.artwork(bitmap,tile.x,tile.y)))
         }
     }
     fun skillTiles(bitmap:Bitmap):List<Tile> {

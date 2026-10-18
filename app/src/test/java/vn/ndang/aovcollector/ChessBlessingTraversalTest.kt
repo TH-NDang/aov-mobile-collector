@@ -9,7 +9,7 @@ class ChessBlessingTraversalTest {
     private class BlessingScreen(
         val pages:List<List<ChessWiki.Tile>>,
         val ledger:MutableSet<String> = hashSetOf(),
-        val journal:MutableSet<String> = hashSetOf(),
+        val journal:MutableMap<String,Set<String>> = hashMapOf(),
         val fail:String?=null,
         val absent:String?=null,
         val interruptAfter:String?=null,
@@ -53,11 +53,11 @@ class ChessBlessingTraversalTest {
             assertTrue(ChessBlessings.key(item) in aliases)
             attempts.add(item)
             when {
-                item in journal||item in alreadyObtained -> then(ChessWikiReader.NativeResult.SAVED)
+                journal.values.any { ChessBlessings.sameSave(group,it,aliases+item) }||item in alreadyObtained -> then(ChessWikiReader.NativeResult.SAVED)
                 item==fail -> then(ChessWikiReader.NativeResult.FAILED)
                 item==absent -> then(ChessWikiReader.NativeResult.ABSENT)
                 else -> {
-                    exports.add(item);journal.add(item)
+                    exports.add(item);journal[item]=aliases+item
                     if(item==interruptAfter) alive=false
                     then(ChessWikiReader.NativeResult.SAVED)
                 }
@@ -100,6 +100,20 @@ class ChessBlessingTraversalTest {
         val resume=BlessingScreen(pages(),first.ledger,first.journal);resume.run()
         assertTrue(resume.outcome is ChessWikiReader.Outcome.Done)
         assertEquals(listOf("Vòng quay bạc ngàn"),resume.exports)
+    }
+
+    @Test fun noisyHeadingAfterScrollAndRestartDoesNotRepeatNativeExport() {
+        val art="blessing-art-v1:500:"+"0000111100001111".repeat(16)
+        val firstTile=tile("Hoàn phí 5 vàng",.67,art)
+        val noisyTile=tile("Hoàn phif 5 vàng",.34,art)
+        val tier=tile("Hoàn phí 4 vàng",.67,art)
+        val overlapping=listOf(listOf(firstTile),listOf(noisyTile,tier))
+        val first=BlessingScreen(overlapping,interruptAfter=firstTile.label);first.run()
+        assertEquals(listOf(firstTile.label),first.exports)
+        val resumed=BlessingScreen(overlapping,first.ledger,first.journal);resumed.run()
+        assertTrue(resumed.outcome is ChessWikiReader.Outcome.Done)
+        assertEquals(listOf(tier.label),resumed.exports)
+        assertEquals(2,resumed.journal.size)
     }
 
     @Test fun failedOrAbsentConfirmedTitleRemainsRetryableAndTopicIsNotCompleted() {

@@ -1,6 +1,7 @@
 package vn.ndang.aovcollector
 
 import org.json.JSONObject
+import org.json.JSONArray
 import java.io.File
 import java.security.MessageDigest
 
@@ -22,12 +23,12 @@ object BlessingPhotoIndex {
     }
 
     /** Called only after the session's source/event pairing has produced a verified local copy. */
-    fun record(index:File,root:File,group:String,key:String,file:File) {
+    fun record(index:File,root:File,group:String,key:String,file:File,aliases:Set<String> =emptySet()) {
         require(ChessBlessings.isGroup(group)&&ChessBlessings.isKey(key))
         require(within(root,file)&&file.isFile&&file.length()>0&&file.canRead())
         val records=read(index)
         records.put(identity(group,key),JSONObject().put("path",file.relativeTo(root).invariantSeparatorsPath)
-            .put("size",file.length()).put("sha256",sha(file)))
+            .put("size",file.length()).put("sha256",sha(file)).put("aliases",JSONArray(aliases.sorted())))
         index.parentFile?.mkdirs()
         val temp=File(index.parentFile,index.name+".part")
         temp.writeText(records.toString(2))
@@ -35,9 +36,20 @@ object BlessingPhotoIndex {
     }
 
     /** Missing, deleted, truncated, replaced or unreadable pictures never suppress a fresh save. */
-    fun hasSaved(index:File,root:File,group:String,key:String):Boolean {
+    fun hasSaved(index:File,root:File,group:String,key:String,aliases:Set<String> =emptySet()):Boolean {
         if(!ChessBlessings.isGroup(group)||!ChessBlessings.isKey(key)) return false
-        val entry=read(index).optJSONObject(identity(group,key))?:return false
+        val records=read(index)
+        val exact=identity(group,key)
+        val candidates=records.keys().asSequence().filter { stored ->
+            val entry=records.optJSONObject(stored)
+            val art=entry?.optJSONArray("aliases")
+            val previous=(0 until (art?.length()?:0)).map { art!!.getString(it) }.toSet()
+            stored.startsWith(group+":")&&ChessBlessings.sameSave(group,
+                previous+stored.removePrefix(group+":"),aliases+key)
+        }.toList()
+        // Ambiguous near-matches must never choose an arbitrary existing blessing.
+        val matched=if(records.has(exact)) exact else candidates.singleOrNull()?:return false
+        val entry=records.optJSONObject(matched)?:return false
         val path=entry.getString("path")
         val file=File(root,path)
         if(path.isBlank()||!within(root,file)||!file.isFile||!file.canRead()||

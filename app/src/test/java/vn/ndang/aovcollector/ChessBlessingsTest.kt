@@ -110,6 +110,74 @@ class ChessBlessingsTest {
         } finally { dir.deleteRecursively() }
     }
 
+    private fun art(shift:Int=0)= "blessing-art-v1:500:"+(0 until 256).joinToString("") {
+        if((it+shift)%16 in 3..10) "1" else "0"
+    }
+
+    @Test fun reportedPhiPhifDriftRequiresFullIconEvidenceAndKeepsNumericVariants() {
+        val group="chuc-phuc-thuong"
+        val first=setOf(ChessBlessings.key("Hoàn phí 5 vàng"),art())
+        val noisy=setOf(ChessBlessings.key("Hoàn phif 5 vàng"),art())
+        assertTrue(ChessBlessings.sameSave(group,first,noisy))
+        assertTrue(ChessBlessings.sameSave(group,noisy,first))
+        assertFalse(ChessBlessings.sameSave(group,first,noisy.filterNot { it.startsWith("blessing-art") }.toSet()))
+        assertFalse(ChessBlessings.sameSave(group,first,setOf(ChessBlessings.key("Hoàn phif 5 vàng"),art(7))))
+        for(name in listOf("Hoàn phí 4 vàng","Hoàn phí 15 vàng","Hoàn phí vàng","Hoàn phiif 5 vàng",
+            "Hoàn khi 5 vàng","Hoàn phí 5 bạc"))
+            assertFalse(name,ChessBlessings.sameSave(group,first,setOf(ChessBlessings.key(name),art())))
+        assertFalse(ChessBlessings.sameTitle(ChessBlessings.key("Phi vàng"),ChessBlessings.key("Phif vàng")))
+        assertFalse(ChessBlessings.sameTitle(ChessBlessings.key("Hoàn phí 5 vàng"),ChessBlessings.key("Hoàn phiff 5 vàng")))
+    }
+
+    @Test fun journalMergingNeverChainsOcrAliasesOrChangesNonBlessingBehavior() {
+        val group="chuc-phuc-thuong"
+        val a=setOf(ChessBlessings.key("Hoàn phí 5 vàng"),art())
+        val b=setOf(ChessBlessings.key("Hoàn phif 5 vàng"),art())
+        val c=setOf(ChessBlessings.key("Hoàn phiff 5 vàng"),art())
+        assertTrue(ChessBlessings.sameSave(group,a,b))
+        val merged=ChessBlessings.mergeSavedNames(group,a,b)
+        assertEquals(a,merged)
+        assertFalse(ChessBlessings.sameSave(group,merged,c))
+        assertEquals(a+b,ChessBlessings.mergeSavedNames("chieu-quan-co",a,b))
+        assertEquals(a+b,ChessBlessings.mergeSavedNames(group,setOf("legacy"),a+b)-"legacy")
+    }
+
+    @Test fun wholeIconSignatureSurvivesTranslationAndRejectsClippedOrBlankArt() {
+        fun signature(y:Double)=ChessBlessings.artwork(1000,1000,.275,y) { x,yy ->
+            val dy=yy-(y*1000).toInt()
+            if(x in 250..300&&dy in -70..70&&(x in 250..260||dy in -10..10))
+                0xffffffff.toInt() else 0xff16478c.toInt()
+        }
+        val first=signature(.4)!!;val scrolled=signature(.7)!!
+        assertEquals(first,scrolled)
+        val stretched=first.replace(Regex("blessing-art-v1:[0-9]+:"),"blessing-art-v1:900:")
+        assertFalse(ChessBlessings.sameArtwork(setOf(first),setOf(stretched)))
+        assertTrue(ChessBlessings.sameArtwork(setOf(first),setOf(scrolled)))
+        assertNull(ChessBlessings.artwork(1000,1000,.275,.4) { _,_ -> 0xff16478c.toInt() })
+        assertNull(ChessBlessings.artwork(1000,1000,.275,.4) { _,_ -> 0xffffffff.toInt() })
+        assertFalse(ChessBlessings.sameArtwork(setOf("shared-icon-hash"),setOf("shared-icon-hash")))
+    }
+
+    @Test fun crossRunOcrDriftNeedsRecordedArtworkAndStillVerifiesOriginalBytes() {
+        val dir=Files.createTempDirectory("blessing-ocr-index").toFile()
+        try {
+            val root=File(dir,"originals").apply { mkdirs() }
+            val index=File(dir,BlessingPhotoIndex.FILE)
+            val file=File(root,"photo.jpg").apply { writeBytes(byteArrayOf(1,2,3)) }
+            val group="chuc-phuc-thuong"
+            val key=ChessBlessings.key("Hoàn phí 5 vàng")
+            val noisy=ChessBlessings.key("Hoàn phif 5 vàng")
+            BlessingPhotoIndex.record(index,root,group,key,file)
+            assertFalse(BlessingPhotoIndex.hasSaved(index,root,group,noisy,setOf(art())))
+            BlessingPhotoIndex.record(index,root,group,key,file,setOf(art()))
+            assertTrue(BlessingPhotoIndex.hasSaved(index,root,group,noisy,setOf(art())))
+            assertFalse(BlessingPhotoIndex.hasSaved(index,root,group,noisy))
+            assertFalse(BlessingPhotoIndex.hasSaved(index,root,group,ChessBlessings.key("Hoàn phí 4 vàng"),setOf(art())))
+            file.writeBytes(byteArrayOf(3,2,1))
+            assertFalse(BlessingPhotoIndex.hasSaved(index,root,group,noisy,setOf(art())))
+        } finally { dir.deleteRecursively() }
+    }
+
     @Test fun corruptIndexDoesNotAuthorizeSkippingOrOverwriteItself() {
         val dir=Files.createTempDirectory("blessing-corrupt").toFile()
         try {
