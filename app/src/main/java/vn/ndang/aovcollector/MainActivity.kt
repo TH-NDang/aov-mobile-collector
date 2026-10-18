@@ -41,13 +41,35 @@ class MainActivity : Activity() {
     private val historyTrail=ArrayList<File?>()
     private val historySearchHandler=Handler(Looper.getMainLooper())
     private val historySearchExecutor=Executors.newSingleThreadExecutor()
+    private val imageExecutor=Executors.newSingleThreadExecutor()
+    private val viewerExecutor=Executors.newSingleThreadExecutor()
+    private var viewerTask:java.util.concurrent.Future<*>?=null
     private var historySearchTask:Runnable?=null
     private var historySearchToken=0
     private var historyResultsKey=""
     private var historyResults=emptyList<File>()
     private val thumbs=object:android.util.LruCache<String,Bitmap>(24*1024*1024) { override fun sizeOf(key:String,value:Bitmap)=value.byteCount }
-    private fun thumb(file:File,sample:Int):Bitmap? { val key="${file.path}:${file.lastModified()}:$sample"
-        return thumbs.get(key)?:BitmapFactory.decodeFile(file.path,BitmapFactory.Options().apply { inSampleSize=sample })?.also { thumbs.put(key,it) } }
+    private fun thumb(file:File,width:Int,height:Int,crop:Boolean=true):Bitmap? {
+        val bounds=BitmapFactory.Options().apply { inJustDecodeBounds=true }
+        BitmapFactory.decodeFile(file.path,bounds)
+        if(bounds.outWidth<=0||bounds.outHeight<=0) return null
+        val sample=ImageSampling.sample(bounds.outWidth,bounds.outHeight,width,height,crop)
+        val key="${file.path}:${file.lastModified()}:${file.length()}:$sample"
+        return thumbs.get(key)?:BitmapFactory.decodeFile(file.path,BitmapFactory.Options().apply { inSampleSize=sample })?.also { thumbs.put(key,it) }
+    }
+    private fun loadThumb(file:File,width:Int,height:Int,view:ImageView,crop:Boolean=true) {
+        val request=Any();view.tag=request;view.setImageDrawable(null)
+        val task=Runnable {
+            val bitmap=try { thumb(file,width,height,crop) } catch(_:Exception) { null } catch(_:OutOfMemoryError) { null }
+            runOnUiThread {
+                if(!isDestroyed&&view.tag===request) view.setImageBitmap(bitmap)
+            }
+        }
+        try {
+            if(crop) imageExecutor.execute(task)
+            else { viewerTask?.cancel(false);viewerTask=viewerExecutor.submit(task) }
+        } catch(_:java.util.concurrent.RejectedExecutionException) {}
+    }
     private fun createdAt(dir:File):Long {
         val m=meta(dir); if(m.has("createdAt")) return m.optLong("createdAt")
         Regex("\\d{8}-\\d{6}").find(dir.name)?.let { found -> try { return SimpleDateFormat("yyyyMMdd-HHmmss",Locale.US).parse(found.value)!!.time } catch(_:Exception) {} }
@@ -95,10 +117,13 @@ class MainActivity : Activity() {
             if(GamePhotoImport.nativeFolderTitle(parent)!=null)
                 return "Lượt "+file.name.replace('-',' ')
         }
-        // Keep the former flat layout readable for older imported game photos.
-        GamePhotoImport.GROUPS.firstOrNull { it.key==file.name }?.let { return it.title }
-        if(file.parentFile?.name in GamePhotoImport.GROUPS.map { it.key })
-            return "Lượt "+file.name.replace('-',' ')
+        // A profession/faction detail folder is not a native-photo run merely because its
+        // parent is named nghe/phe. Keep legacy run labels inside the native-photo root only.
+        if(photoPath!=null) {
+            GamePhotoImport.GROUPS.firstOrNull { it.key==file.name }?.let { return it.title }
+            if(file.parentFile?.name in GamePhotoImport.GROUPS.map { it.key })
+                return "Lượt "+file.name.replace('-',' ')
+        }
         ChessWiki.TOPICS.firstOrNull { it.key==file.name }?.let { return it.label }
         when(file.name) {
             "thong-tin" -> return "Thông tin cơ bản"
@@ -202,7 +227,7 @@ class MainActivity : Activity() {
         historySearchHandler.postDelayed(photoRefresh,1500)
     }
     override fun onPause() { historySearchHandler.removeCallbacks(photoRefresh);if(FileJob.screen===jobDone) FileJob.screen=null;super.onPause() }
-    override fun onDestroy() { historySearchToken++;historySearchTask?.let { historySearchHandler.removeCallbacks(it) };historySearchExecutor.shutdownNow();progress?.close();super.onDestroy() }
+    override fun onDestroy() { historySearchToken++;historySearchTask?.let { historySearchHandler.removeCallbacks(it) };historySearchExecutor.shutdownNow();imageExecutor.shutdownNow();viewerExecutor.shutdownNow();progress?.close();super.onDestroy() }
     override fun onNewIntent(intent:Intent) { super.onNewIntent(intent);setIntent(intent);if(intent.getBooleanExtra(FileJob.SHOW,false)) showJob()
         if(intent.getBooleanExtra(Accounts.OPEN,false)) { intent.removeExtra(Accounts.OPEN);accountDialog() };acceptCaptureExport() }
     private fun acceptCaptureExport() {
@@ -438,7 +463,7 @@ class MainActivity : Activity() {
         if(selecting) row.addView(Ui.text(this,if(selected.contains(file)) "✓" else "○",23f,Ui.accent,true),LinearLayout.LayoutParams(dp(30),-2))
         val cover=all.firstOrNull()
         val thumb=ImageView(this).apply { scaleType=ImageView.ScaleType.CENTER_CROP;background=Ui.shape(Ui.pale,dp(12));clipToOutline=true;contentDescription=null
-            if(cover!=null) setImageBitmap(thumb(cover,12)) else setImageDrawable(ActionIcon("float",Ui.accent)) }
+            if(cover!=null) loadThumb(cover,dp(74),dp(60),this) else setImageDrawable(ActionIcon("float",Ui.accent)) }
         row.addView(thumb,LinearLayout.LayoutParams(dp(74),dp(60)))
         val info=Ui.stack(this).apply { setPadding(dp(12),0,dp(6),0) }
         info.addView(Ui.text(this,title(file),16f,Ui.ink,true).apply { maxLines=2;ellipsize=android.text.TextUtils.TruncateAt.END })
@@ -514,7 +539,7 @@ class MainActivity : Activity() {
         fun show(i:Int) {
             pos=i.coerceIn(0,images.size-1);val f=images[pos]
             heading.text=title(f);counter.text="${pos+1}/${images.size}";caption.text=f.name
-            image.setImageBitmap(BitmapFactory.decodeFile(f.path,BitmapFactory.Options().apply { inSampleSize=2 }));image.alpha=.3f;image.animate().alpha(1f).setDuration(140).start()
+            loadThumb(f,resources.displayMetrics.widthPixels,resources.displayMetrics.heightPixels,image,false);image.alpha=.3f;image.animate().alpha(1f).setDuration(140).start()
             prev.visibility=if(pos>0) View.VISIBLE else View.INVISIBLE;next.visibility=if(pos<images.size-1) View.VISIBLE else View.INVISIBLE
             thumbsViews.forEachIndexed { k,v -> v.background=Ui.shape(if(k==pos) Ui.accent else Color.TRANSPARENT,dp(10));v.alpha=if(k==pos) 1f else .65f }
             val cell=thumbsViews[pos];strip.post { strip.smoothScrollTo(cell.left-(strip.width-cell.width)/2,0) }
@@ -532,7 +557,7 @@ class MainActivity : Activity() {
         image.setOnTouchListener { v,e -> if(e.actionMasked==MotionEvent.ACTION_UP) v.performClick();swipe.onTouchEvent(e) }
         show(pos)
         // Filmstrip thumbnails decode off the main thread; the cache makes revisits instant.
-        Thread { images.forEachIndexed { i,f -> val b=thumb(f,16);runOnUiThread { if(historyRoot==null) thumbsViews[i].setImageBitmap(b) } } }.start()
+        images.forEachIndexed { i,f -> loadThumb(f,dp(112),dp(66),thumbsViews[i]) }
     }
     private fun duration(ms:Long):String { val t=ms/1000; return if(t>=3600) "%d:%02d:%02d".format(t/3600,t/60%60,t%60) else "%d:%02d".format(t/60,t%60) }
     private fun itemMenu(file:File) {

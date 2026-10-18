@@ -904,7 +904,8 @@ class CollectorService : AccessibilityService() {
                 .put("detailPages",detailPages).toString())
             require(part.renameTo(ledger)) { "Không thay được file tiến độ" };true
         } catch(e:Exception) { CrashLog.record(this@CollectorService,"Không ghi được tiến độ Bách khoa",e);false }
-        val timing=ChessWiki.Timing(BuiltInMacros.chessOptions(readMacro().json).fast)
+        val options=BuiltInMacros.chessOptions(readMacro().json)
+        val timing=ChessWiki.Timing(options.fast)
         val screen=object:ChessWikiReader.Screen {
             override val alive get()=alive()
             override val completedHeroes get()=doneIds.count { it.startsWith("item:tat-ca-quan-co:hero-") }
@@ -915,16 +916,21 @@ class CollectorService : AccessibilityService() {
                     if(b==null) return@grab then(null)
                     val nodes=if(words) screenWords() else emptyList()
                     try { io.execute {
+                        var itemTitle:String?=null
                         val data:Triple<List<GameScreens.Word>,IntArray,Boolean>?=try {
                             val modal=ChessWiki.modal(b)
-                            Triple(if(words) nodes+GameText.words(b) else nodes,
-                                ChessWiki.signature(b,modal),modal)
+                            val readWords=if(words) nodes+GameText.words(b) else nodes
+                            if(words&&modal&&(options.equipmentDetails||options.synergyDetails))
+                                itemTitle=ChessPopupTitle.select(readWords) { ChessPopupTitle.whiteHeading(b,it) }
+                                    ?:GameText.chessItemTitle(b)
+                            Triple(readWords,ChessWiki.signature(b,modal),modal)
                         } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không đọc được màn hình Bách khoa",e);null }
                         handler.post {
                             if(!alive()) { b.recycle();then(null) }
                             else if(data==null) { b.recycle();then(null) }
                             else then(object:ChessWikiReader.Look {
                                 override val words=data.first
+                                override val itemTitle=itemTitle
                                 override val signature=data.second
                                 override val modal=data.third
                                 override val height=b.height
@@ -996,6 +1002,7 @@ class CollectorService : AccessibilityService() {
                                     preserveDetail:Boolean,aliases:Set<String>,then:(NativeResult)->Unit) {
                 if(!alive()) return
                 val saveRunId=runId
+                val earlyReady=NativeSaveReadiness.enabled(group,preserveDetail,options.fast)
                 fun currentRun()=alive()&&runId==saveRunId
                 fun startNativeSave() {
                     if(!currentRun()) return
@@ -1037,11 +1044,11 @@ class CollectorService : AccessibilityService() {
                     fun tapNative(x:Double,y:Double,done:(Boolean)->Unit) {
                         if(active()) touchGame(tapAt(x,y),true) { if(active()) done(it) }
                     }
-                    fun readPrompt(done:(List<GameScreens.Word>,NativeSaveEvidence.Scene)->Unit) {
+                    fun readPrompt(done:(Pair<List<GameScreens.Word>,NativeSaveEvidence.Scene>?)->Unit) {
                         if(!active()) return
                         grab(anyApp=true) { image ->
                             if(!active()) { image?.recycle();return@grab }
-                            if(image==null) return@grab complete(NativeResult.FAILED)
+                            if(image==null) return@grab done(null)
                             try { io.execute {
                                 val evidence=try {
                                     val words=GameText.words(image)
@@ -1064,73 +1071,75 @@ class CollectorService : AccessibilityService() {
                                     CrashLog.record(this@CollectorService,"Không đọc được Save Photo",e);null
                                 } finally { image.recycle() }
                                 handler.post {
-                                    if(active()) {
-                                        if(evidence==null) complete(NativeResult.FAILED)
-                                        else done(evidence.first,evidence.second)
-                                    }
+                                    if(active()) done(evidence)
                                 }
-                            } } catch(e:Exception) { image.recycle();complete(NativeResult.FAILED) }
+                            } } catch(e:Exception) { image.recycle();done(null) }
+                        }
+                    }
+                    fun settledPrompt(waitMs:Long,
+                                      ready:(Pair<List<GameScreens.Word>,NativeSaveEvidence.Scene>)->Boolean,
+                                      done:(List<GameScreens.Word>,NativeSaveEvidence.Scene)->Unit) {
+                        NativeSaveReadiness.read(earlyReady,waitMs,SystemClock::uptimeMillis,::active,
+                            ::later,::readPrompt,ready) { evidence ->
+                            if(evidence==null) complete(NativeResult.FAILED)
+                            else done(evidence.first,evidence.second)
                         }
                     }
                     touchGame(hold,false) { pushed ->
                         if(!active()) return@touchGame
                         if(!pushed) return@touchGame complete(NativeResult.FAILED)
-                        later(1000) {
-                            readPrompt { words,scene ->
-                                val answer=ChessWiki.nativeConfirm(words)
-                                val cancel=ChessWiki.nativeCancel(words)
-                                if(answer==null) {
-                                    when {
-                                        cancel!=null -> {
-                                            note("Save Photo thiếu nút Sure: bấm CANCEL, không tải nhầm.")
-                                            tapNative(cancel.first,cancel.second) { complete(NativeResult.FAILED) }
-                                        }
-                                        scene==NativeSaveEvidence.Scene.DETAIL&&preserveDetail ->
-                                            complete(NativeResult.ABSENT)
-                                        scene==NativeSaveEvidence.Scene.DETAIL -> {
-                                            // This portrait long-press opened a detail drawer instead of Save Photo.
-                                            // Do not call it absent until the close is verified on a fresh page scan.
-                                            tapNative(.902,.082) { closed ->
-                                                if(!closed) complete(NativeResult.FAILED)
-                                                else later(timing.close) {
-                                                    readPrompt { _,afterClose ->
-                                                        complete(if(afterClose==NativeSaveEvidence.Scene.PAGE)
-                                                            NativeResult.ABSENT else NativeResult.FAILED)
-                                                    }
+                        settledPrompt(1000,{ ChessWiki.nativeConfirm(it.first)!=null }) { words,scene ->
+                            val answer=ChessWiki.nativeConfirm(words)
+                            val cancel=ChessWiki.nativeCancel(words)
+                            if(answer==null) {
+                                when {
+                                    cancel!=null -> {
+                                        note("Save Photo thiếu nút Sure: bấm CANCEL, không tải nhầm.")
+                                        tapNative(cancel.first,cancel.second) { complete(NativeResult.FAILED) }
+                                    }
+                                    scene==NativeSaveEvidence.Scene.DETAIL&&preserveDetail ->
+                                        complete(NativeResult.ABSENT)
+                                    scene==NativeSaveEvidence.Scene.DETAIL -> {
+                                        // This portrait long-press opened a detail drawer instead of Save Photo.
+                                        // Do not call it absent until the close is verified on a fresh page scan.
+                                        tapNative(.902,.082) { closed ->
+                                            if(!closed) complete(NativeResult.FAILED)
+                                            else later(timing.close) {
+                                                readPrompt { evidence ->
+                                                    complete(if(evidence?.second==NativeSaveEvidence.Scene.PAGE)
+                                                        NativeResult.ABSENT else NativeResult.FAILED)
                                                 }
                                             }
                                         }
-                                        scene==NativeSaveEvidence.Scene.PAGE&&!preserveDetail ->
-                                            complete(NativeResult.ABSENT)
-                                        else -> complete(NativeResult.FAILED)
                                     }
-                                } else tapNative(answer.first,answer.second) { pressed ->
-                                    if(!pressed) return@tapNative complete(NativeResult.FAILED)
-                                    later(1150) {
-                                        readPrompt { confirmWords,afterSave ->
-                                            if(afterSave==NativeSaveEvidence.Scene.PROMPT) {
-                                                val cancelPrompt=ChessWiki.nativeCancel(confirmWords)
-                                                if(cancelPrompt!=null) {
-                                                    note("Save Photo vẫn mở sau Sure; đóng CANCEL và bỏ qua.")
-                                                    tapNative(cancelPrompt.first,cancelPrompt.second) { complete(NativeResult.FAILED) }
-                                                } else complete(NativeResult.FAILED)
-                                            } else if(afterSave==NativeSaveEvidence.Scene.UNKNOWN||
-                                                (preserveDetail&&afterSave!=NativeSaveEvidence.Scene.DETAIL)) {
-                                                complete(NativeResult.FAILED)
-                                            } else try { io.execute {
-                                                val marked=try {
-                                                    GamePhotoSession.mark(this@CollectorService,saveRunId,group,item,aliases)
-                                                    GamePhotoSync.request(this@CollectorService)
-                                                    true
-                                                } catch(e:Throwable) {
-                                                    CrashLog.record(this@CollectorService,"Không ghi được ảnh gốc đã lưu",e);false
-                                                }
-                                                handler.post {
-                                                    if(active()) complete(if(marked) NativeResult.SAVED else NativeResult.FAILED)
-                                                }
-                                            } } catch(e:Exception) { complete(NativeResult.FAILED) }
+                                    scene==NativeSaveEvidence.Scene.PAGE&&!preserveDetail ->
+                                        complete(NativeResult.ABSENT)
+                                    else -> complete(NativeResult.FAILED)
+                                }
+                            } else tapNative(answer.first,answer.second) { pressed ->
+                                if(!pressed) return@tapNative complete(NativeResult.FAILED)
+                                settledPrompt(1150,{ it.second==NativeSaveEvidence.Scene.PAGE }) { confirmWords,afterSave ->
+                                    if(afterSave==NativeSaveEvidence.Scene.PROMPT) {
+                                        val cancelPrompt=ChessWiki.nativeCancel(confirmWords)
+                                        if(cancelPrompt!=null) {
+                                            note("Save Photo vẫn mở sau Sure; đóng CANCEL và bỏ qua.")
+                                            tapNative(cancelPrompt.first,cancelPrompt.second) { complete(NativeResult.FAILED) }
+                                        } else complete(NativeResult.FAILED)
+                                    } else if(afterSave==NativeSaveEvidence.Scene.UNKNOWN||
+                                        (preserveDetail&&afterSave!=NativeSaveEvidence.Scene.DETAIL)) {
+                                        complete(NativeResult.FAILED)
+                                    } else try { io.execute {
+                                        val marked=try {
+                                            GamePhotoSession.mark(this@CollectorService,saveRunId,group,item,aliases)
+                                            GamePhotoSync.request(this@CollectorService)
+                                            true
+                                        } catch(e:Throwable) {
+                                            CrashLog.record(this@CollectorService,"Không ghi được ảnh gốc đã lưu",e);false
                                         }
-                                    }
+                                        handler.post {
+                                            if(active()) complete(if(marked) NativeResult.SAVED else NativeResult.FAILED)
+                                        }
+                                    } } catch(e:Exception) { complete(NativeResult.FAILED) }
                                 }
                             }
                         }
@@ -1139,7 +1148,7 @@ class CollectorService : AccessibilityService() {
                 // importNew can hold GamePhotoSession's lock while copying Pictures. Never wait
                 // for that lock on the UI thread, and keep Stop/Pause visible during this lookup.
                 try { io.execute {
-                    val saved=try { (aliases+item).any { GamePhotoSession.hasMark(this@CollectorService,saveRunId,group,it) } }
+                    val saved=try { GamePhotoSession.hasMark(this@CollectorService,saveRunId,group,item,aliases) }
                         catch(e:Exception) {
                             CrashLog.record(this@CollectorService,"Không đọc được tiến độ ảnh gốc",e);null
                         }
@@ -1180,7 +1189,6 @@ class CollectorService : AccessibilityService() {
             override fun note(message:String) { this@CollectorService.note(message) }
             override fun say(message:String) { if(alive()) { lastStatus=message;refreshPanel() } }
         }
-        val options=BuiltInMacros.chessOptions(readMacro().json)
         if(options.nativeGroups.isEmpty()) {
             ChessWikiReader(screen,options,finish).start()
         } else try {
@@ -1704,7 +1712,8 @@ class CollectorService : AccessibilityService() {
     /** Photos of the run on disk: with skill rows read at run time, the macro alone cannot tell. */
     private fun photosTaken(m:Macro):Int = when {
         !m.photosVary||runId.isEmpty() -> m.photoSteps.size
-        m.json.optString("collectionMode")=="chess" -> File(filesDir,"captures/$runId").walk().count { it.isFile&&it.extension=="png"&&it.name.contains("-chess__") }
+        m.json.optString("collectionMode")=="chess" -> File(filesDir,"captures/$runId").walk().count { it.isFile&&it.extension=="png"&&
+            (it.name.contains("-chess__")||ChessCaptureFiles.exactDisplayName(it.relativeTo(File(filesDir,"captures")).invariantSeparatorsPath)!=null) }
         m.json.optString("collectionMode")=="ranking" -> File(filesDir,"captures/$runId").walk().count { it.extension=="png"&&RankScreens.COMBOS.any { c -> it.name.contains(c.slug) } }
         else -> File(filesDir,"captures/$runId").walk().count { it.extension=="png"&&it.name.contains("hero") }
     }
@@ -1911,16 +1920,8 @@ class CollectorService : AccessibilityService() {
         if(folder!="manual"&&m.json.optString("collectionMode")=="ranking")
             return RankScreens.COMBOS.firstOrNull { name.contains("-${it.slug}-") }?.let { File(base,it.slug).apply { mkdirs() } }?:base
         if(folder!="manual"&&m.json.optString("collectionMode")=="chess") {
-            val parts=name.substringAfter("chess__","").split("__")
-            if(parts.size>=4) {
-                val dirs=when {
-                    parts[2]=="trang" -> parts.take(2)
-                    parts[2]=="hang" -> parts.take(3)
-                    parts.size>=5 -> parts.take(4)
-                    else -> emptyList()
-                }
-                if(dirs.isNotEmpty()&&dirs.all { it.matches(Regex("[a-z0-9_-]{1,90}")) })
-                    return dirs.fold(base) { dir,slug -> File(dir,slug).apply { mkdirs() } }
+            ChessCaptureFiles.directoryParts(name)?.let { dirs ->
+                return dirs.fold(base) { dir,slug -> File(dir,slug).apply { mkdirs() } }
             }
             return base
         }
@@ -2016,8 +2017,9 @@ class CollectorService : AccessibilityService() {
                     if(basename!=name&&target.isFile&&target.length()>0) {
                         val previous=BitmapFactory.decodeFile(target.absolutePath)
                             ?:error("Không đọc được ảnh chi tiết đã có: "+basename)
-                        try { require(!ChessWiki.changed(ChessWiki.signature(previous,true),
-                            ChessWiki.signature(bitmap,true))) { "Ảnh chi tiết đã có nội dung khác: "+basename } }
+                        try { val modal=ChessCaptureFiles.isDetailCapture(name)
+                            require(!ChessWiki.changed(ChessWiki.signature(previous,modal),
+                            ChessWiki.signature(bitmap,modal))) { "Ảnh chi tiết đã có nội dung khác: "+basename } }
                         finally { previous.recycle() }
                         true
                     } else {

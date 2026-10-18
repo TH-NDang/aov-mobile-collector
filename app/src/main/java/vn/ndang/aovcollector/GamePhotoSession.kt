@@ -107,7 +107,7 @@ object GamePhotoSession {
             val saved=saves.getJSONObject(i)
             if(saved.getString("group")!=group) continue
             val previous=savedItems(saved)
-            if(previous.none { it in names }) continue
+            if(!ChessBlessings.sameSave(group,previous,names)) continue
             val merged=previous+names
             if(merged!=previous) {
                 saved.put("aliases",JSONArray((merged-saved.getString("item")).sorted()))
@@ -121,13 +121,32 @@ object GamePhotoSession {
     }
 
     /** A corrupt/unreadable journal must stop a retry rather than authorize a duplicate Save Photo. */
-    @Synchronized fun hasMark(context:Context,runId:String,group:String,item:String):Boolean {
-        if(!location(context,runId).exists()) return false
-        val saves=read(context,runId).getJSONArray("saves")
-        return (0 until saves.length()).any { index ->
+    @Synchronized fun hasMark(context:Context,runId:String,group:String,item:String,aliases:Set<String> =emptySet()):Boolean {
+        val names=aliases+item
+        val saves=if(location(context,runId).exists()) read(context,runId).getJSONArray("saves") else JSONArray()
+        if((0 until saves.length()).any { index ->
             val saved=saves.getJSONObject(index)
-            saved.getString("group")==group&&item in savedItems(saved)
+            saved.getString("group")==group&&ChessBlessings.sameSave(group,savedItems(saved),names)
+        }) return true
+        // An earlier run's save event alone is insufficient. Reuse only a named blessing
+        // whose imported original is still readable and byte-for-byte intact.
+        return names.filter(ChessBlessings::isKey).any { key ->
+            BlessingPhotoIndex.hasSaved(File(context.filesDir,BlessingPhotoIndex.FILE),
+                File(context.filesDir,"captures/"+GamePhotoImport.ROOT),group,key)
         }
+    }
+
+    /** The stable alias proves the item came from a recognized cyan blessing heading. */
+    internal fun recordImportedBlessing(context:Context,state:JSONObject,pick:Pick,file:File) {
+        if(!ChessBlessings.isGroup(pick.group)) return
+        val saves=state.getJSONArray("saves")
+        val key=ChessBlessings.key(pick.item)
+        val verified=(0 until saves.length()).any { index ->
+            val saved=saves.getJSONObject(index)
+            saved.getString("group")==pick.group&&saved.getString("item")==pick.item&&key in savedItems(saved)
+        }
+        if(verified) BlessingPhotoIndex.record(File(context.filesDir,BlessingPhotoIndex.FILE),
+            File(context.filesDir,"captures/"+GamePhotoImport.ROOT),pick.group,key,file)
     }
 
     private fun savedItems(saved:JSONObject):Set<String> {
@@ -174,99 +193,96 @@ object GamePhotoSession {
             .put("createdAt",System.currentTimeMillis()).toString(2))
         val ledgerFile=File(context.filesDir,LEDGER)
         val ledger=try { JSONObject(ledgerFile.readText()) } catch(_:Exception) { JSONObject() }
+        val integrity=state.optJSONObject("originalIntegrity")?:JSONObject()
+        fun remember(pick:Pick,identity:String,target:File,verified:OriginalPhotoCopy.Integrity) {
+            val path=target.relativeTo(destRoot).invariantSeparatorsPath
+            integrity.put(identity,JSONObject().put("path",path).put("bytes",verified.bytes).put("sha256",verified.sha256))
+            ledger.put(identity,path)
+            val ledgerPart=File(ledgerFile.parentFile,ledgerFile.name+".part")
+            ledgerPart.writeText(ledger.toString(2))
+            require(ledgerPart.renameTo(ledgerFile)) { "Không lưu được sổ sao chép ảnh" }
+            pin(assignments,pick,recorded)
+            state.put("assignments",assignments).put("originalIntegrity",integrity)
+            store(context,runId,state)
+            recordImportedBlessing(context,state,pick,target)
+        }
+        fun sourceHash(image:GamePhotoImport.Photo)=context.contentResolver.openInputStream(image.uri)?.use {
+            OriginalPhotoCopy.digest(it) { !cancelled() }
+        }?:error("Không mở được ảnh gốc")
         var copied=0;var already=0;var errors=0
         for((index,pick) in diff.matching.withIndex()) {
             if(cancelled()) break
             progress(index,diff.matching.size,pick.group+"/"+pick.item)
             val image=matches[pick.id]?:continue
-            val nativeHead=ChessCaptureFiles.nativeHeadBase(pick.group,pick.item)
-            val sourceIdentity=fingerprint(tree.toString()+"|"+image.key)
-            // Preserve the old ledger/filename format for every other native image group.
-            val identity=if(nativeHead!=null) sourceIdentity else sourceIdentity.take(14)
-            if(ledger.has(identity)) {
-                val location=ledger.optString(identity)
-                val existing=File(destRoot,location)
-                if(location.isNotBlank()&&existing.isFile&&existing.length()>0) {
-                    already++
-                    pin(assignments,pick,recorded)
-                    state.put("assignments",assignments);store(context,runId,state)
-                    continue
-                }
-                // A user may have deleted the internal copy; the ledger must not suppress re-import.
-                ledger.remove(identity)
-            }
-            val ext=image.name.substringAfterLast('.', "jpg").lowercase()
-                .takeIf { GamePhotoImport.imageExtension(it) }?:"jpg"
-            val file=File(destRoot,GamePhotoImport.groupPath(pick.group)+"/"+safe(runId)).apply { mkdirs() }
-            val directory=file.relativeTo(destRoot).invariantSeparatorsPath+"/"
-            val claims=targetClaims.keys().asSequence().filter { it.startsWith(directory) }
-                .associate { it.removePrefix(directory) to targetClaims.getString(it) }
-            val target=File(file,if(nativeHead!=null)
-                ChessCaptureFiles.nativeHeadTarget(nativeHead,ext,sourceIdentity,
-                    file.listFiles().orEmpty().map { it.name }.toSet(),claims)
-                else safe(pick.item)+"-"+identity+"."+ext)
-            val targetPath=target.relativeTo(destRoot).invariantSeparatorsPath
-            val owned=targetClaims.optString(targetPath)==sourceIdentity
-            val partial=File(file,target.name+".part")
+            val identity=fingerprint(tree.toString()+"|"+image.key)
+            var partial:File?=null
+            var target:File?=null
             var history:Long?=null
             var committed=false
             try {
-                if(target.isFile&&target.length()>0) {
-                    require(nativeHead==null||owned) { "Tên ảnh đã thuộc về một ảnh gốc khác" }
-                    ledger.put(identity,target.relativeTo(destRoot).invariantSeparatorsPath)
-                    ledgerFile.writeText(ledger.toString(2))
-                    already++
-                    pin(assignments,pick,recorded)
-                    state.put("assignments",assignments);store(context,runId,state)
-                    continue
+                val oldKey=if(ChessCaptureFiles.nativeHeadBase(pick.group,pick.item)!=null) identity else identity.take(14)
+                val oldPath=ledger.optString(identity).ifBlank { ledger.optString(oldKey) }
+                val known=oldPath.takeIf { it.isNotBlank() }?.let { File(destRoot,it) }?.takeIf {
+                    it.canonicalPath.startsWith(destRoot.canonicalPath+File.separator)
                 }
-                if(nativeHead!=null) {
-                    require(!target.exists()||owned) { "Tên ảnh đã thuộc về một ảnh gốc khác" }
-                    // Commit provenance BEFORE copying/renaming. If interrupted after rename, only
-                    // this same source may reuse the clean name; another source gets a stable suffix.
-                    targetClaims.put(targetPath,sourceIdentity)
-                    pin(assignments,pick,recorded)
-                    state.put("targetClaims",targetClaims).put("assignments",assignments)
-                    store(context,runId,state)
+                val prior=integrity.optJSONObject(identity)
+                if(known!=null&&known.isFile) {
+                    val expected=if(prior!=null&&prior.optString("path")==oldPath)
+                        OriginalPhotoCopy.Integrity(prior.getLong("bytes"),prior.getString("sha256")) else sourceHash(image)
+                    if((image.size<=0||expected.bytes==image.size)&&OriginalPhotoCopy.matches(known,expected)) {
+                        remember(pick,identity,known,expected);already++;continue
+                    }
                 }
-                history=try { CaptureHistory.begin(context,runId,target) } catch(_:Exception) { null }
-                require(image.size>=0 && image.size<=MAX_IMAGE) { "Ảnh vượt giới hạn 32 MB" }
+                // Read the original document header, never DocumentsContract's thumbnail API.
+                val header=context.contentResolver.openInputStream(image.uri)?.use { input -> val bytes=ByteArray(16);var count=0;while(count<bytes.size) { val n=input.read(bytes,count,bytes.size-count);if(n<=0) break;count+=n };bytes.copyOf(count) }
+                    ?:error("Không mở được ảnh gốc")
+                val ext=OriginalPhotoCopy.extension(header,image.mime,image.name)
+                val file=File(destRoot,GamePhotoImport.groupPath(pick.group)+"/"+safe(runId)).apply { mkdirs() }
+                val directory=file.relativeTo(destRoot).invariantSeparatorsPath+"/"
+                val claims=targetClaims.keys().asSequence().filter { it.startsWith(directory) }
+                    .associate { it.removePrefix(directory) to targetClaims.getString(it) }
+                val base=ChessCaptureFiles.nativeBase(pick.group,pick.item,nativeOrdinal(recorded,pick.group,pick.item))
+                target=known?:File(file,ChessCaptureFiles.nativeTarget(base,ext,identity,
+                    file.listFiles().orEmpty().map { it.name }.toSet(),claims))
+                val output=target
+                output.parentFile?.mkdirs()
+                val path=output.relativeTo(destRoot).invariantSeparatorsPath
+                val owned=known==output||targetClaims.optString(path)==identity
+                if(output.isFile&&output.length()>0&&owned) {
+                    val expected=sourceHash(image)
+                    if((image.size<=0||expected.bytes==image.size)&&OriginalPhotoCopy.matches(output,expected)) {
+                        remember(pick,identity,output,expected);already++;continue
+                    }
+                }
+                require(!output.exists()||owned) { "Tên ảnh đã thuộc về một ảnh gốc khác" }
+                targetClaims.put(path,identity)
+                pin(assignments,pick,recorded)
+                state.put("targetClaims",targetClaims).put("assignments",assignments)
+                store(context,runId,state)
+                history=try { CaptureHistory.begin(context,runId,output) } catch(_:Exception) { null }
+                require(image.size in 0..MAX_IMAGE) { "Ảnh vượt giới hạn 32 MB" }
                 require(context.filesDir.usableSpace>image.size+30L*1024*1024) { "Bộ nhớ trống quá ít" }
-                context.contentResolver.openInputStream(image.uri)?.use { input ->
-                    var bytes=0L
-                    val buffer=ByteArray(128*1024)
-                    partial.outputStream().use { output ->
-                        while(true) {
-                            if(cancelled()) throw ZipFiles.Cancelled()
-                            val n=input.read(buffer)
-                            if(n<0) break
-                            bytes+=n
-                            require(bytes<=MAX_IMAGE) { "Ảnh tải về vượt quá 32 MB" }
-                            require(context.filesDir.usableSpace>30L*1024*1024) {
-                                "Thiếu dung lượng khi sao chép ảnh"
-                            }
-                            output.write(buffer,0,n)
-                        }
+                partial=File(output.parentFile,output.name+".part")
+                val verified=context.contentResolver.openInputStream(image.uri)?.use { input ->
+                    OriginalPhotoCopy.copy(input,partial,image.size) {
+                        if(cancelled()) throw ZipFiles.Cancelled()
+                        require(context.filesDir.usableSpace>30L*1024*1024) { "Thiếu dung lượng khi sao chép ảnh" }
+                        true
                     }
                 }?:error("Không mở được ảnh mới")
-                require(nativeHead==null||!target.exists()||(owned&&target.isFile&&target.length()==0L)) {
-                    "Tên ảnh đã thuộc về một ảnh gốc khác"
-                }
-                require(partial.length() in 1..MAX_IMAGE && partial.renameTo(target)) { "Ảnh lưu bị lỗi" }
+                require(partial.renameTo(output)) { "Không chuyển được ảnh đã kiểm tra" }
                 committed=true
                 history?.let { try { CaptureHistory.finish(context,it,true) } catch(_:Exception) {} }
-                ledger.put(identity,target.relativeTo(destRoot).invariantSeparatorsPath)
-                ledgerFile.writeText(ledger.toString(2))
+                remember(pick,identity,output,verified)
                 copied++
-                pin(assignments,pick,recorded)
-                state.put("assignments",assignments);store(context,runId,state)
             } catch(e:ZipFiles.Cancelled) {
-                partial.delete()
+                partial?.delete()
                 history?.let { try { CaptureHistory.finish(context,it,false) } catch(_:Exception) {} }
                 break
             } catch(e:Exception) {
-                partial.delete()
-                history?.let { try { CaptureHistory.finish(context,it,committed&&target.isFile&&target.length()>0) } catch(_:Exception) {} }
+                partial?.delete()
+                history?.let { try { CaptureHistory.finish(context,it,committed&&target?.isFile==true) } catch(_:Exception) {} }
+                if(cancelled()) break
                 errors++
             }
         }
@@ -289,6 +305,13 @@ object GamePhotoSession {
         store(context,runId,state)
         progress(diff.matching.size,diff.matching.size,"Đã lưu $copied ảnh mới")
         return Imported(diff.before,diff.after,diff.new,copied,already,diff.unrelated,errors,cancelled(),pending)
+    }
+
+    fun nativeOrdinal(marks:List<Mark>,group:String,item:String):Int {
+        val hero=if(group=="chieu-quan-co") item.substringBefore("-skill-","") else ""
+        val family=marks.filter { it.group==group&&
+            (hero.isBlank()||it.item.substringBefore("-skill-","")==hero) }
+        return family.indexOfFirst { it.item==item }.takeIf { it>=0 }?.plus(1)?:1
     }
 
     private fun pin(assignments:JSONObject,pick:Pick,marks:List<Mark>) {

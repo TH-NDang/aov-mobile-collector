@@ -113,11 +113,14 @@ object ChessWiki {
     /** Long-press the actual full-color pictograms, not their text or the category's background. */
     fun nativeTiles(topic:Topic,bitmap:Bitmap,words:List<GameScreens.Word>):List<Tile> {
         if(topic.section!="chuc-phuc") return tiles(topic,bitmap,words)
-        val spots=ArrayList<Tile>()
-        for(y in listOf(.40,.68,.91)) for(x in listOf(.275,.615)) {
-            if(score(bitmap,x,y,.027)>28) spots.add(Tile(x,y,fingerprint(bitmap,x,y)))
+        return ChessBlessings.tiles(words,{ ChessBlessings.titleVisible(bitmap,it) },
+            { x,y -> ChessBlessings.iconY(bitmap,x,y) }).map { tile ->
+            // Keep old sampled IDs as aliases for interrupted v0.13.3 runs, but use the
+            // title as the durable identity. A fixed probe never authorizes a new save.
+            val old=listOf(.40,.68,.91).filter { abs(it-tile.y)<.105 }
+                .map { fingerprint(bitmap,tile.x,it) }.toSet()
+            tile.copy(aliases=old+fingerprint(bitmap,tile.x,tile.y))
         }
-        return spots
     }
     fun skillTiles(bitmap:Bitmap):List<Tile> {
         val spots=ArrayList<Tile>()
@@ -439,6 +442,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
     enum class NativeResult { SAVED, ABSENT, FAILED }
     interface Look {
         val words:List<GameScreens.Word>
+        val itemTitle:String? get()=ChessPopupTitle.select(words)
         val signature:IntArray
         val modal:Boolean
         fun tiles(topic:ChessWiki.Topic):List<ChessWiki.Tile>
@@ -795,9 +799,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                         return@look collect(at,page,signature,tiles,from+1)
                     }
                     val header=if(kind=="tuong") ChessWiki.modalHeroTitle(l.words,item.label) else
-                        l.words.firstOrNull { it.y in .215.. .335 &&
-                            it.x in .35.. .79 && it.plain.length in 2..35 &&
-                            !it.plain.contains("colienquan") }?.text
+                        l.itemTitle
                     fun capture(verified:String?) {
                         if(!screen.alive||completed) { l.discard();return }
                         val title=if(kind=="tuong") (verified?:item.label)?.let { ChessWiki.heroName(it) }
@@ -806,11 +808,15 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                             l.discard()
                             return fail("Không đọc được tên quân cờ trong thẻ hoặc vùng tiêu đề. Ảnh toàn màn hình vẫn được giữ.")
                         }
-                        val slug=ChessWiki.safeName(title?:"muc")
-                        val folder=if(kind=="tuong") slug else slug+"-"+item.id.take(8)
+                        if(title==null) {
+                            l.discard()
+                            return fail("Chưa đọc được tên ở đầu bảng chi tiết. Không dùng mô tả làm tên file; kiểm tra popup rồi Tiếp tục.")
+                        }
+                        val slug=if(kind=="tuong") ChessWiki.safeName(title) else ChessPopupTitle.key(title)
+                        val folder=slug
                         // The popup heading is authoritative. Never persist a noisy card label
                         // as a completed hero, or count the same popup again after scrolling.
-                        val actual=if(kind=="tuong") item.copy(id="hero-"+slug,label=title) else item
+                        val actual=item.copy(id=(if(kind=="tuong") "hero-" else "$kind-")+slug,label=title)
                         val verifiedHead=verifiedPortraits[heroIndex]
                         if(heroTopic==at&&((heroSlots[heroIndex]!=null&&heroSlots[heroIndex]!=actual.id)||
                             (verifiedHead!=null&&verifiedHead.id!=actual.id))) {
@@ -840,6 +846,10 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                             l.discard()
                             tap(.902,.081,timing.close) { collectHero(at,heroIndex) }
                             return
+                        }
+                        if(kind!="tuong"&&screen.seen("item:"+t.key+":"+actual.id)) {
+                            l.discard()
+                            return close(at,page,signature,tiles,from,actual)
                         }
                         if(kind=="tuong"&&screen.seen("item:"+t.key+":"+actual.id)) {
                             l.discard()
@@ -896,22 +906,25 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         }
 
         val nativeKey=originalGroup?.let { "native:"+it+":"+item.id }
-        if(originalGroup==null || nativeKey==null || screen.seen(nativeKey)) return detail()
+        val nativeAliases=item.aliases+item.id
+        val knownIds=if(originalGroup!=null&&ChessBlessings.isGroup(originalGroup)) setOf(item.id) else nativeAliases
+        val alreadySaved=originalGroup!=null&&knownIds.any { screen.seen("native:"+originalGroup+":"+it) }
+        if(originalGroup==null || nativeKey==null || alreadySaved) return detail()
         if(originalGroup=="quan-co"&&verifiedPortraits[heroIndex]==null) return detail()
         screen.say(if(t.key=="tat-ca-quan-co") "Quân cờ: lưu ảnh gốc "+
             (item.label?:"đang nhận diện")+" · tổng chưa xác định" else
             t.label+": lưu ảnh gốc "+(from+1)+"/"+tiles.size)
         val nativeName=if(originalGroup=="quan-co") ChessWiki.safeName(item.label?:item.id)+"-head"
             else item.label?:item.id
-        screen.nativeSave(originalGroup,nativeName,item.x,item.y,false) { saved ->
+        screen.nativeSave(originalGroup,nativeName,item.x,item.y,false,nativeAliases) { saved ->
             if(!screen.alive||completed) return@nativeSave
-            if(saved==NativeResult.ABSENT&&originalGroup!="quan-co") {
+            if(saved==NativeResult.ABSENT&&originalGroup!="quan-co"&&!ChessBlessings.isGroup(originalGroup)) {
                 screen.note("Không có Save Photo tại vị trí dò "+originalGroup+"; tiếp tục mục kế tiếp.")
                 return@nativeSave detail()
             }
             if(saved!=NativeResult.SAVED) return@nativeSave fail("Chưa lưu được ảnh gốc "+nativeName+
                 "; kiểm tra Save Photo / Pictures rồi bấm Tiếp tục. Chưa đánh dấu hoàn tất.")
-            screen.finished(nativeKey)
+            knownIds.forEach { screen.finished("native:"+originalGroup+":"+it) }
             screen.note("Ảnh gốc "+originalGroup+": "+nativeName)
             detail()
         }

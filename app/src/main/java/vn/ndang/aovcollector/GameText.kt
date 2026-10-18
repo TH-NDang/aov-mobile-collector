@@ -76,6 +76,22 @@ object GameText {
         return ChessWiki.modalHeroTitle(located)
     }
 
+    /** Non-hero popup heading, retried at native 2x scale only if full-screen OCR is ambiguous. */
+    fun chessItemTitle(screen:Bitmap):String? {
+        if(screen.width<=screen.height) return null
+        val x0=(screen.width*.345).toInt();val y0=(screen.height*.14).toInt()
+        val width=(screen.width*.47).toInt().coerceAtMost(screen.width-x0)
+        val height=(screen.height*.18).toInt().coerceAtMost(screen.height-y0)
+        val crop=Bitmap.createBitmap(screen,x0,y0,width,height)
+        val enlarged=Bitmap.createScaledBitmap(crop,width*2,height*2,true);crop.recycle()
+        val text=ocr(enlarged)?:return null
+        val lines=text.textBlocks.flatMap { it.lines }.mapNotNull { line -> line.boundingBox?.let { b ->
+            GameScreens.Word(line.text,(x0+b.left/2.0)/screen.width,(y0+b.top/2.0)/screen.height,
+                (x0+b.right/2.0)/screen.width,(y0+b.bottom/2.0)/screen.height)
+        } }
+        return ChessPopupTitle.select(lines) { ChessPopupTitle.whiteHeading(screen,it) }
+    }
+
     /**
      * The account UID the game prints faintly at the bottom centre of most screens ("UID: 1751448330…"), or null.
      * The line is small and dim: it is read cut out, three times larger, as black on white.

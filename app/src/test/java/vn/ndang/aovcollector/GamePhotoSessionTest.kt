@@ -134,4 +134,14 @@ class GamePhotoSessionTest {
         assertNull(ChessWiki.nativeConfirm(listOf(w("Sure",.391,.56),w("CANCEL",.58,.56))))
         assertNull(ChessWiki.nativeConfirm(listOf(w("Save Photo",.35,.42),w("Sure",.391,.56))))
     }
+    @Test fun skillNumberingFollowsSuccessfulMarksWithinEachVerifiedHero() {
+        val marks=listOf(GamePhotoSession.Mark("quan-co","violet-head",t),
+            GamePhotoSession.Mark("chieu-quan-co","violet-skill-hash-a",t+1),
+            GamePhotoSession.Mark("chieu-quan-co","arduin-skill-hash-b",t+2),
+            GamePhotoSession.Mark("chieu-quan-co","violet-skill-hash-c",t+3))
+        assertEquals(1,GamePhotoSession.nativeOrdinal(marks,"chieu-quan-co","violet-skill-hash-a"))
+        assertEquals(1,GamePhotoSession.nativeOrdinal(marks,"chieu-quan-co","arduin-skill-hash-b"))
+        assertEquals(2,GamePhotoSession.nativeOrdinal(marks,"chieu-quan-co","violet-skill-hash-c"))
+    }
+
 }

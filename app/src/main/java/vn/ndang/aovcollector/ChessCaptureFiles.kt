@@ -7,16 +7,66 @@ object ChessCaptureFiles {
     private val head=Regex("[a-z0-9][a-z0-9-]{0,89}-head")
     private val savedHead=Regex("[a-z0-9][a-z0-9-]{0,89}-head(?:-[a-f0-9]{14}(?:-(?:[2-9]|[1-9][0-9]+))?)?")
     data class Detail(val hero:String,val page:Int)
+    private val topicFolders=setOf("thong-tin/quy-trinh","thong-tin/thang-thua-vong","thong-tin/thang-thua-tran",
+        "quan-co/tat-ca-quan-co","quan-co/phe-nghe","tuong-tac/phe","tuong-tac/nghe",
+        "trang-bi/tat-ca-trang-bi","nhiem-vu/danh-sach-nhiem-vu",
+        "chuc-phuc/thuong","chuc-phuc/huyen-thoai-su-thi","chuc-phuc/truyen-thuyet")
+    fun topicPath(section:String,topic:String)= "$section/$topic".takeIf { it in topicFolders }
+    fun isDetailCapture(token:String)=token.substringAfter("chess__","").split("__").getOrNull(2) !in setOf("trang","hang",null)
 
-    /** Other chess topics and all non-chess captures retain their established filenames. */
+
+    /** Chess tabs/items get readable page names; hero details retain the requested detail-N convention. */
     fun screenshotBase(token:String):String {
+        val overview=Regex("(?:[0-9]{4,}-)?chess__([a-z0-9-]+)__([a-z0-9-]+)__(?:trang|hang)__(?:grid-v2__)?([0-9]{3,})").matchEntire(token)
+        if(overview!=null&&topicPath(overview.groupValues[1],overview.groupValues[2])!=null) {
+            val page=overview.groupValues[3].toIntOrNull()?.takeIf { it>0 }?:return token
+            return "${overview.groupValues[2]}-page-$page"
+        }
+
+        val item=Regex("(?:[0-9]{4,}-)?chess__(?:trang-bi__tat-ca-trang-bi__vat-pham|tuong-tac__(?:phe__phe|nghe__nghe))__([a-z0-9][a-z0-9-]{0,89})__([0-9]{3,})").matchEntire(token)
+        if(item!=null) {
+            val page=item.groupValues[2].toIntOrNull()?.takeIf { it>0 }?:return token
+            val name=item.groupValues[1].replace(Regex("-[a-f0-9]{8}$"),"")
+            return "$name-page-$page"
+        }
         val match=detailToken.matchEntire(token)?:return token
         val page=match.groupValues[2].toIntOrNull()?.takeIf { it>0 }?:return token
         return "${match.groupValues[1]}-detail-$page"
     }
 
+    /** Non-hero detail pages share their topic folder; no extra kind/item directory is needed. */
+    fun directoryParts(token:String):List<String>? {
+        val parts=token.substringAfter("chess__","").split("__")
+        if(parts.size<4) return null
+        val nonHero=parts.size==5&&
+            ((parts.take(3)==listOf("trang-bi","tat-ca-trang-bi","vat-pham"))||
+             (parts.take(3)==listOf("tuong-tac","phe","phe"))||
+             (parts.take(3)==listOf("tuong-tac","nghe","nghe")))
+        val dirs=when {
+            nonHero||parts[2] in setOf("trang","hang") -> parts.take(2)
+            parts.size>=5 -> parts.take(4)
+            else -> return null
+        }
+        return dirs.takeIf { it.all { p -> p.matches(Regex("[a-z0-9_-]{1,90}")) } }
+    }
+
     fun nativeHeadBase(group:String,item:String):String? =
         item.takeIf { group=="quan-co"&&head.matches(it) }
+
+    /** Human-readable native names. Hash aliases remain in the journal, never the normal basename. */
+    fun nativeBase(group:String,item:String,ordinal:Int):String {
+        require(ordinal>0)
+        nativeHeadBase(group,item)?.let { return it }
+        if(group=="chieu-quan-co") {
+            val hero=item.substringBefore("-skill-","")
+            if(slug.matches(hero)) return "$hero-skill-$ordinal"
+        }
+        val name=HeroNames.slug(item).take(90)
+        if(slug.matches(name)&&!Regex("[a-f0-9]{8,64}").matches(name)) return name
+        // A neutral numbered icon is honest when the game provides no verified text label.
+        require(slug.matches(group))
+        return "$group-icon-$ordinal"
+    }
 
     /**
      * Claims map basenames (including extension) to a full source fingerprint. Persist a new claim
@@ -26,6 +76,12 @@ object ChessCaptureFiles {
     fun nativeHeadTarget(base:String,extension:String,identity:String,
                          existing:Set<String>,claims:Map<String,String>):String {
         require(head.matches(base))
+        return nativeTarget(base,extension,identity,existing,claims)
+    }
+
+    fun nativeTarget(base:String,extension:String,identity:String,
+                     existing:Set<String>,claims:Map<String,String>):String {
+        require(slug.matches(base))
         require(extension in setOf("png","jpg","jpeg","webp"))
         require(identity.matches(Regex("[a-f0-9]{64}")))
         val stem="$base-${identity.take(14)}"
@@ -53,10 +109,18 @@ object ChessCaptureFiles {
 
     fun exactDisplayName(path:String):String? {
         if(detail(path)!=null) return path.substringAfterLast('/').removeSuffix(".png")
+        val sections=path.split('/')
+        if(sections.size==4&&topicPath(sections[1],sections[2])!=null&&
+            sections.all { it.isNotBlank()&&it!=".."&&it!="." }&&
+            Regex("[a-z0-9][a-z0-9-]{0,89}-page-[1-9][0-9]*\\.png").matches(sections.last()))
+            return sections.last().removeSuffix(".png")
+
         val parts=path.split('/')
-        if(parts.size!=5||parts.take(3)!=listOf("anh-goc-co-lien-quan","quan-co","anh-quan-co")||
-            !slug.matches(parts[3])) return null
+        if(parts.size<4||parts.first()!="anh-goc-co-lien-quan"||parts.any { it==".."||it=="."||it.isBlank() }) return null
         val file=parts.last();val base=file.substringBeforeLast('.',"")
-        return base.takeIf { savedHead.matches(it)&&file.substringAfterLast('.') in setOf("png","jpg","jpeg","webp") }
+        val originalHead=parts.size==5&&parts.take(3)==listOf("anh-goc-co-lien-quan","quan-co","anh-quan-co")&&savedHead.matches(base)
+        val skill=parts.size==5&&parts.take(3)==listOf("anh-goc-co-lien-quan","quan-co","chieu-quan-co")&&
+            Regex("[a-z0-9][a-z0-9-]*-skill-[1-9][0-9]*(?:-[a-f0-9]{14}(?:-[0-9]+)?)?").matches(base)
+        return base.takeIf { (originalHead||skill)&&file.substringAfterLast('.') in setOf("png","jpg","jpeg","webp") }
     }
 }

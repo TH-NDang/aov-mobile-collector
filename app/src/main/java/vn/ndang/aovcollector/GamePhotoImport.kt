@@ -174,7 +174,7 @@ object GamePhotoImport {
                 }
                 require(context.filesDir.usableSpace>item.size+30L*1024*1024) { "Không đủ dung lượng trống" }
                 context.contentResolver.openInputStream(item.uri)?.use { input ->
-                    temp.outputStream().use { out -> input.copyTo(out,128*1024) }
+                    OriginalPhotoCopy.copy(input,temp,item.size) { !cancelled() }
                 }?:error("Không mở được ảnh: "+item.name)
                 require(temp.length()>0L&&temp.length()<=MAX_IMAGE_BYTES) { "Ảnh không hợp lệ" }
                 require(temp.renameTo(target)) { "Không chuyển được ảnh đã sao chép" }

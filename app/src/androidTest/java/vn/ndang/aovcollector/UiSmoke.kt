@@ -105,6 +105,16 @@ class UiSmoke:Instrumentation() {
                 check(!ChessWiki.changed(ChessWiki.signature(moved),ChessWiki.signature(moved)))
                 before.recycle();moved.recycle()
             }
+            // Profession/equipment descriptions and numeric bonuses must not become filenames.
+            val itemShot=Bitmap.createBitmap(2400,1080,Bitmap.Config.ARGB_8888)
+            Canvas(itemShot).apply {
+                drawColor(Color.rgb(65,70,170))
+                drawText("Lenh bai phong than",870f,275f,Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.WHITE;textSize=45f })
+                drawText("Cho dong doi gan la chan nang luong",870f,335f,Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.CYAN;textSize=31f })
+            }
+            val preciseItem=GameText.chessItemTitle(itemShot)
+            check(preciseItem!=null&&HeroNames.slug(preciseItem)=="lenh-bai-phong-than") { "Item title OCR selected body: $preciseItem" }
+            itemShot.recycle()
             // Native Save Photo exports go through a real SAF provider, then appear in app history.
             val photoTree=android.provider.DocumentsContract.buildTreeDocumentUri(
                 "vn.ndang.aovcollector.test.photos","Pictures")
@@ -112,11 +122,16 @@ class UiSmoke:Instrumentation() {
             waitForIdleSync();SystemClock.sleep(700)
             GamePhotoImport.choose(targetContext,photoTree)
             val photoRoot=android.provider.DocumentsContract.buildDocumentUriUsingTree(photoTree,"Pictures")
-            fun nativeFile(name:String):android.net.Uri {
+            fun nativeFile(name:String,tiny:Boolean=false):android.net.Uri {
                 val uri=android.provider.DocumentsContract.createDocument(targetContext.contentResolver,
                     photoRoot,"image/jpeg",name)!!
                 // Valid bytes from the bundled screenshot; the game can use .png (1).jpg names.
-                context.assets.open("chess-arduin-role-ocr.jpg").use { input ->
+                if(tiny) {
+                    val icon=Bitmap.createBitmap(128,128,Bitmap.Config.ARGB_8888)
+                    Canvas(icon).apply { drawColor(Color.BLUE);drawCircle(64f,64f,36f,Paint().apply { color=Color.YELLOW }) }
+                    targetContext.contentResolver.openOutputStream(uri)!!.use { icon.compress(Bitmap.CompressFormat.PNG,100,it) }
+                    icon.recycle()
+                } else context.assets.open("chess-arduin-role-ocr.jpg").use { input ->
                     targetContext.contentResolver.openOutputStream(uri)!!.use { output -> input.copyTo(output) }
                 }
                 return uri
@@ -141,13 +156,30 @@ class UiSmoke:Instrumentation() {
             }
             // A later different category cannot rename/reassign the already imported Violet.
             SystemClock.sleep(50)
-            GamePhotoSession.mark(targetContext,nativeRun,"chieu-quan-co","Violet-skill",setOf("Violet-upper","Violet-lower"))
+            GamePhotoSession.mark(targetContext,nativeRun,"chieu-quan-co","violet-skill-nativehash",setOf("Violet-upper","Violet-lower"))
             GamePhotoSession.mark(targetContext,nativeRun,"chieu-quan-co","Violet-upper")
             check(GamePhotoSession.hasMark(targetContext,nativeRun,"chieu-quan-co","Violet-lower"))
-            val skill=nativeFile("skill.png (1).jpg")
+            val skill=nativeFile("skill.png (1).jpg",tiny=true)
             val second=GamePhotoSession.importNew(targetContext,nativeRun)
             check(second.copied==1&&second.already==1&&second.pending==0)
             check(violetCopy.isFile&&imported.walkTopDown().count { GamePhotoImport.isImage(it) }==2)
+            val skillCopy=imported.walkTopDown().single { it.isFile&&it.name=="violet-skill-1.png" }
+            val sourceBytes=targetContext.contentResolver.openInputStream(skill)!!.use { it.readBytes() }
+            check(sourceBytes.contentEquals(skillCopy.readBytes())) { "Native PNG was re-encoded" }
+            val sourceBounds=BitmapFactory.Options().apply { inJustDecodeBounds=true }
+            BitmapFactory.decodeByteArray(sourceBytes,0,sourceBytes.size,sourceBounds)
+            val storedBounds=BitmapFactory.Options().apply { inJustDecodeBounds=true }
+            BitmapFactory.decodeFile(skillCopy.path,storedBounds)
+            check(sourceBounds.outWidth==128&&sourceBounds.outHeight==128&&
+                storedBounds.outWidth==sourceBounds.outWidth&&storedBounds.outHeight==sourceBounds.outHeight&&
+                storedBounds.outMimeType==sourceBounds.outMimeType) { "Native resolution/MIME changed" }
+            // Same-size corruption must not be treated as an already-imported original.
+            skillCopy.writeBytes(sourceBytes.clone().apply { this[lastIndex]=(this[lastIndex].toInt() xor 1).toByte() })
+            check(GamePhotoSession.importNew(targetContext,nativeRun).copied==1) { "Corrupt copy was accepted" }
+            check(sourceBytes.contentEquals(skillCopy.readBytes())) { "Corrupt copy was not repaired" }
+            val qualityFixture=File(targetContext.filesDir,"smoke/tiny-original.png")
+            qualityFixture.writeBytes(sourceBytes)
+
             check(GamePhotoSession.importNew(targetContext,nativeRun).copied==0) { "Sync duplicated native photos" }
             violetCopy.delete()
             check(GamePhotoSession.importNew(targetContext,nativeRun).copied==1) { "Deleted internal image cannot be restored" }
@@ -262,7 +294,7 @@ class UiSmoke:Instrumentation() {
             android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,android.net.Uri.parse(upload.getString("uri")))
             targetContext.getSharedPreferences("after-run",0).edit().clear().commit()
             File(targetContext.filesDir,"after-run").deleteRecursively()
-            File(targetContext.filesDir,"smoke/native-photos.txt").writeText("late-indexed=ok; bytes=identical; classified=ok; dedup=ok; restore=ok")
+            File(targetContext.filesDir,"smoke/native-photos.txt").writeText("late-indexed=ok; bytes-and-SHA=identical; resolution-and-MIME=original; corruption-repair=ok; classified=ok; dedup=ok; restore=ok")
             listOf(personal,violet,skill,faction).forEach { android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,it) }
             targetContext.contentResolver.releasePersistableUriPermission(photoTree,Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             targetContext.getSharedPreferences("game-photo-source",0).edit().clear().commit()
@@ -456,6 +488,19 @@ class UiSmoke:Instrumentation() {
             runOnMainSync { jobService=FileJobService.current };check(jobService==null&&!CollectorService.libraryBusy) { "The ZIP job did not stop" }
             notifications.cancelAll()
             val activity=startActivitySync(Intent(targetContext,MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            val decode=MainActivity::class.java.getDeclaredMethod("thumb",File::class.java,
+                Int::class.javaPrimitiveType,Int::class.javaPrimitiveType,Boolean::class.javaPrimitiveType).apply { isAccessible=true }
+            runOnMainSync {
+                for(crop in listOf(true,false)) {
+                    val displayed=decode.invoke(activity,qualityFixture,336,198,crop) as Bitmap
+                    check(displayed.width==128&&displayed.height==128) { "Small original was sampled down in gallery/viewer" }
+                }
+            }
+
+            val professionFolder=File(targetContext.filesDir,"captures/title-test/tuong-tac/nghe/nghe/dau-si-1234abcd").apply { mkdirs() }
+            val titleMethod=MainActivity::class.java.getDeclaredMethod("title",File::class.java).apply { isAccessible=true }
+            check(titleMethod.invoke(activity,professionFolder)=="Dau si") { "Profession folder mislabeled as a native run" }
+            File(targetContext.filesDir,"captures/title-test").deleteRecursively()
             val dest=File(targetContext.filesDir,"smoke").apply { mkdirs() }
             fun snap(n:String) { waitForIdleSync();SystemClock.sleep(700);val b=automation.takeScreenshot()?:error("No screenshot");File(dest,"$n.png").outputStream().use { b.compress(Bitmap.CompressFormat.PNG,100,it) };b.recycle() }
             snap("01-history")

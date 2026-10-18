@@ -22,13 +22,11 @@ class ChessCaptureFilesTest {
     }
 
     @Test fun otherCapturesAndMalformedTokensAreUntouched() {
-        listOf("hero-001-skill-1-detail","chess__quan-co__tat-ca-quan-co__trang__001",
-            "chess__quan-co__tat-ca-quan-co__hang__001",
-            "chess__tuong-tac__phe__phe__ma-toc__001",
+        listOf("hero-001-skill-1-detail",
+
             "chess__quan-co__tat-ca-quan-co__tuong__../violet__001",
             "chess__quan-co__tat-ca-quan-co__tuong__violet__000",
             "oops-chess__quan-co__tat-ca-quan-co__tuong__violet__001",
-            "0001-chess__quan-co__tat-ca-quan-co__trang__001",
             "chess__quan-co__tat-ca-quan-co__tuong__violet__999999999999",
             "chess__quan-co__tat-ca-quan-co__tuong__violet__001__extra").forEach {
             assertEquals(it,ChessCaptureFiles.screenshotBase(it))
@@ -108,4 +106,55 @@ class ChessCaptureFilesTest {
         assertNull(ChessCaptureFiles.exactDisplayName(
             "anh-goc-co-lien-quan/quan-co/chieu-quan-co/run-1/violet-head.png"))
     }
+    @Test fun nativeSkillNamesUseSuccessfulEventOrderAndNoPixelHash() {
+        assertEquals("arduin-skill-1",ChessCaptureFiles.nativeBase("chieu-quan-co","arduin-skill-30acada4409079",1))
+        assertEquals("arduin-skill-2",ChessCaptureFiles.nativeBase("chieu-quan-co","arduin-skill-e0254dd220873a",2))
+        assertEquals("trang-bi-icon-3",ChessCaptureFiles.nativeBase("trang-bi","0e2b88dec4851b",3))
+        assertEquals("giay-phut-huy-hoang",ChessCaptureFiles.nativeBase("chuc-phuc-thuong","Giây phút huy hoàng",1))
+        assertEquals("arduin-skill-1.jpg",ChessCaptureFiles.nativeTarget("arduin-skill-1","jpg",source,emptySet(),emptyMap()))
+        val path="anh-goc-co-lien-quan/quan-co/chieu-quan-co/run-1/arduin-skill-1.jpg"
+        assertEquals("arduin-skill-1",ChessCaptureFiles.exactDisplayName(path))
+    }
+    @Test fun equipmentAndSynergyDetailsHaveReadableFilenames() {
+        assertEquals("lenh-bai-phong-than-page-1",ChessCaptureFiles.screenshotBase(
+            "0002-chess__trang-bi__tat-ca-trang-bi__vat-pham__lenh-bai-phong-than-575f2fce__001"))
+        assertEquals("ma-toc-page-2",ChessCaptureFiles.screenshotBase("chess__tuong-tac__phe__phe__ma-toc__002"))
+    }
+
+    @Test fun allNonHeroPagesShareOneTopicFolderAndKeepPageNumbers() {
+        for((section,topic,kind,name) in listOf(
+            listOf("trang-bi","tat-ca-trang-bi","vat-pham","lenh-bai-phong-than"),
+            listOf("tuong-tac","phe","phe","cung-thu"),
+            listOf("tuong-tac","nghe","nghe","do-don"))) {
+            for(page in 1..3) {
+                val token="0002-chess__${section}__${topic}__${kind}__${name}__%03d".format(page)
+                assertEquals(listOf(section,topic),ChessCaptureFiles.directoryParts(token))
+                val filename=ChessCaptureFiles.screenshotBase(token)+".png"
+                assertEquals("$name-page-$page.png",filename)
+                assertEquals("$name-page-$page",ChessCaptureFiles.exactDisplayName("run-1/$section/$topic/$filename"))
+            }
+        }
+        assertEquals(listOf("quan-co","tat-ca-quan-co","tuong","violet"),ChessCaptureFiles.directoryParts(
+            "chess__quan-co__tat-ca-quan-co__tuong__violet__001"))
+        assertEquals("violet-detail-1",ChessCaptureFiles.screenshotBase("chess__quan-co__tat-ca-quan-co__tuong__violet__001"))
+        assertNull(ChessCaptureFiles.directoryParts("chess__../evil__tat-ca-trang-bi__vat-pham__name__001"))
+    }
+
+    @Test fun everyChessTabUsesCleanPageNamesAndExactlyItsTopicFolder() {
+        ChessWiki.TOPICS.forEach { topic ->
+            for(page in 1..2) {
+                val token="0002-"+ChessWiki.filename(topic,"trang",page)
+                assertEquals(topic.key+"-page-$page",ChessCaptureFiles.screenshotBase(token))
+                assertEquals(listOf(topic.section,topic.key),ChessCaptureFiles.directoryParts(token))
+                val path="run-1/${topic.section}/${topic.key}/${topic.key}-page-$page.png"
+                assertEquals(topic.key+"-page-$page",ChessCaptureFiles.exactDisplayName(path))
+                assertFalse(ChessCaptureFiles.isDetailCapture(token))
+            }
+        }
+        val hero=ChessWiki.heroOverviewFilename(ChessWiki.TOPICS.first { it.key=="tat-ca-quan-co" },2)
+        assertEquals("tat-ca-quan-co-page-2",ChessCaptureFiles.screenshotBase(hero))
+        assertEquals(listOf("quan-co","tat-ca-quan-co"),ChessCaptureFiles.directoryParts(hero))
+        assertTrue(ChessCaptureFiles.isDetailCapture("chess__tuong-tac__phe__phe__cung-thu__001"))
+    }
+
 }
