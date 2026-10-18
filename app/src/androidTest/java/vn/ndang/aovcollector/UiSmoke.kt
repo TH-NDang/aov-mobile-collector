@@ -469,6 +469,7 @@ class UiSmoke:Instrumentation() {
             }
             android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("dumpsys accessibility")).use { File(dest,"accessibility.txt").writeBytes(it.readBytes()) }
             check(service!=null) { "Accessibility service not connected" }
+            rankingCaptureSmoke(service!!)
             runOnMainSync {
                 check(service!!.selectMacro(BuiltInMacros.chess(ChessWiki.Options(
                     setOf("tat-ca-quan-co"),openGame=false,heroDetails=true))))
@@ -956,6 +957,70 @@ class UiSmoke:Instrumentation() {
                 File(out,"failure-ui.txt").writeText(tree.toString())
             } catch(_:Throwable) {}
             result.putString("stream","SMOKE_FAILED: ${t.stackTraceToString()}\n");finish(Activity.RESULT_CANCELED,result) }
+    }
+    /** Synthetic statistics page only: real ML Kit, controller, PNG writer and bitmap ownership. */
+    private fun rankingCaptureSmoke(service:CollectorService) {
+        val fixture=Bitmap.createBitmap(2048,922,Bitmap.Config.ARGB_8888)
+        Canvas(fixture).apply {
+            drawColor(Color.rgb(58,65,145))
+            val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.WHITE;textSize=42f }
+            drawText("Bảng Phân Bậc Tướng",220f,90f,paint)
+            drawText("Đấu hạng (Tất cả)",990f,205f,paint)
+            drawText("Tỷ lệ thắng",820f,315f,paint)
+            drawText("Tỷ lệ pick",1060f,315f,paint)
+            drawText("Tỷ lệ Ban",1280f,315f,paint)
+            drawText("Synthetic fixture",220f,440f,paint)
+            drawText("50,00%",840f,440f,paint)
+        }
+        val fixtureWords=GameText.rankingWords(fixture)
+        check(RankScreens.switchButton(fixtureWords)==null&&RankScreens.page(fixtureWords,false)==RankScreens.Page.RANKING) {
+            "Synthetic statistics page needs its missing switch: $fixtureWords"
+        }
+        val ended=java.util.concurrent.CountDownLatch(1)
+        val active=java.util.concurrent.atomic.AtomicBoolean(true)
+        var outcome:RankingReader.Outcome?=null
+        var acquired=0;var consumed=0;var saved=0;var finished=0
+        val handler=android.os.Handler(android.os.Looper.getMainLooper())
+        val folder="ranking-save-smoke"
+        val screen=object:RankingReader.Screen {
+            override val alive get()=active.get()&&outcome==null
+            override fun look(words:Boolean,then:(RankingReader.Look?)->Unit) {
+                acquired++
+                val shot=fixture.copy(Bitmap.Config.ARGB_8888,false)
+                val text=if(words) fixtureWords else emptyList<GameScreens.Word>()
+                then(object:RankingReader.Look {
+                    private var released=false
+                    override val words=text
+                    override val lobby=false
+                    override val signature=IntArray(96) { 42 }
+                    private fun consume() { check(!released);released=true;consumed++ }
+                    override fun done(keep:String?) { check(keep==null);consume();shot.recycle() }
+                    override fun keep(name:String,then:(Boolean)->Unit) {
+                        consume()
+                        service.store(shot,folder,name) { ok -> if(ok) saved++;then(ok) }
+                    }
+                })
+            }
+            override fun tap(x:Double,y:Double,then:(Boolean)->Unit) { error("Verified synthetic table must not tap") }
+            override fun drag(d:Double,fling:Boolean,then:(Boolean)->Unit) { check(saved==1);handler.post { then(true) } }
+            override fun later(ms:Long,then:()->Unit) { handler.post(then) }
+            override fun finished(combo:String) { check(saved==1);finished++ }
+        }
+        runOnMainSync { RankingReader(screen,wanted=listOf(RankScreens.Combo(RankScreens.Table.RATES,RankScreens.Mode.ALL))) {
+            outcome=it;ended.countDown()
+        }.start() }
+        try {
+            check(ended.await(15,java.util.concurrent.TimeUnit.SECONDS)) { "Synthetic ranking capture did not finish" }
+            check(outcome is RankingReader.Outcome.Done&&saved==1&&finished==1&&acquired==consumed) {
+                "Ranking capture: outcome=$outcome acquired=$acquired consumed=$consumed saved=$saved finished=$finished"
+            }
+            val png=File(targetContext.filesDir,"captures/$folder").walkTopDown().filter { it.extension=="png" }.single()
+            val stored=BitmapFactory.decodeFile(png.absolutePath)?:error("Ranking PNG is unreadable")
+            try { check(stored.width==2048&&stored.height==922) } finally { stored.recycle() }
+            File(targetContext.filesDir,"smoke/ranking-capture.txt").writeText(
+                "Verified synthetic page without switch label: saved=$saved, consumed=$consumed/$acquired, bytes=${png.length()}\n"+
+                    fixtureWords.joinToString("\n"))
+        } finally { runOnMainSync { active.set(false);fixture.recycle() } }
     }
 }
 

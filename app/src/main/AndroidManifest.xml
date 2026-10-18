@@ -7,7 +7,7 @@
  <uses-permission android:name="android.permission.WAKE_LOCK"/>
  <!-- Android 11+ hides other apps unless named: the run can open Liên Quân itself. -->
  <queries><package android:name="com.garena.game.kgvn"/><package android:name="com.google.android.apps.docs"/><package android:name="com.openai.chatgpt"/></queries>
- <application android:label="AOV Collector" android:theme="@style/Theme.Collector" android:allowBackup="false" android:supportsRtl="true">
+ <application android:label="AOV Collector" android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round" android:theme="@style/Theme.Collector" android:allowBackup="false" android:supportsRtl="true">
   <activity android:name=".MainActivity" android:configChanges="orientation|screenSize" android:exported="true"><intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter></activity>
   <service android:name=".CollectorService" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:exported="true">
    <intent-filter><action android:name="android.accessibilityservice.AccessibilityService"/></intent-filter>

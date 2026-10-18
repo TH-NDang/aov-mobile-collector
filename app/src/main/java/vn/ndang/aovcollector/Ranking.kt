@@ -26,7 +26,11 @@ object RankScreens {
     const val SIDE_X=.0815; const val SIDE_Y=.348
 
     fun page(words:List<GameScreens.Word>,lobby:Boolean):Page = when {
-        words.any { it.plain.contains("doibangxephang") } -> Page.RANKING
+        switchButton(words)!=null||
+            // A readable title, mode and table headings still identify the full table if OCR
+            // misses the switch. Never navigate back just because that one label flickers.
+            words.any { it.y<.16&&it.plain.contains("bangphanbactuong") }&&
+                mode(modeButton(words))!=null&&table(words)!=null -> Page.RANKING
         fullRankingLink(words)!=null||heroesLanding(words)||words.any { it.plain.contains("bangxephangdaydu") } -> Page.HEROES
         // The logo is drawn in its own letters, which OCR may miss; the news page names its author and weekly rewards.
         logo(words)!=null||words.any { w -> listOf("garenalienquanmobile","nhanthuonghangtuan").any { w.plain.contains(it) } } -> Page.COMMUNITY
@@ -86,19 +90,28 @@ object RankScreens {
 
     /** "LIÊNQUÂN ARENA OF VALOR" at the bottom of the Cộng đồng side bar, its drawn letters read as "uÊNQUÂN" or "UÊNGUÂN". */
     fun logo(words:List<GameScreens.Word>)=words.firstOrNull { it.x<.2&&it.y>.8&&(it.plain.contains("arenaofvalor")||it.plain.contains("lienquan")||it.plain.length in 5..10&&(it.plain.endsWith("quan")||it.plain.endsWith("guan"))) }
+    private fun compact(w:GameScreens.Word)=listOf(w.left,w.top,w.right,w.bottom).all { it.isFinite() }&&
+        w.left>=0&&w.right<=1&&w.top>=0&&w.bottom<=1&&w.right-w.left in .008.. .40&&w.bottom-w.top in .008.. .12
+    fun switchButton(words:List<GameScreens.Word>)=words.filter {
+        compact(it)&&it.plain.contains("doibangxephang")&&it.x in .70.. .96&&it.y in .12.. .28
+    }.minByOrNull { (it.right-it.left)*(it.bottom-it.top) }
     fun table(words:List<GameScreens.Word>):Table? = when {
-        words.any { w -> listOf("tylethang","tylepick","tyleban").any { w.plain.contains(it) } } -> Table.RATES
-        words.any { it.plain.contains("satthuong")||it.plain=="vang"||it.plain.contains("phaichiu") } -> Table.FIGURES
+        words.any { w -> compact(w)&&w.y in .25.. .40&&w.x in .30.. .72&&listOf("tylethang","tylepick","tyleban").any { w.plain.contains(it) } } -> Table.RATES
+        words.any { compact(it)&&it.y in .25.. .40&&it.x>.35&&(it.plain.contains("satthuong")||it.plain=="vang"||it.plain.contains("phaichiu")) } -> Table.FIGURES
         else -> null
     }
     /** The drop-down's button, "Đấu hạng (Tất cả)" or another kind of match, above the table. */
-    fun modeButton(words:List<GameScreens.Word>)=words.filter { it.plain.startsWith("dau")&&it.y<.27&&it.x>.35&&it.x<.8 }.minByOrNull { it.y }
-    fun mode(word:GameScreens.Word?):Mode? = word?.plain?.let { p -> Mode.values().firstOrNull { p.contains(it.key) } }
+    fun modeButton(words:List<GameScreens.Word>)=words.filter {
+        compact(it)&&it.plain.startsWith("dau")&&mode(it)!=null&&it.y in .12.. .27&&it.x in .35.. .8
+    }.minByOrNull { (it.right-it.left)*(it.bottom-it.top) }
+    fun mode(word:GameScreens.Word?):Mode? = word?.plain?.let { p -> Mode.values().filter { p.contains(it.key) }.singleOrNull() }
     /**
      * An open drop-down's line for [mode], below its button. ML Kit may join a number of the table behind it to the
      * line, as "124.2 Đấu hang (Tinh Anh trở lên)"; its middle stays inside the drop-down.
      */
-    fun option(words:List<GameScreens.Word>,button:GameScreens.Word,mode:Mode)=words.firstOrNull { it.y>button.bottom+.02&&it.y<.7&&it.plain.contains("dau")&&it.plain.contains(mode.key) }
+    fun option(words:List<GameScreens.Word>,button:GameScreens.Word,mode:Mode)=words.filter {
+        compact(it)&&abs(it.x-button.x)<.20&&it.y>button.bottom+.02&&it.y<.7&&it.plain.contains("dau")&&RankScreens.mode(it)==mode
+    }.minByOrNull { (it.right-it.left)*(it.bottom-it.top) }
 
     /** Grey levels of the table's area on a 48x24 grid, to tell whether a scroll moved it. */
     fun signature(width:Int,height:Int,readRow:(Int,IntArray)->Unit):IntArray {
@@ -126,7 +139,12 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
                      private val finish:(Outcome)->Unit) {
     sealed class Outcome { class Done(val pages:Int):Outcome(); class Failed(val reason:String):Outcome() }
     /** One screenshot: [words] only when asked for; call [done] once, with a name to keep it in the run or null. */
-    interface Look { val words:List<GameScreens.Word>; val lobby:Boolean; val signature:IntArray; fun done(keep:String?) }
+    interface Look {
+        val words:List<GameScreens.Word>; val lobby:Boolean; val signature:IntArray
+        fun done(keep:String?)
+        /** Consumes this frame; complete only after PNG storage has succeeded or failed. */
+        fun keep(name:String,then:(Boolean)->Unit)
+    }
     interface Screen {
         val alive:Boolean
         fun look(words:Boolean,then:(Look?)->Unit)
@@ -159,16 +177,16 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
     private fun end(outcome:Outcome) { if(!ended) { ended=true; finish(outcome) } }
     private fun fail(reason:String) = end(Outcome.Failed(reason))
     private fun look(words:Boolean,then:(Look)->Unit) {
-        if(!screen.alive) return
-        screen.look(words) { l -> when { !screen.alive -> l?.done(null); l==null -> fail("Không chụp được màn hình (máy sắp hết chỗ trống, hoặc Android từ chối chụp). Kiểm tra rồi bấm Tiếp tục."); else -> then(l) } }
+        if(!screen.alive||ended) return
+        screen.look(words) { l -> when { !screen.alive||ended -> l?.done(null); l==null -> fail("Không chụp được màn hình (máy sắp hết chỗ trống, hoặc Android từ chối chụp). Kiểm tra rồi bấm Tiếp tục."); else -> then(l) } }
     }
     private fun tap(x:Double,y:Double,wait:Long,then:()->Unit) {
         if(!screen.alive) return
-        screen.tap(x,y) { ok -> if(ok) screen.later(wait,then) else fail("Không chạm được màn hình") }
+        screen.tap(x,y) { ok -> if(screen.alive&&!ended) { if(ok) screen.later(wait,then) else fail("Không chạm được màn hình") } }
     }
     private fun drag(d:Double,fling:Boolean,wait:Long,then:()->Unit) {
         if(!screen.alive) return
-        screen.drag(d,fling) { ok -> if(ok) screen.later(wait,then) else fail("Không cuộn được bảng xếp hạng") }
+        screen.drag(d,fling) { ok -> if(screen.alive&&!ended) { if(ok) screen.later(wait,then) else fail("Không cuộn được bảng xếp hạng") } }
     }
     private fun go(l:Look,what:String,x:Double,y:Double,wait:Long,steps:Int) {
         l.done(null); screen.note(what); screen.say("$what…"); tap(x,y,wait) { navigate(steps+1,0) }
@@ -214,29 +232,44 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
     /** On the table at last: every combination not done yet, starting with the one shown. */
     private fun ranking(l:Look) {
         val table=RankScreens.table(l.words); val mode=RankScreens.mode(RankScreens.modeButton(l.words))
-        l.done(null)
         val order=wanted.sortedBy { c -> (if(c.table==table) 0 else 2)+(if(c.mode==mode) 0 else 1) }
         left.clear(); left.addAll(order.filter { it.slug !in skip })
         screen.note("Bảng Phân Bậc Tướng: còn ${left.size}/${wanted.size} bảng")
-        next()
+        next(l)
     }
-    private fun next() {
-        val combo=left.firstOrNull()?:return end(Outcome.Done(pages))
-        prepare(combo,0)
+    private fun next(frame:Look?=null) {
+        val combo=left.firstOrNull()
+        if(combo==null) { frame?.done(null);return end(Outcome.Done(pages)) }
+        if(frame!=null) prepareFrame(combo,0,frame) else prepare(combo,0)
     }
     /** Switches the table and the kind of match until both are [combo]'s, checking after each tap. */
-    private fun prepare(combo:RankScreens.Combo,tries:Int):Unit = look(true) { l ->
+    private fun prepare(combo:RankScreens.Combo,tries:Int):Unit = look(true) { prepareFrame(combo,tries,it) }
+    private fun prepareFrame(combo:RankScreens.Combo,tries:Int,l:Look) {
+        if(!screen.alive||ended) { l.done(null);return }
         val words=l.words
-        if(RankScreens.page(words,l.lobby)!=RankScreens.Page.RANKING) { l.done(null); return@look navigate(0,0) }
-        if(tries>MAX_TRIES) { l.done("ranking-switch"); return@look fail("Không chuyển được sang bảng ${combo.label}.") }
+        // A fresh navigation would reset both counters and loop forever on alternating OCR.
+        // Keep one bounded preparation attempt, including frames that cannot identify the page.
+        if(tries>MAX_TRIES) { l.done(null);return fail("Không xác nhận được bảng ${combo.label}. Mở đúng bảng rồi bấm Tiếp tục.") }
         val table=RankScreens.table(words); val button=RankScreens.modeButton(words); val mode=RankScreens.mode(button)
+        fun waitForTable() {
+            l.done(null)
+            screen.note("Chờ xác nhận ${combo.label}: lần ${tries+1}/${MAX_TRIES+1}, màn hình=${RankScreens.page(words,l.lobby)}, bảng=$table, chế độ=$mode")
+            screen.say("Đang xác nhận bảng · ${tries+1}/${MAX_TRIES+1}")
+            screen.later(1500) { prepare(combo,tries+1) }
+        }
         when {
             // Headings or the drop-down not read yet: the page may still be loading.
-            table==null||button==null -> { l.done(null); screen.later(1500) { prepare(combo,tries+1) } }
-            table!=combo.table -> { val w=words.first { it.plain.contains("doibangxephang") }
-                l.done(null); screen.note("Đổi bảng xếp hạng"); tap(w.x,w.y,2500) { prepare(combo,tries+1) } }
+            RankScreens.page(words,l.lobby)!=RankScreens.Page.RANKING||table==null||button==null||mode==null -> waitForTable()
+            table!=combo.table -> {
+                val w=RankScreens.switchButton(words)
+                if(w==null) waitForTable() else {
+                    l.done(null);screen.note("Đổi bảng xếp hạng");tap(w.x,w.y,2500) { prepare(combo,tries+1) }
+                }
+            }
             mode!=combo.mode -> { l.done(null); tap(button.x,button.y,1200) { pick(combo,button,tries) } }
-            else -> { screen.say(combo.label); screen.note("Chụp ${combo.label}"); scan(combo,1,null) }
+            // Save this verified, current frame. No second OCR observation, leaked bitmap, or
+            // intervening navigation between verifying the requested table and its first photo.
+            else -> { screen.say(combo.label); screen.note("Chụp ${combo.label}"); scanFrame(combo,1,null,0,l) }
         }
     }
     /** The drop-down is open: tap [combo]'s kind of match, or close it again when it is not there. */
@@ -251,21 +284,29 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
      * a third of the way down; so a still table is looked at again after a wait, then dragged twice more, before
      * it counts as the end.
      */
-    private fun scan(combo:RankScreens.Combo,page:Int,last:IntArray?,still:Int=0):Unit = look(false) { l ->
+    private fun scan(combo:RankScreens.Combo,page:Int,last:IntArray?,still:Int=0):Unit = look(false) { scanFrame(combo,page,last,still,it) }
+    private fun scanFrame(combo:RankScreens.Combo,page:Int,last:IntArray?,still:Int,l:Look) {
+        if(!screen.alive||ended) { l.done(null);return }
         if(last!=null&&RankScreens.same(l.signature,last)) {
             l.done(null)
             if(still<STILL_TRIES) {
                 screen.note("${combo.label}: trang ${page-1} chưa đổi sau khi kéo, thử lại (${still+1}/$STILL_TRIES)")
-                return@look if(still==0) screen.later(1500) { scan(combo,page,last,1) } else screen.later(1500) { drag(SCROLL,false,1200) { scan(combo,page,last,still+1) } }
+                return if(still==0) screen.later(1500) { scan(combo,page,last,1) } else screen.later(1500) { drag(SCROLL,false,1200) { scan(combo,page,last,still+1) } }
             }
             screen.finished(combo.slug); left.remove(combo)
             screen.note("${combo.label}: ${page-1} ảnh")
-            return@look top(0,null) { next() }
+            return top(0,null) { next() }
         }
-        l.done("${combo.slug}-%02d".format(page)); pages++
-        screen.say("${combo.label} · trang $page")
-        if(page>=MAX_PAGES) { screen.note("${combo.label}: dừng ở $MAX_PAGES trang"); screen.finished(combo.slug); left.remove(combo); return@look top(0,null) { next() } }
-        drag(SCROLL,false,1200) { scan(combo,page+1,l.signature) }
+        val signature=l.signature.copyOf()
+        l.keep("${combo.slug}-%02d".format(page)) { ok ->
+            if(!screen.alive||ended) return@keep
+            if(!ok) return@keep fail("Không lưu được ảnh ${combo.label}, trang $page. Kiểm tra dung lượng rồi bấm Tiếp tục.")
+            pages++
+            screen.say("${combo.label} · đã lưu trang $page")
+            screen.note("Đã lưu ${combo.slug}, trang $page")
+            if(page>=MAX_PAGES) return@keep fail("Đã lưu $MAX_PAGES trang nhưng chưa xác nhận cuối bảng ${combo.label}.")
+            drag(SCROLL,false,1200) { scan(combo,page+1,signature) }
+        }
     }
     /** Flicks back to the top of the page, where the switches are, until a flick changes nothing. */
     private fun top(flings:Int,last:IntArray?,then:()->Unit) {

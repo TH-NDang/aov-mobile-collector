@@ -115,12 +115,16 @@ class RankingTest {
      * keeps its headings (and the switches above) only at the top unless [sticky].
      */
     private class Web(var page:Page,var table:Table=Table.RATES,var mode:Mode=Mode.ALL,val length:Double=1.0,val sticky:Boolean=false,val cut:Int=Int.MAX_VALUE,
-                      var stalls:Int=0,var heroWords:List<GameScreens.Word>?=null,var ignoredLinkTaps:Int=0,var sideWorks:Boolean=true) : RankingReader.Screen {
+                      var stalls:Int=0,var heroWords:List<GameScreens.Word>?=null,var ignoredLinkTaps:Int=0,var sideWorks:Boolean=true,
+                      val reading:((List<GameScreens.Word>,Int)->List<GameScreens.Word>)?=null,
+                      val failSaveAt:Int=0,val pauseOnSave:Boolean=false) : RankingReader.Screen {
         var offset=0.0; var open=false; var looks=0; var linkTaps=0; var sideTaps=0
+        var released=0;var wordLooks=0;var saves=0;var paused=false
         val tapPoints=ArrayList<Pair<Double,Double>>()
+        val savedFrames=ArrayList<RankScreens.Combo>();val savedAtLooks=ArrayList<Int>();val drags=ArrayList<Double>()
         val kept=ArrayList<String>(); val tapped=ArrayList<String>(); val finished=ArrayList<String>(); val pending=ArrayDeque<()->Unit>()
         var outcome:RankingReader.Outcome?=null
-        override val alive get()=outcome==null&&looks<cut
+        override val alive get()=!paused&&outcome==null&&looks<cut
         private fun w(text:String,x:Double,y:Double)=GameScreens.Word(text,x-.05,y-.02,x+.05,y+.02)
         fun words():List<GameScreens.Word> = when(page) {
             Page.PANEL -> listOf(w("Tính năng khác",.12,.21),w("Hiệu ứng",.15,.37),w("Clan",.32,.37),w("Cộng đồng",.15,.52))
@@ -138,10 +142,23 @@ class RankingTest {
         }
         override fun look(words:Boolean,then:(RankingReader.Look?)->Unit) {
             looks++
-            val shown=if(words) words() else emptyList()
+            val shown=if(words) { wordLooks++;reading?.invoke(words(),wordLooks)?:words() } else emptyList()
+            val frameCombo=RankScreens.Combo(table,mode);val atLook=looks
             val signature=IntArray(8) { (offset*1000).toInt()+table.ordinal*5000+mode.ordinal*20000 }
             then(object:RankingReader.Look { override val words=shown; override val lobby=page==Page.LOBBY; override val signature=signature
-                override fun done(keep:String?) { if(keep!=null) kept+=keep } })
+                var consumed=false
+                fun consume() { assertFalse("A frame must be consumed exactly once",consumed);consumed=true;released++ }
+                override fun done(keep:String?) { consume();if(keep!=null) kept+=keep }
+                override fun keep(name:String,then:(Boolean)->Unit) {
+                    consume();saves++
+                    pending.addLast {
+                        val ok=saves!=failSaveAt
+                        if(ok) { kept+=name;savedFrames+=frameCombo;savedAtLooks+=atLook }
+                        if(pauseOnSave) paused=true
+                        then(ok)
+                    }
+                }
+            })
         }
         override fun tap(x:Double,y:Double,then:(Boolean)->Unit) {
             tapPoints+=x to y
@@ -165,6 +182,7 @@ class RankingTest {
             pending.addLast { then(true) }
         }
         override fun drag(d:Double,fling:Boolean,then:(Boolean)->Unit) {
+            drags+=d
             // A page loading more rows ignores [stalls] scrolls past its first screen, as on the user's phone.
             if(page==Page.RANKING) offset=when { d<0 -> maxOf(0.0,offset-3); offset>.5&&stalls>0 -> { stalls--; offset } else -> minOf(length,offset+d) }
             pending.addLast { then(true) }
@@ -172,7 +190,106 @@ class RankingTest {
         override fun later(ms:Long,then:()->Unit) { pending.addLast(then) }
         override fun finished(combo:String) { finished+=combo }
         fun run(skip:Set<String> =emptySet(),wanted:List<RankScreens.Combo> =RankScreens.COMBOS):Web { RankingReader(this,skip,wanted) { outcome=it }.start(); var guard=0
-            while(outcome==null&&looks<cut) { (pending.removeFirstOrNull()?:break).invoke(); check(++guard<100000) }; return this }
+            while(outcome==null&&looks<cut) { (pending.removeFirstOrNull()?:break).invoke(); check(++guard<100000) }
+            assertEquals("Every acquired frame must be consumed",looks,released);return this }
+    }
+
+    @Test fun aVerifiedSelectedTableIsSavedBeforeAnotherOcrFrameCanLoseTheSwitch() {
+        val combo=RankScreens.Combo(Table.RATES,Mode.ALL)
+        val web=Web(Page.RANKING,reading={ words,n -> if(n%2==0) words.filterNot { it.plain.contains("doibangxephang") } else words })
+            .run(wanted=listOf(combo))
+        assertTrue(web.outcome is RankingReader.Outcome.Done)
+        assertEquals(1,web.wordLooks)
+        assertEquals(1,web.savedAtLooks.first())
+        assertEquals(List(4) { combo },web.savedFrames)
+        assertTrue(web.tapped.isEmpty())
+    }
+    @Test fun readableTableAndModeCanRecoverWhenOnlyTheSwitchLabelIsMissing() {
+        val combo=RankScreens.Combo(Table.RATES,Mode.ALL)
+        val web=Web(Page.RANKING,reading={ words,_ -> words.filterNot { it.plain.contains("doibangxephang") } })
+            .run(wanted=listOf(combo))
+        assertTrue(web.outcome is RankingReader.Outcome.Done)
+        assertEquals(4,web.kept.size);assertTrue(web.tapped.isEmpty())
+    }
+    @Test fun changingRecognitionDuringPreparationIsBoundedAndCannotSaveAnUnverifiedTable() {
+        val wanted=listOf(RankScreens.Combo(Table.FIGURES,Mode.ALL))
+        val web=Web(Page.RANKING,reading={ words,n ->
+            if(n%2==0) emptyList() else words.filterNot { it.plain=="vang"||it.plain.contains("satthuong")||it.plain.contains("tyle") }
+        }).run(wanted=wanted)
+        assertTrue(web.outcome is RankingReader.Outcome.Failed)
+        assertTrue(web.looks<=RankingReader.MAX_TRIES+2)
+        assertTrue(web.kept.isEmpty());assertTrue(web.finished.isEmpty());assertTrue(web.tapped.isEmpty())
+    }
+    @Test fun afterSwitchingNeverSavesTheOldVerifiedTableWhenTheNewPageCannotBeRead() {
+        val web=Web(Page.RANKING,reading={ words,n -> if(n==1) words else emptyList() })
+            .run(wanted=listOf(RankScreens.Combo(Table.FIGURES,Mode.ALL)))
+        assertTrue(web.outcome is RankingReader.Outcome.Failed)
+        assertEquals(listOf("Đổi bảng xếp hạng"),web.tapped)
+        assertTrue(web.looks<=RankingReader.MAX_TRIES+2)
+        assertTrue(web.kept.isEmpty());assertTrue(web.finished.isEmpty())
+    }
+    @Test fun pauseDuringPreparationDoesNotSaveAndResumeVerifiesTheSelectionAgain() {
+        val combo=RankScreens.Combo(Table.FIGURES,Mode.FIVE)
+        val stopped=Web(Page.RANKING,cut=2).run(wanted=listOf(combo))
+        assertNull(stopped.outcome);assertTrue(stopped.kept.isEmpty());assertTrue(stopped.finished.isEmpty())
+        val resumed=Web(Page.RANKING,Table.RATES,Mode.ALL).run(wanted=listOf(combo))
+        assertTrue(resumed.outcome is RankingReader.Outcome.Done)
+        assertEquals(List(4) { combo },resumed.savedFrames)
+    }
+    @Test fun temporaryUnreadableSecondTableDoesNotRecaptureTheFinishedFirstTable() {
+        val first=RankScreens.Combo(Table.RATES,Mode.ALL);val second=RankScreens.Combo(Table.FIGURES,Mode.ALL)
+        val web=Web(Page.RANKING,reading={ words,n -> if(n==2||n==3) emptyList() else words })
+            .run(wanted=listOf(first,second))
+        assertTrue(web.outcome is RankingReader.Outcome.Done)
+        assertEquals(listOf(first.slug,second.slug),web.finished)
+        assertEquals(List(4) { first }+List(4) { second },web.savedFrames)
+        assertEquals(8,web.kept.distinct().size)
+    }
+    @Test fun aTemporaryUnreadableFrameAfterSwitchingRecoversWithoutRestartingNavigation() {
+        val combo=RankScreens.Combo(Table.FIGURES,Mode.ALL)
+        val web=Web(Page.RANKING,reading={ words,n -> if(n==2) emptyList() else words }).run(wanted=listOf(combo))
+        assertTrue(web.outcome is RankingReader.Outcome.Done)
+        assertEquals(listOf("Đổi bảng xếp hạng"),web.tapped)
+        assertEquals(List(4) { combo },web.savedFrames)
+    }
+    @Test fun failedPngSaveStopsBeforeScrollingOrCompletingTheTable() {
+        for(failAt in listOf(1,2)) {
+            val web=Web(Page.RANKING,failSaveAt=failAt).run(wanted=listOf(RankScreens.Combo(Table.RATES,Mode.ALL)))
+            assertTrue(web.outcome is RankingReader.Outcome.Failed)
+            assertEquals(failAt-1,web.kept.size);assertEquals(failAt-1,web.drags.size)
+            assertTrue(web.finished.isEmpty())
+            assertTrue((web.outcome as RankingReader.Outcome.Failed).reason.contains("Không lưu được ảnh"))
+        }
+    }
+    @Test fun pauseDuringSavingDoesNotScrollAndResumeRechecksTheCurrentTable() {
+        val combo=RankScreens.Combo(Table.RATES,Mode.ALL)
+        val stopped=Web(Page.RANKING,pauseOnSave=true).run(wanted=listOf(combo))
+        assertNull(stopped.outcome);assertTrue(stopped.drags.isEmpty());assertTrue(stopped.finished.isEmpty())
+        val resumed=Web(Page.RANKING,Table.FIGURES).run(wanted=listOf(combo))
+        assertTrue(resumed.outcome is RankingReader.Outcome.Done)
+        assertEquals(listOf("Đổi bảng xếp hạng"),resumed.tapped)
+        assertEquals(List(4) { combo },resumed.savedFrames)
+    }
+    @Test fun controlsRejectBroadAccessibilityParentsAndUseTheirCompactVisibleLabels() {
+        val parent=box("Đổi bảng xếp hạng Đấu hạng (Tất cả) Tỷ lệ thắng",.03,.02,.95,.98)
+        val wrongMode=box("Đấu 5v5 Đấu hạng (Tất cả)",.34,.02,.80,.45)
+        val web=Web(Page.RANKING,reading={ words,_ -> listOf(parent,wrongMode)+words })
+            .run(wanted=listOf(RankScreens.Combo(Table.FIGURES,Mode.FIVE)))
+        assertTrue(web.outcome is RankingReader.Outcome.Done)
+        assertEquals(.835,web.tapPoints.first().first,.001)
+        assertTrue(web.tapPoints.all { it.second<.5 })
+        assertTrue(web.savedFrames.all { it.table==Table.FIGURES&&it.mode==Mode.FIVE })
+        assertNull(RankScreens.switchButton(listOf(parent)))
+        assertNull(RankScreens.modeButton(listOf(wrongMode)))
+        assertNull(RankScreens.table(listOf(parent)))
+    }
+    @Test fun aShortModeFragmentCannotHideTheCompleteOverlappingModeLabel() {
+        val complete=box("Đấu hạng (Tất cả)",.47,.17,.64,.22)
+        val fragment=box("Đấu hạng",.47,.17,.54,.22)
+        val ambiguous=box("Đấu 5v5 Đấu hạng (Tất cả)",.43,.17,.70,.22)
+        assertEquals(complete,RankScreens.modeButton(listOf(fragment,ambiguous,complete)))
+        assertNull(RankScreens.mode(ambiguous))
+        assertNull(RankScreens.modeButton(listOf(fragment,ambiguous)))
     }
 
     @Test fun goesFromTheLobbyToTheTableAndPhotographsBothTablesForEachKindOfMatch() {

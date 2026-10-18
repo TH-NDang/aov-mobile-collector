@@ -1506,7 +1506,20 @@ class CollectorService : AccessibilityService() {
                         } catch(e:Throwable) { CrashLog.record(this@CollectorService,"Không đọc được màn hình thống kê",e);null }
                         handler.post { if(read==null) { b.recycle();then(null) } else then(object:RankingReader.Look {
                             override val words=read.first; override val lobby=read.second; override val signature=read.third
-                            override fun done(keep:String?) { if(keep!=null) store(b,runId,"$stamp-$keep") {} else b.recycle() }
+                            private var consumed=false
+                            override fun done(keep:String?) {
+                                if(consumed) return
+                                consumed=true
+                                if(keep!=null) store(b,runId,"$stamp-$keep") {} else b.recycle()
+                            }
+                            override fun keep(name:String,then:(Boolean)->Unit) {
+                                if(consumed) return then(false)
+                                consumed=true
+                                store(b,runId,"$stamp-$name") { ok ->
+                                    if(!ok) note("Không lưu được ảnh thống kê: $name")
+                                    refreshPanel();then(ok)
+                                }
+                            }
                         }) }
                     } } catch(e:Exception) { b.recycle();then(null) }
                 }
