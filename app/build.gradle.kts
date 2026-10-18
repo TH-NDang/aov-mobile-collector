@@ -10,5 +10,5 @@ android {
  splits { abi { isEnable = true; reset(); include("arm64-v8a", "armeabi-v7a", "x86_64", "x86"); isUniversalApk = true } }
 }
 
-dependencies { implementation("com.google.mlkit:text-recognition:16.0.1"); implementation("androidx.core:core:1.13.1"); testImplementation("junit:junit:4.13.2") }
+dependencies { implementation("com.google.mlkit:text-recognition:16.0.1"); implementation("androidx.core:core:1.13.1"); testImplementation("junit:junit:4.13.2"); testImplementation("org.json:json:20240303") }
 
