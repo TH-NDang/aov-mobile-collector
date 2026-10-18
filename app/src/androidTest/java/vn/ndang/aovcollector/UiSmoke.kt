@@ -75,6 +75,17 @@ class UiSmoke:Instrumentation() {
                 val title=try { GameText.chessHeroTitle(shot) } finally { shot.recycle() }
                 check(title=="Violet") { "Violet's gold price became part of her name: $title" }
             }
+            for(fixture in listOf("chess-violet-price.png","chess-arduin-role-ocr.jpg")) {
+                context.assets.open(fixture).use { input ->
+                    val shot=BitmapFactory.decodeStream(input)
+                    try {
+                        val icons=ChessWiki.skillTiles(shot)
+                        check(icons.size==1&&icons.single().y in .50.. .55) {
+                            "Duplicate skill probes or plain background in $fixture: $icons"
+                        }
+                    } finally { shot.recycle() }
+                }
+            }
             context.assets.open("chess-save-photo-sure.jpg").use { input ->
                 val screenshot=BitmapFactory.decodeStream(input)
                 val sure=try { ChessWiki.nativeConfirm(GameText.words(screenshot)) } finally { screenshot.recycle() }
@@ -113,7 +124,9 @@ class UiSmoke:Instrumentation() {
             val personal=nativeFile("personal-before.jpg")
             val nativeRun="smoke-native-save"
             check(GamePhotoSession.begin(targetContext,nativeRun)==1)
-            GamePhotoSession.mark(targetContext,nativeRun,"quan-co","Violet")
+            GamePhotoSession.mark(targetContext,nativeRun,"quan-co","violet-head")
+            GamePhotoSession.mark(targetContext,nativeRun,"quan-co","violet-head")
+            check(GamePhotoSession.hasMark(targetContext,nativeRun,"quan-co","violet-head"))
             val waiting=GamePhotoSession.importNew(targetContext,nativeRun)
             check(waiting.pending==1&&waiting.copied==0) { "Sure without a visible file was acknowledged" }
             val violet=nativeFile("caYyujwz.png (1).jpg")
@@ -121,13 +134,16 @@ class UiSmoke:Instrumentation() {
             check(copied.copied==1&&copied.pending==0) { "Late Pictures image was not imported: $copied" }
             val imported=File(targetContext.filesDir,"captures/"+GamePhotoImport.ROOT)
             val violetCopy=imported.walkTopDown().first { it.isFile&&it.name.startsWith("violet-") }
-            check(violetCopy.extension=="jpg"&&violetCopy.path.contains("quan-co/anh-quan-co"))
+            check(violetCopy.name=="violet-head.jpg"&&violetCopy.path.contains("quan-co/anh-quan-co"))
+            check(CaptureHistory.entries(targetContext).any { it.name=="violet-head" })
             targetContext.contentResolver.openInputStream(violet)!!.use {
                 check(it.readBytes().contentEquals(violetCopy.readBytes())) { "Native image bytes changed" }
             }
             // A later different category cannot rename/reassign the already imported Violet.
             SystemClock.sleep(50)
-            GamePhotoSession.mark(targetContext,nativeRun,"chieu-quan-co","Violet-skill")
+            GamePhotoSession.mark(targetContext,nativeRun,"chieu-quan-co","Violet-skill",setOf("Violet-upper","Violet-lower"))
+            GamePhotoSession.mark(targetContext,nativeRun,"chieu-quan-co","Violet-upper")
+            check(GamePhotoSession.hasMark(targetContext,nativeRun,"chieu-quan-co","Violet-lower"))
             val skill=nativeFile("skill.png (1).jpg")
             val second=GamePhotoSession.importNew(targetContext,nativeRun)
             check(second.copied==1&&second.already==1&&second.pending==0)
@@ -470,6 +486,7 @@ class UiSmoke:Instrumentation() {
             android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("dumpsys accessibility")).use { File(dest,"accessibility.txt").writeBytes(it.readBytes()) }
             check(service!=null) { "Accessibility service not connected" }
             rankingCaptureSmoke(service!!)
+            rankingSelectionSmoke(service!!)
             runOnMainSync {
                 check(service!!.selectMacro(BuiltInMacros.chess(ChessWiki.Options(
                     setOf("tat-ca-quan-co"),openGame=false,heroDetails=true))))
@@ -484,6 +501,7 @@ class UiSmoke:Instrumentation() {
                     ?:error("Missing chess progress bar")
                 check(progress.visibility==View.GONE) { "Chess showed a percentage before knowing its total" }
             }
+            chessNamedCaptureSmoke(service!!)
             // Exact task timing persists across new Macro objects, without borrowing another configuration.
             val timingMacro=Macro(MacroStore.current(targetContext).readText())
             val timingPrefs=targetContext.getSharedPreferences("ui",0)
@@ -1022,5 +1040,150 @@ class UiSmoke:Instrumentation() {
                     fixtureWords.joinToString("\n"))
         } finally { runOnMainSync { active.set(false);fixture.recycle() } }
     }
+    /** Synthetic mode popup at the measured geometry: OCR → actual reader → clean PNG, all six choices. */
+    private fun rankingSelectionSmoke(service:CollectorService) {
+        val handler=android.os.Handler(android.os.Looper.getMainLooper())
+        val report=StringBuilder()
+        fun fixture(table:RankScreens.Table,mode:RankScreens.Mode,open:Boolean)=
+            Bitmap.createBitmap(2048,922,Bitmap.Config.ARGB_8888).apply {
+                val canvas=Canvas(this)
+                canvas.drawColor(Color.rgb(58,65,145))
+                val paint=Paint(Paint.ANTI_ALIAS_FLAG).apply { color=Color.WHITE;textSize=34f }
+                canvas.drawText("Bảng Phân Bậc Tướng",250f,88f,paint)
+                canvas.drawText("Đổi bảng xếp hạng",1580f,204f,paint)
+                paint.textSize=30f
+                canvas.drawText(mode.label,1015f,205f,paint)
+                if(table==RankScreens.Table.RATES) {
+                    canvas.drawText("Tỷ lệ thắng",840f,310f,paint)
+                    canvas.drawText("Tỷ lệ pick",1070f,310f,paint)
+                    canvas.drawText("Tỷ lệ Ban",1290f,310f,paint)
+                } else {
+                    canvas.drawText("Sát thương",910f,285f,paint)
+                    canvas.drawText("mỗi trận",925f,320f,paint)
+                    canvas.drawText("Vàng",1380f,310f,paint)
+                    canvas.drawText("Sát thương phải chịu",1540f,310f,paint)
+                }
+                canvas.drawText("Synthetic row",250f,405f,paint)
+                canvas.drawText("123,45",915f,405f,paint)
+                if(open) {
+                    paint.color=Color.rgb(45,48,110)
+                    canvas.drawRect(990f,245f,1450f,460f,paint)
+                    paint.color=Color.WHITE;paint.textSize=29f
+                    RankScreens.Mode.values().forEachIndexed { i,m -> canvas.drawText(m.label,1025f,300f+60f*i,paint) }
+                }
+            }
+        for(combo in RankScreens.COMBOS) {
+            val menu=fixture(combo.table,RankScreens.Mode.ALL,true)
+            val closed=fixture(combo.table,combo.mode,false)
+            val menuWords=GameText.rankingWords(menu)
+            val closedWords=GameText.rankingWords(closed)
+            check(RankScreens.menuOverlay(menu.width,menu.height) { y,row -> menu.getPixels(row,0,menu.width,0,y,menu.width,1) })
+            check(!RankScreens.menuOverlay(closed.width,closed.height) { y,row -> closed.getPixels(row,0,closed.width,0,y,closed.width,1) })
+            val button=RankScreens.modeButton(menuWords)?:error("Synthetic mode button missing: $menuWords")
+            check(RankScreens.menuModes(menuWords,button).size==3) { "Synthetic options missing: $menuWords" }
+            check(RankScreens.table(closedWords)==combo.table&&RankScreens.mode(RankScreens.modeButton(closedWords))==combo.mode) {
+                "Synthetic closed selection unreadable for ${combo.slug}: $closedWords"
+            }
+            val active=java.util.concurrent.atomic.AtomicBoolean(true)
+            val ended=java.util.concurrent.CountDownLatch(1)
+            var outcome:RankingReader.Outcome?=null
+            var open=true;var picked:RankScreens.Mode?=null;var saves=0;var consumed=0;var acquired=0;var taps=0
+            val folder="ranking-selection-${combo.slug}"
+            val screen=object:RankingReader.Screen {
+                override val alive get()=active.get()&&outcome==null
+                override fun look(words:Boolean,then:(RankingReader.Look?)->Unit) {
+                    acquired++
+                    val wasOpen=open
+                    val shot=(if(wasOpen) menu else closed).copy(Bitmap.Config.ARGB_8888,false)
+                    val read=if(words) { if(wasOpen) menuWords else closedWords } else emptyList<GameScreens.Word>()
+                    then(object:RankingReader.Look {
+                        var released=false
+                        override val words=read
+                        override val menuOverlay=RankScreens.menuOverlay(shot.width,shot.height) { y,row -> shot.getPixels(row,0,shot.width,0,y,shot.width,1) }
+                        override val lobby=false
+                        override val signature=IntArray(96) { 42 }
+                        fun release() { check(!released);released=true;consumed++ }
+                        override fun done(keep:String?) { check(keep==null);release();shot.recycle() }
+                        override fun keep(name:String,then:(Boolean)->Unit) {
+                            check(!wasOpen&&picked==combo.mode) { "Saved a menu or wrong mode: ${combo.slug}" }
+                            release();service.store(shot,folder,name) { ok -> if(ok) saves++;then(ok) }
+                        }
+                    })
+                }
+                override fun tap(x:Double,y:Double,then:(Boolean)->Unit) {
+                    // Starting with a popup must select its row, never toggle the button.
+                    check(open&&x in .48.. .72&&y in .27.. .49) { "Unexpected dropdown tap $x,$y" }
+                    val row=RankScreens.Mode.values().minBy { kotlin.math.abs(y-(.31+.065*it.ordinal)) }
+                    check(row==combo.mode) { "Selected $row instead of ${combo.mode}" }
+                    taps++;picked=row;open=false;handler.post { then(true) }
+                }
+                override fun drag(d:Double,fling:Boolean,then:(Boolean)->Unit) { check(saves==1);handler.post { then(true) } }
+                override fun later(ms:Long,then:()->Unit) { handler.post(then) }
+                override fun note(text:String) { report.append(text).append('\n') }
+            }
+            runOnMainSync { RankingReader(screen,wanted=listOf(combo)) { outcome=it;ended.countDown() }.start() }
+            try {
+                check(ended.await(15,java.util.concurrent.TimeUnit.SECONDS)) { "Selection timed out: ${combo.slug}" }
+                check(outcome is RankingReader.Outcome.Done&&saves==1&&taps==1&&acquired==consumed) {
+                    "Selection ${combo.slug}: $outcome saves=$saves taps=$taps consumed=$consumed/$acquired"
+                }
+                val png=File(targetContext.filesDir,"captures/$folder").walkTopDown().filter { it.extension=="png" }.single()
+                val actual=BitmapFactory.decodeFile(png.absolutePath)?:error("Selection PNG unreadable")
+                try { check(actual.sameAs(closed)) { "Stored selection contains a menu/wrong frame: ${combo.slug}" } }
+                finally { actual.recycle() }
+                report.append("PASS ${combo.slug}: one correct mode tap, one closed-menu PNG, $consumed/$acquired frames released\n")
+            } finally { runOnMainSync { active.set(false);menu.recycle();closed.recycle() } }
+        }
+        File(targetContext.filesDir,"smoke/ranking-selection.txt").writeText(report.toString())
+    }
+
+    /** Real PNG storage under synthetic chess content; no game/account access. */
+    private fun chessNamedCaptureSmoke(service:CollectorService) {
+        // Configure only the storage routing context; never start the macro or game gestures.
+        val macroField=CollectorService::class.java.getDeclaredField("macro").apply { isAccessible=true }
+        var previous:Any?=null
+        runOnMainSync {
+            previous=macroField.get(service)
+            macroField.set(service,Macro(BuiltInMacros.chess(ChessWiki.Options(
+                setOf("tat-ca-quan-co"),openGame=false,heroDetails=true))))
+        }
+        try {
+            val folder="chess-naming-smoke"
+            val token="0001-chess__quan-co__tat-ca-quan-co__tuong__violet__001"
+            fun fixture(shade:Int)=Bitmap.createBitmap(640,360,Bitmap.Config.ARGB_8888).apply {
+                eraseColor(Color.rgb(60,60,60))
+                Canvas(this).drawRect(320f,100f,520f,260f,Paint().apply { color=Color.rgb(shade,shade,shade) })
+            }
+            fun save(shade:Int):Boolean {
+                val ended=java.util.concurrent.CountDownLatch(1)
+                var result=false
+                val shot=fixture(shade)
+                runOnMainSync { service.store(shot,folder,token) { ok -> result=ok;ended.countDown() } }
+                check(ended.await(10,java.util.concurrent.TimeUnit.SECONDS)) { "Chess PNG writer stalled" }
+                check(shot.isRecycled) { "Chess PNG frame leaked" }
+                return result
+            }
+            check(save(60)) { "Chess detail PNG failed" }
+            val root=File(targetContext.filesDir,"captures/$folder")
+            val target=File(root,"quan-co/tat-ca-quan-co/tuong/violet/violet-detail-1.png")
+            check(target.isFile&&root.walkTopDown().count { it.extension=="png" }==1) {
+                "Chess detail filename/routing mismatch"
+            }
+            val original=target.readBytes()
+            check(save(62)&&original.contentEquals(target.readBytes())) { "Resume overwrote numbered detail" }
+            // Expected storage rejection must not become a later UI crash-notice dialog.
+            val crash=CrashLog.file(targetContext)
+            val priorLog=crash.takeIf { it.isFile }?.readBytes();val priorTime=crash.lastModified()
+            try {
+                check(!save(160)&&original.contentEquals(target.readBytes())) { "Changed content overwrote numbered detail" }
+            } finally {
+                if(priorLog==null) crash.delete() else { crash.writeBytes(priorLog);crash.setLastModified(priorTime) }
+            }
+            check(CaptureHistory.entries(targetContext).any { it.name=="violet-detail-1"&&it.state=="saved" })
+            File(targetContext.filesDir,"smoke/chess-capture.txt").writeText(
+                "Clean filename: violet-detail-1.png; verified retry preserved bytes; changed content refused.\n")
+        } finally { runOnMainSync { macroField.set(service,previous) } }
+    }
+
 }
 

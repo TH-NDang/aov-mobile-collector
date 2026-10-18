@@ -24,15 +24,21 @@ object GameText {
      */
     fun rankingWords(screen:Bitmap,nodes:List<GameScreens.Word> =emptyList()):List<GameScreens.Word> {
         val ordinary=nodes+words(screen)
-        if(screen.width<=screen.height||!RankScreens.needsFullRankingOcr(ordinary)) return ordinary
-        return ordinary+rankingHeader(screen)
+        if(screen.width<=screen.height) return ordinary
+        // Half-size whole-screen OCR can merge a menu row with a table number or split
+        // "Đấu" from its mode. Read the small controls separately at native 2x scale.
+        if(RankScreens.needsModeOcr(ordinary)) return ordinary+rankingModes(screen)
+        return if(RankScreens.needsFullRankingOcr(ordinary)) ordinary+rankingHeader(screen) else ordinary
     }
+    /** Mode button and all three menu rows, with line AND element boxes in screen coordinates. */
+    fun rankingModes(screen:Bitmap)=rankingCrop(screen,RankScreens.MODE_LEFT,RankScreens.MODE_TOP,RankScreens.MODE_RIGHT,RankScreens.MODE_BOTTOM)
     /** Read the header at 2x native size and map both OCR lines and elements back into screen coordinates. */
-    fun rankingHeader(screen:Bitmap):List<GameScreens.Word> {
+    fun rankingHeader(screen:Bitmap)=rankingCrop(screen,RankScreens.LINK_LEFT,RankScreens.LINK_TOP,RankScreens.LINK_RIGHT,RankScreens.LINK_BOTTOM)
+    private fun rankingCrop(screen:Bitmap,left:Double,top:Double,right:Double,bottom:Double):List<GameScreens.Word> {
         if(screen.width<=screen.height) return emptyList()
-        val x0=(screen.width*RankScreens.LINK_LEFT).toInt(); val y0=(screen.height*RankScreens.LINK_TOP).toInt()
-        val width=(screen.width*(RankScreens.LINK_RIGHT-RankScreens.LINK_LEFT)).toInt().coerceAtMost(screen.width-x0)
-        val height=(screen.height*(RankScreens.LINK_BOTTOM-RankScreens.LINK_TOP)).toInt().coerceAtMost(screen.height-y0)
+        val x0=(screen.width*left).toInt(); val y0=(screen.height*top).toInt()
+        val width=(screen.width*(right-left)).toInt().coerceAtMost(screen.width-x0)
+        val height=(screen.height*(bottom-top)).toInt().coerceAtMost(screen.height-y0)
         if(width<1||height<1) return emptyList()
         val crop=Bitmap.createBitmap(screen,x0,y0,width,height)
         val enlarged=Bitmap.createScaledBitmap(crop,width*2,height*2,true);crop.recycle()

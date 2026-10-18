@@ -31,7 +31,13 @@ object CaptureHistory {
         val runs=j.optJSONObject("names")?:JSONObject().also { j.put("names",it) }
         var changed=false
         for(i in 0 until rows.length()) {
-            val row=rows.getJSONObject(i);if(row.optString("name").isNotBlank()) continue
+            val row=rows.getJSONObject(i)
+            val exact=ChessCaptureFiles.exactDisplayName(row.getString("path"))
+            if(exact!=null) {
+                if(row.optString("name")!=exact) { row.put("name",exact);changed=true }
+                continue
+            }
+            if(row.optString("name").isNotBlank()) continue
             val run=row.getString("run");val counts=runs.optJSONObject(run)?:JSONObject().also { runs.put(run,it) }
             val key=subject(c,row.getString("path")).ifBlank { "anh-chup" }
             val number=counts.optInt(key)+1;counts.put(key,number).put("_updated",System.currentTimeMillis())
@@ -95,6 +101,7 @@ object CaptureHistory {
             val group=GamePhotoImport.GROUPS.firstOrNull { it.key!="chua-phan-loai"&&p.startsWith(GamePhotoImport.groupPath(it.key)+"/") }
             return "Ảnh gốc"+(group?.let { " · "+it.title }?:"")
         }
+        ChessCaptureFiles.detail(path)?.let { return "Quân cờ · Chi tiết · Trang ${it.page}" }
         val n=File(path).nameWithoutExtension
         val skill=Regex("skill-([1-4])").find(n)?.groupValues?.get(1)
         return when {

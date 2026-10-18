@@ -1,7 +1,6 @@
 package vn.ndang.aovcollector
 
 import android.content.Context
-import android.provider.DocumentsContract
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -80,8 +79,8 @@ object GamePhotoSession {
         temp.writeText(state.toString(2))
         require(temp.renameTo(file)) { "Không lưu được mốc ảnh Pictures" }
     }
-    private fun sha(value:String):String=MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
-        .take(7).joinToString("") { "%02x".format(it) }
+    private fun fingerprint(value:String):String=MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
+        .joinToString("") { "%02x".format(it) }
     private fun safe(value:String)=HeroNames.slug(value).take(42).ifBlank { "anh" }
 
     /** Called before taking any native images. Scans the explicitly granted folder, never unrelated storage. */
@@ -99,12 +98,41 @@ object GamePhotoSession {
     }
 
     /** Called AFTER Save Photo → Sure has been confirmed on the correct icon/topic. */
-    @Synchronized fun mark(context:Context,runId:String,group:String,item:String) {
+    @Synchronized fun mark(context:Context,runId:String,group:String,item:String,aliases:Set<String> =emptySet()) {
         require(group in validGroups)
         val state=read(context,runId)
-        state.getJSONArray("saves").put(JSONObject().put("group",group).put("item",item.take(80))
-            .put("time",System.currentTimeMillis()))
+        val saves=state.getJSONArray("saves")
+        val names=aliases+item
+        for(i in 0 until saves.length()) {
+            val saved=saves.getJSONObject(i)
+            if(saved.getString("group")!=group) continue
+            val previous=savedItems(saved)
+            if(previous.none { it in names }) continue
+            val merged=previous+names
+            if(merged!=previous) {
+                saved.put("aliases",JSONArray((merged-saved.getString("item")).sorted()))
+                store(context,runId,state)
+            }
+            return
+        }
+        saves.put(JSONObject().put("group",group).put("item",item)
+            .put("aliases",JSONArray((aliases-item).sorted())).put("time",System.currentTimeMillis()))
         store(context,runId,state)
+    }
+
+    /** A corrupt/unreadable journal must stop a retry rather than authorize a duplicate Save Photo. */
+    @Synchronized fun hasMark(context:Context,runId:String,group:String,item:String):Boolean {
+        if(!location(context,runId).exists()) return false
+        val saves=read(context,runId).getJSONArray("saves")
+        return (0 until saves.length()).any { index ->
+            val saved=saves.getJSONObject(index)
+            saved.getString("group")==group&&item in savedItems(saved)
+        }
+    }
+
+    private fun savedItems(saved:JSONObject):Set<String> {
+        val aliases=if(saved.has("aliases")) saved.getJSONArray("aliases") else JSONArray()
+        return (0 until aliases.length()).map { aliases.getString(it) }.toSet()+saved.getString("item")
     }
 
     private fun marks(state:JSONObject):List<Mark> {
@@ -127,6 +155,7 @@ object GamePhotoSession {
         // Pin successful source/event pairs. A late-indexed image must not reassign an earlier
         // imported picture to another hero or category on the next scan.
         val assignments=state.optJSONObject("assignments")?:JSONObject()
+        val targetClaims=state.optJSONObject("targetClaims")?:JSONObject()
         val recorded=marks(state)
         val pinned=assignments.keys().asSequence().mapNotNull { id ->
             val a=assignments.optJSONObject(id)?:return@mapNotNull null
@@ -150,7 +179,10 @@ object GamePhotoSession {
             if(cancelled()) break
             progress(index,diff.matching.size,pick.group+"/"+pick.item)
             val image=matches[pick.id]?:continue
-            val identity=sha(tree.toString()+"|"+image.key)
+            val nativeHead=ChessCaptureFiles.nativeHeadBase(pick.group,pick.item)
+            val sourceIdentity=fingerprint(tree.toString()+"|"+image.key)
+            // Preserve the old ledger/filename format for every other native image group.
+            val identity=if(nativeHead!=null) sourceIdentity else sourceIdentity.take(14)
             if(ledger.has(identity)) {
                 val location=ledger.optString(identity)
                 val existing=File(destRoot,location)
@@ -166,17 +198,36 @@ object GamePhotoSession {
             val ext=image.name.substringAfterLast('.', "jpg").lowercase()
                 .takeIf { GamePhotoImport.imageExtension(it) }?:"jpg"
             val file=File(destRoot,GamePhotoImport.groupPath(pick.group)+"/"+safe(runId)).apply { mkdirs() }
-            val target=File(file,safe(pick.item)+"-"+identity+"."+ext)
+            val directory=file.relativeTo(destRoot).invariantSeparatorsPath+"/"
+            val claims=targetClaims.keys().asSequence().filter { it.startsWith(directory) }
+                .associate { it.removePrefix(directory) to targetClaims.getString(it) }
+            val target=File(file,if(nativeHead!=null)
+                ChessCaptureFiles.nativeHeadTarget(nativeHead,ext,sourceIdentity,
+                    file.listFiles().orEmpty().map { it.name }.toSet(),claims)
+                else safe(pick.item)+"-"+identity+"."+ext)
+            val targetPath=target.relativeTo(destRoot).invariantSeparatorsPath
+            val owned=targetClaims.optString(targetPath)==sourceIdentity
             val partial=File(file,target.name+".part")
             var history:Long?=null
+            var committed=false
             try {
                 if(target.isFile&&target.length()>0) {
+                    require(nativeHead==null||owned) { "Tên ảnh đã thuộc về một ảnh gốc khác" }
                     ledger.put(identity,target.relativeTo(destRoot).invariantSeparatorsPath)
                     ledgerFile.writeText(ledger.toString(2))
                     already++
                     pin(assignments,pick,recorded)
                     state.put("assignments",assignments);store(context,runId,state)
                     continue
+                }
+                if(nativeHead!=null) {
+                    require(!target.exists()||owned) { "Tên ảnh đã thuộc về một ảnh gốc khác" }
+                    // Commit provenance BEFORE copying/renaming. If interrupted after rename, only
+                    // this same source may reuse the clean name; another source gets a stable suffix.
+                    targetClaims.put(targetPath,sourceIdentity)
+                    pin(assignments,pick,recorded)
+                    state.put("targetClaims",targetClaims).put("assignments",assignments)
+                    store(context,runId,state)
                 }
                 history=try { CaptureHistory.begin(context,runId,target) } catch(_:Exception) { null }
                 require(image.size>=0 && image.size<=MAX_IMAGE) { "Ảnh vượt giới hạn 32 MB" }
@@ -198,7 +249,11 @@ object GamePhotoSession {
                         }
                     }
                 }?:error("Không mở được ảnh mới")
+                require(nativeHead==null||!target.exists()||(owned&&target.isFile&&target.length()==0L)) {
+                    "Tên ảnh đã thuộc về một ảnh gốc khác"
+                }
                 require(partial.length() in 1..MAX_IMAGE && partial.renameTo(target)) { "Ảnh lưu bị lỗi" }
+                committed=true
                 history?.let { try { CaptureHistory.finish(context,it,true) } catch(_:Exception) {} }
                 ledger.put(identity,target.relativeTo(destRoot).invariantSeparatorsPath)
                 ledgerFile.writeText(ledger.toString(2))
@@ -211,7 +266,7 @@ object GamePhotoSession {
                 break
             } catch(e:Exception) {
                 partial.delete()
-                history?.let { try { CaptureHistory.finish(context,it,target.isFile&&target.length()>0) } catch(_:Exception) {} }
+                history?.let { try { CaptureHistory.finish(context,it,committed&&target.isFile&&target.length()>0) } catch(_:Exception) {} }
                 errors++
             }
         }

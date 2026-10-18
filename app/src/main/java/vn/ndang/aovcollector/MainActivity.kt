@@ -61,6 +61,9 @@ class MainActivity : Activity() {
         val photoPath=if(file.path.startsWith(photoRoot.path+File.separator))
             file.relativeTo(photoRoot).invariantSeparatorsPath else null
         if(!file.isDirectory) {
+            if(file.path.startsWith(captures.path+File.separator))
+                ChessCaptureFiles.exactDisplayName(file.relativeTo(captures).invariantSeparatorsPath)
+                    ?.let { return it }
             val n=file.nameWithoutExtension
             if(photoPath!=null)
                 return file.nameWithoutExtension.replace(Regex("-[a-f0-9]{14}$"),"").replace('-',' ')

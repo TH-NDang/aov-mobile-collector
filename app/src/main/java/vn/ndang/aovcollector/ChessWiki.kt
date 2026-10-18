@@ -56,7 +56,7 @@ object ChessWiki {
         val modalStill=if(fast) 1 else 2
     }
     fun detailType(t:Topic,o:Options)=when(t.key) {
-        "tat-ca-quan-co" -> if(o.heroDetails||"chieu-quan-co" in o.nativeGroups) "tuong" else null
+        "tat-ca-quan-co" -> if(o.heroDetails||"chieu-quan-co" in o.nativeGroups||"quan-co" in o.nativeGroups) "tuong" else null
         "phe","nghe" -> if(o.synergyDetails) t.key else null
         "tat-ca-trang-bi" -> if(o.equipmentDetails) "vat-pham" else null
         else -> null
@@ -121,12 +121,45 @@ object ChessWiki {
     }
     fun skillTiles(bitmap:Bitmap):List<Tile> {
         val spots=ArrayList<Tile>()
-        // Modal's illustrated skill icon sits around x=.40, y=.53 in provided reference.
-        // Scrolling may expose another skill; fingerprint guards against repeats.
+        // These are probes, not separate icons: y=.50 and .55 can fall inside the SAME
+        // illustrated skill. Their sampled hashes differ, so distinctBy(id) alone saved twice.
+        // Merge overlapping probe footprints before hashing the canonical centre. Separate
+        // visible icons are kept; do not impose a one-skill-per-hero assumption.
         for(y in listOf(.50,.55,.66)) {
-            if(score(bitmap,.405,y,.025)>28) spots.add(Tile(.405,y,fingerprint(bitmap,.405,y)))
+            val pixels=IntArray(49) { n ->
+                val x=.405+(n%7-3)*.025/3
+                val yy=y+(n/7-3)*.025/3
+                bitmap.getPixel((x*bitmap.width).toInt().coerceIn(0,bitmap.width-1),
+                    (yy*bitmap.height).toInt().coerceIn(0,bitmap.height-1))
+            }
+            if(score(bitmap,.405,y,.025)>28&&skillProbeTextured(pixels))
+                spots.add(Tile(.405,y,fingerprint(bitmap,.405,y)))
         }
-        return spots.distinctBy { it.id }.take(2)
+        return mergeSkillProbes(spots).map { tile ->
+            tile.copy(id=fingerprint(bitmap,tile.x,tile.y))
+        }.distinctBy { it.id }
+    }
+
+    /** Saturated blue backing is not an illustration. Require real luminance edges too. */
+    fun skillProbeTextured(pixels:IntArray):Boolean {
+        if(pixels.size<2) return false
+        val light=pixels.map { ((it shr 16 and 255)+(it shr 8 and 255)+(it and 255))/3 }
+        val span=light.maxOrNull()!!-light.minOrNull()!!
+        val edges=light.zipWithNext { a,b -> abs(a-b) }.average()
+        return span>=24&&edges>=5
+    }
+
+    /** Probe footprints span .063 screen heights; .075 allows a small sampling margin. */
+    fun mergeSkillProbes(probes:List<Tile>):List<Tile> {
+        val groups=ArrayList<MutableList<Tile>>()
+        for(probe in probes.sortedWith(compareBy({ it.y },{ it.x }))) {
+            val group=groups.firstOrNull {
+                abs(it.first().x-probe.x)<.025 && abs(it.first().y-probe.y)<=.075
+            }
+            if(group==null) groups.add(arrayListOf(probe)) else group.add(probe)
+        }
+        return groups.map { group -> group.first().copy(x=group.map { it.x }.average(),
+            y=group.map { it.y }.average(),aliases=group.flatMap { it.aliases+it.id }.toSet()) }
     }
 
     /** Nested path tokens are validated before use by the storage adapter. */
@@ -156,7 +189,8 @@ object ChessWiki {
     }
 
 
-    data class Tile(val x:Double,val y:Double,val id:String,val label:String?=null)
+    data class Tile(val x:Double,val y:Double,val id:String,val label:String?=null,
+                    val aliases:Set<String> = emptySet())
 
     // The five card centres in the chess encyclopedia (not the left edges of each card).
     // A portrait is about 17% of the screen ABOVE its hero name. Reading the name first
@@ -402,6 +436,7 @@ object ChessWiki {
 class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Options,
                       private val finish:(Outcome)->Unit) {
     sealed class Outcome { data class Done(val pages:Int,val items:Int):Outcome();data class Failed(val reason:String):Outcome() }
+    enum class NativeResult { SAVED, ABSENT, FAILED }
     interface Look {
         val words:List<GameScreens.Word>
         val signature:IntArray
@@ -432,12 +467,15 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         }
         /** Long press, identify Save Photo → Sure, and record its current group. */
         fun nativeSave(group:String,item:String,x:Double,y:Double,
-                       preserveDetail:Boolean=false,then:(Boolean)->Unit) { then(false) }
+                       preserveDetail:Boolean=false,aliases:Set<String> = emptySet(),then:(NativeResult)->Unit) { then(NativeResult.ABSENT) }
         /** Re-read only the hero heading strip when full-screen OCR is ambiguous. */
         fun readHeroTitle(then:(String?)->Unit) { then(null) }
         fun later(ms:Long,then:()->Unit)
         fun seen(id:String):Boolean
         fun finished(id:String)
+        /** Durable signature of this hero's numbered screenshot, independent of exact pixel hash. */
+        fun detailSignature(id:String):IntArray? = null
+        fun finishDetail(id:String,signature:IntArray):Boolean { finished(id);return true }
         fun note(message:String)
         fun say(message:String)
     }
@@ -458,6 +496,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
     private val heroState=ListNavigator.State()
     private val heroSlots=screen.completedHeroSlots.toMutableMap()
     private val heroRetries=HashMap<Int,Int>()
+    private val verifiedPortraits=HashMap<Int,ChessWiki.Tile>()
     private val detailSignatures=HashMap<String,MutableList<IntArray>>()
     private var heroTopic=-1
     private var heroIndex=0
@@ -652,7 +691,8 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                 val nearby=shot.look.tiles(t).filter { abs(it.x-x)<.035&&abs(it.y-y)<.065 }
                 // OCR only supplies a name; measured grid position owns the tap and ordinal.
                 // Ambiguous labels never become a completed hero without popup verification.
-                val label=nearby.singleOrNull()?.label?.takeIf { ChessWiki.isHeroName(it) }
+                val label=verifiedPortraits[index]?.label ?:
+                    nearby.singleOrNull()?.label?.takeIf { ChessWiki.isHeroName(it) }
                 val id=label?.let { "hero-"+ChessWiki.safeName(it) }?:"slot-$index"
                 target=ChessWiki.Tile(x,y,id,label)
                 signature=shot.look.signature.copyOf()
@@ -727,6 +767,7 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                             tiles:List<ChessWiki.Tile>,from:Int) {
         val t=topics[at]
         val kind=ChessWiki.detailType(t,options)
+        val wantsHeroDetails=options.heroDetails||"chieu-quan-co" in options.nativeGroups
         val originalGroup=ChessWiki.nativeGroup(t,options)
         val item=tiles[from]
         val identity="item:"+t.key+":"+item.id
@@ -734,7 +775,12 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         if(heroTopic!=at&&!tried.add(observation)) return collect(at,page,signature,tiles,from+1)
 
         fun detail() {
-            if(kind==null||(screen.seen(identity)&&
+            if(kind=="tuong"&&!wantsHeroDetails&&(verifiedPortraits[heroIndex]!=null||
+                screen.seen("native:quan-co:"+item.id)))
+                return collect(at,page,signature,tiles,from+1)
+            val needsHeadName=originalGroup=="quan-co"&&verifiedPortraits[heroIndex]==null&&
+                !screen.seen("native:quan-co:"+item.id)
+            if(kind==null||(!needsHeadName&&screen.seen(identity)&&
                 (heroTopic!=at||heroSlots[heroIndex]==item.id)))
                 return collect(at,page,signature,tiles,from+1)
             screen.say(if(kind=="tuong") ChessWiki.heroProgress(heroes,item.label) else
@@ -765,9 +811,35 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                         // The popup heading is authoritative. Never persist a noisy card label
                         // as a completed hero, or count the same popup again after scrolling.
                         val actual=if(kind=="tuong") item.copy(id="hero-"+slug,label=title) else item
-                        if(heroTopic==at&&heroSlots[heroIndex]!=null&&heroSlots[heroIndex]!=actual.id) {
+                        val verifiedHead=verifiedPortraits[heroIndex]
+                        if(heroTopic==at&&((heroSlots[heroIndex]!=null&&heroSlots[heroIndex]!=actual.id)||
+                            (verifiedHead!=null&&verifiedHead.id!=actual.id))) {
                             l.discard()
                             return retryHero(at,title?:actual.id)
+                        }
+                        if(kind=="tuong"&&originalGroup=="quan-co"&&
+                            !screen.seen("native:quan-co:"+actual.id)&&verifiedPortraits[heroIndex]==null) {
+                            // Export only under the verified drawer title. Close first, then let
+                            // ListNavigator remeasure the card: closing can move the viewport.
+                            verifiedPortraits[heroIndex]=actual
+                            l.discard()
+                            fun returnToCard(tries:Int) {
+                                if(tries>=3) return fail("Không đóng được bảng tên quân cờ; đóng dấu X rồi Tiếp tục.")
+                                tap(.902,.081,timing.close) {
+                                    look(false) { check ->
+                                        val open=check.modal;check.discard()
+                                        if(open) returnToCard(tries+1) else collectHero(at,heroIndex)
+                                    }
+                                }
+                            }
+                            return returnToCard(0)
+                        }
+                        if(kind=="tuong"&&!wantsHeroDetails) {
+                            // This portrait was already saved in an earlier interrupted run.
+                            verifiedPortraits[heroIndex]=actual
+                            l.discard()
+                            tap(.902,.081,timing.close) { collectHero(at,heroIndex) }
+                            return
                         }
                         if(kind=="tuong"&&screen.seen("item:"+t.key+":"+actual.id)) {
                             l.discard()
@@ -825,14 +897,22 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
 
         val nativeKey=originalGroup?.let { "native:"+it+":"+item.id }
         if(originalGroup==null || nativeKey==null || screen.seen(nativeKey)) return detail()
+        if(originalGroup=="quan-co"&&verifiedPortraits[heroIndex]==null) return detail()
         screen.say(if(t.key=="tat-ca-quan-co") "Quân cờ: lưu ảnh gốc "+
             (item.label?:"đang nhận diện")+" · tổng chưa xác định" else
             t.label+": lưu ảnh gốc "+(from+1)+"/"+tiles.size)
-        screen.nativeSave(originalGroup,item.label?:item.id,item.x,item.y,false) { saved ->
-            if(saved) {
-                screen.finished(nativeKey)
-                screen.note("Ảnh gốc "+originalGroup+": "+(item.label?:item.id))
-            } else screen.note("Không hiện Save Photo tại "+item.x+","+item.y+"; bỏ qua ảnh gốc này")
+        val nativeName=if(originalGroup=="quan-co") ChessWiki.safeName(item.label?:item.id)+"-head"
+            else item.label?:item.id
+        screen.nativeSave(originalGroup,nativeName,item.x,item.y,false) { saved ->
+            if(!screen.alive||completed) return@nativeSave
+            if(saved==NativeResult.ABSENT&&originalGroup!="quan-co") {
+                screen.note("Không có Save Photo tại vị trí dò "+originalGroup+"; tiếp tục mục kế tiếp.")
+                return@nativeSave detail()
+            }
+            if(saved!=NativeResult.SAVED) return@nativeSave fail("Chưa lưu được ảnh gốc "+nativeName+
+                "; kiểm tra Save Photo / Pictures rồi bấm Tiếp tục. Chưa đánh dấu hoàn tất.")
+            screen.finished(nativeKey)
+            screen.note("Ảnh gốc "+originalGroup+": "+nativeName)
             detail()
         }
     }
@@ -859,7 +939,14 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
         }
         history.add(current)
         val skillImages=if("chieu-quan-co" in options.nativeGroups) l.skillIcons() else emptyList()
-        val captureKey="detail-page:"+t.key+":"+tile.id+":"+number+":"+current.contentHashCode()
+        val captureKey="detail-page-v2:"+t.key+":"+tile.id+":"+number
+        val legacyKey="detail-page:"+t.key+":"+tile.id+":"+number+":"+current.contentHashCode()
+        val prior=screen.detailSignature(captureKey)
+        if(prior!=null&&ChessWiki.changed(prior,current)) {
+            l.discard()
+            return fail("Nội dung "+folder+"-detail-"+number+
+                " khác ảnh đã lưu. Đã dừng để giữ ảnh cũ; kiểm tra rồi bắt đầu lượt mới nếu nội dung đã thay đổi.")
+        }
         val afterSave={
             fun advance() {
                 swipe(.75,.82,.75,.42) {
@@ -875,17 +962,37 @@ class ChessWikiReader(private val screen:Screen,private val options:ChessWiki.Op
                 if(at>=images.size) return next()
                 val candidate=images[at]
                 val key="native:chieu-quan-co:"+folder+":"+candidate.id
-                if(screen.seen(key)||!tried.add(key)) return nativeSkill(at+1,images,next)
+                val priorKeys=(candidate.aliases+candidate.id).map { "native:chieu-quan-co:"+folder+":"+it }
+                if(priorKeys.any { screen.seen(it)||it in tried }) return nativeSkill(at+1,images,next)
+                tried.addAll(priorKeys)
+                screen.say("Quân cờ: lưu ảnh chiêu "+folder+" · ảnh chi tiết "+number)
                 screen.nativeSave("chieu-quan-co",folder+"-skill-"+candidate.id,
-                    candidate.x,candidate.y,true) { ok ->
-                    if(ok) screen.finished(key)
+                    candidate.x,candidate.y,true,candidate.aliases.map { folder+"-skill-"+it }.toSet()) { ok ->
+                    if(!screen.alive||completed) return@nativeSave
+                    if(ok==NativeResult.ABSENT) {
+                        screen.note("Không có Save Photo tại vị trí dò chiêu "+candidate.x+","+candidate.y+
+                            "; giữ ảnh chi tiết và kiểm tra vị trí kế tiếp.")
+                        return@nativeSave nativeSkill(at+1,images,next)
+                    }
+                    if(ok!=NativeResult.SAVED) return@nativeSave fail("Chưa lưu được ảnh chiêu của "+folder+
+                        "; kiểm tra Save Photo / Pictures rồi bấm Tiếp tục. Chưa đánh dấu hoàn tất.")
+                    (priorKeys+key).toSet().forEach { screen.finished(it) }
                     nativeSkill(at+1,images,next)
                 }
             }
             nativeSkill(0,skillImages) { advance() }
         }
-        if(screen.seen(captureKey)) { l.discard();afterSave() }
-        else save(l,shotName) { screen.finished(captureKey);afterSave() }
+        if(screen.seen(captureKey)||screen.seen(legacyKey)) { l.discard();afterSave() }
+        else {
+            screen.say(if(kind=="tuong") "Quân cờ: đang lưu "+folder+"-detail-"+number
+                else t.label+": đang lưu ảnh chi tiết "+number)
+            save(l,shotName) {
+                if(!screen.finishDetail(captureKey,current))
+                    fail("Đã lưu ảnh nhưng chưa ghi được tiến độ "+folder+"-detail-"+number+
+                        "; kiểm tra dung lượng rồi bấm Tiếp tục.")
+                else afterSave()
+            }
+        }
     }
     private fun close(at:Int,page:Int,signature:IntArray,tiles:List<ChessWiki.Tile>,from:Int,
                       tile:ChessWiki.Tile,tries:Int=0) {

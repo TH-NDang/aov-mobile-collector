@@ -100,18 +100,78 @@ object RankScreens {
         words.any { compact(it)&&it.y in .25.. .40&&it.x>.35&&(it.plain.contains("satthuong")||it.plain=="vang"||it.plain.contains("phaichiu")) } -> Table.FIGURES
         else -> null
     }
-    /** The drop-down's button, "Đấu hạng (Tất cả)" or another kind of match, above the table. */
-    fun modeButton(words:List<GameScreens.Word>)=words.filter {
-        compact(it)&&it.plain.startsWith("dau")&&mode(it)!=null&&it.y in .12.. .27&&it.x in .35.. .8
+    /** A title and table can request control recovery even when both labels were missed. */
+    fun needsModeOcr(words:List<GameScreens.Word>)=page(words,false)==Page.RANKING||
+        words.any { it.y<.16&&it.plain.contains("bangphanbactuong") }&&table(words)!=null&&
+            !heroesLanding(words)&&fullRankingLink(words)==null
+
+    /** Full-resolution OCR crop: only the match control and its menu, not hero/account text. */
+    const val MODE_LEFT=.45; const val MODE_TOP=.14; const val MODE_RIGHT=.75; const val MODE_BOTTOM=.52
+    /**
+     * Reconstruct adjacent OCR elements on one row. Lines can include table numbers to the left of
+     * the menu; starting at "Đấu" keeps a target's centre inside its actual label. Never join rows.
+     */
+    private fun modeLabels(words:List<GameScreens.Word>):List<GameScreens.Word> {
+        val local=words.filter { compact(it)&&it.x in .35.. .80&&it.y in .12.. .55 }
+        val result=ArrayList<GameScreens.Word>()
+        for(first in local.filter { it.plain.startsWith("dau") }) {
+            var joined=first
+            result+=joined
+            repeat(8) {
+                val next=local.filter { it.left>=joined.right-.002&&it.left-joined.right<=.024&&
+                    abs(it.y-joined.y)<=.014&&it.bottom>=joined.top&&it.top<=joined.bottom }
+                    .minByOrNull { it.left }
+                if(next!=null) {
+                    joined=GameScreens.Word(joined.text+" "+next.text,joined.left,minOf(joined.top,next.top),next.right,maxOf(joined.bottom,next.bottom))
+                    if(compact(joined)) result+=joined
+                }
+            }
+        }
+        // Keep a legacy OCR line with a leading table number only if it has one unambiguous mode.
+        result+=local.filter { it.plain.contains("dau")&&mode(it)!=null }
+        return result.distinctBy { listOf(it.plain,it.left,it.top,it.right,it.bottom) }
+    }
+    /** The selected mode's button above the table, not one of the options below it. */
+    fun modeButton(words:List<GameScreens.Word>)=modeLabels(words).filter {
+        it.plain.startsWith("dau")&&mode(it)!=null&&it.y in .12.. .27
     }.minByOrNull { (it.right-it.left)*(it.bottom-it.top) }
     fun mode(word:GameScreens.Word?):Mode? = word?.plain?.let { p -> Mode.values().filter { p.contains(it.key) }.singleOrNull() }
-    /**
-     * An open drop-down's line for [mode], below its button. ML Kit may join a number of the table behind it to the
-     * line, as "124.2 Đấu hang (Tinh Anh trở lên)"; its middle stays inside the drop-down.
-     */
-    fun option(words:List<GameScreens.Word>,button:GameScreens.Word,mode:Mode)=words.filter {
-        compact(it)&&abs(it.x-button.x)<.20&&it.y>button.bottom+.02&&it.y<.7&&it.plain.contains("dau")&&RankScreens.mode(it)==mode
+    /** Fresh visible menu rows; a parent covering several options is not a target. */
+    fun option(words:List<GameScreens.Word>,button:GameScreens.Word,mode:Mode)=modeLabels(words).filter {
+        abs(it.x-button.x)<.20&&it.y>maxOf(button.bottom+.02,.27)&&it.y<.52&&
+            it.x in .46.. .74&&RankScreens.mode(it)==mode
     }.minByOrNull { (it.right-it.left)*(it.bottom-it.top) }
+    /** Even one recognized row means an overlay may cover table data. Do not save it. */
+    fun menuModes(words:List<GameScreens.Word>,button:GameScreens.Word)=Mode.values().filter { option(words,button,it)!=null }
+    /** Canonical labels and geometry only: never include arbitrary OCR text, account names or UID. */
+    fun selectionSummary(words:List<GameScreens.Word>):String {
+        val button=modeButton(words)
+        val position=button?.let { "@${(it.x*100).toInt()},${(it.y*100).toInt()}%" }?:""
+        return "bảng=${table(words)?:"?"}, chế độ=${mode(button)?:"?"}$position, menu="+
+            (button?.let { menuModes(words,it).joinToString("/") }?.ifEmpty { "đóng/không đọc được" }?:"?")
+    }
+
+    /**
+     * Independent veto for a menu whose letters OCR missed. The popup is a dark blue rectangle
+     * across all three option rows; compare row medians with the table just to its right, ignoring
+     * white letters/numbers. This never supplies tap coordinates or proves a mode is selected.
+     */
+    fun menuOverlay(width:Int,height:Int,readRow:(Int,IntArray)->Unit):Boolean {
+        if(width<=height||height<100) return false
+        val row=IntArray(width)
+        fun median(xs:List<Int>,shift:Int)=xs.map { row[it] shr shift and 255 }.sorted()[xs.size/2]
+        val inside=(0..14).map { ((.52+.15*it/14)*width).toInt().coerceIn(0,width-1) }
+        val outside=(0..10).map { ((.735+.03*it/10)*width).toInt().coerceIn(0,width-1) }
+        var darkRows=0
+        repeat(9) { i ->
+            readRow(((.35+.135*i/8)*height).toInt().coerceIn(0,height-1),row)
+            val r=median(inside,16);val g=median(inside,8);val b=median(inside,0)
+            val rr=median(outside,16);val gg=median(outside,8);val bb=median(outside,0)
+            val contrast=(299*(rr-r)+587*(gg-g)+114*(bb-b))/1000
+            if(b-r>35&&b-g>35&&bb-rr>60&&bb-b>=24&&contrast>=14) darkRows++
+        }
+        return darkRows>=6
+    }
 
     /** Grey levels of the table's area on a 48x24 grid, to tell whether a scroll moved it. */
     fun signature(width:Int,height:Int,readRow:(Int,IntArray)->Unit):IntArray {
@@ -141,6 +201,8 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
     /** One screenshot: [words] only when asked for; call [done] once, with a name to keep it in the run or null. */
     interface Look {
         val words:List<GameScreens.Word>; val lobby:Boolean; val signature:IntArray
+        /** A pixel-based menu veto even when all option text was missed. */
+        val menuOverlay:Boolean get()=false
         fun done(keep:String?)
         /** Consumes this frame; complete only after PNG storage has succeeded or failed. */
         fun keep(name:String,then:(Boolean)->Unit)
@@ -161,6 +223,7 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
         /** Web pages may take ten seconds or more to load over a slow connection. */
         const val MAX_STEPS=10; const val MAX_WAITS=8; const val MAX_TRIES=4
         const val MAX_LINK_TAPS=2
+        const val MAX_MENU_READS=3
         /** More pages than the table has: five heroes a page, three new ones per scroll. */
         const val MAX_PAGES=80; const val MAX_FLINGS=40
         /** A scroll moves less than the visible rows, so consecutive photos overlap by a row or two. */
@@ -251,6 +314,8 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
         // Keep one bounded preparation attempt, including frames that cannot identify the page.
         if(tries>MAX_TRIES) { l.done(null);return fail("Không xác nhận được bảng ${combo.label}. Mở đúng bảng rồi bấm Tiếp tục.") }
         val table=RankScreens.table(words); val button=RankScreens.modeButton(words); val mode=RankScreens.mode(button)
+        val menu=button?.let { RankScreens.menuModes(words,it) }.orEmpty()
+        screen.note("Thống kê cần ${combo.label}: ${RankScreens.selectionSummary(words)}, lớp menu=${l.menuOverlay}")
         fun waitForTable() {
             l.done(null)
             screen.note("Chờ xác nhận ${combo.label}: lần ${tries+1}/${MAX_TRIES+1}, màn hình=${RankScreens.page(words,l.lobby)}, bảng=$table, chế độ=$mode")
@@ -258,6 +323,9 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
             screen.later(1500) { prepare(combo,tries+1) }
         }
         when {
+            // A resumed run may already have the menu open. Select directly; toggling the
+            // button here closes it and creates an open/close cycle. Never save under a menu.
+            button!=null&&(l.menuOverlay||menu.isNotEmpty()) -> pickFrame(combo,button,tries,0,l)
             // Headings or the drop-down not read yet: the page may still be loading.
             RankScreens.page(words,l.lobby)!=RankScreens.Page.RANKING||table==null||button==null||mode==null -> waitForTable()
             table!=combo.table -> {
@@ -266,18 +334,37 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
                     l.done(null);screen.note("Đổi bảng xếp hạng");tap(w.x,w.y,2500) { prepare(combo,tries+1) }
                 }
             }
-            mode!=combo.mode -> { l.done(null); tap(button.x,button.y,1200) { pick(combo,button,tries) } }
+            mode!=combo.mode -> {
+                l.done(null);screen.note("Mở danh sách chế độ: $mode → ${combo.mode}")
+                screen.say("Chọn ${combo.mode.label}")
+                tap(button.x,button.y,1200) { pick(combo,button,tries,0) }
+            }
             // Save this verified, current frame. No second OCR observation, leaked bitmap, or
             // intervening navigation between verifying the requested table and its first photo.
             else -> { screen.say(combo.label); screen.note("Chụp ${combo.label}"); scanFrame(combo,1,null,0,l) }
         }
     }
-    /** The drop-down is open: tap [combo]'s kind of match, or close it again when it is not there. */
-    private fun pick(combo:RankScreens.Combo,button:GameScreens.Word,tries:Int) = look(true) { l ->
-        val option=RankScreens.option(l.words,button,combo.mode)
+    /** Wait for an observed menu, never toggle the button just because one OCR read missed it. */
+    private fun pick(combo:RankScreens.Combo,button:GameScreens.Word,tries:Int,reads:Int):Unit =
+        look(true) { pickFrame(combo,button,tries,reads,it) }
+    private fun pickFrame(combo:RankScreens.Combo,button:GameScreens.Word,tries:Int,reads:Int,l:Look) {
+        if(!screen.alive||ended) { l.done(null);return }
+        val current=RankScreens.modeButton(l.words)?:button
+        val visible=RankScreens.menuModes(l.words,current)
+        val option=RankScreens.option(l.words,current,combo.mode)
         l.done(null)
-        if(option!=null) tap(option.x,option.y,3000) { prepare(combo,tries+1) } else tap(button.x,button.y,1200) { prepare(combo,tries+1) }
+        screen.note("Chọn ${combo.mode.label}: mục thấy=${visible.joinToString("/").ifEmpty { "không có" }}, lần ${reads+1}/$MAX_MENU_READS")
+        // Two distinct rows corroborate the popup. A single partial/stray line is not enough
+        // to tap; the focused OCR gets another chance without changing the menu's state.
+        if(option!=null&&visible.size>=2) {
+            screen.note("Bấm ${combo.mode.label} tại ${(option.x*100).toInt()},${(option.y*100).toInt()}%; sẽ xác nhận lại")
+            tap(option.x,option.y,1800) { prepare(combo,tries+1) }
+        } else if(reads+1<MAX_MENU_READS) {
+            screen.say("Đang đọc danh sách chế độ · ${reads+1}/$MAX_MENU_READS")
+            screen.later(900) { pick(combo,current,tries,reads+1) }
+        } else fail("Không đọc được mục ${combo.mode.label} trong danh sách chế độ. Mở danh sách, chọn chế độ này rồi bấm Tiếp tục.")
     }
+
     /**
      * Photographs the table from where it is, scrolling until scrolls change nothing: the end of the list. On the
      * user's phone a scroll sometimes showed nothing new while the page loaded more rows, which ended two lists
@@ -287,6 +374,10 @@ class RankingReader(private val screen:Screen,private val skip:Set<String> =empt
     private fun scan(combo:RankScreens.Combo,page:Int,last:IntArray?,still:Int=0):Unit = look(false) { scanFrame(combo,page,last,still,it) }
     private fun scanFrame(combo:RankScreens.Combo,page:Int,last:IntArray?,still:Int,l:Look) {
         if(!screen.alive||ended) { l.done(null);return }
+        if(l.menuOverlay) {
+            l.done(null)
+            return fail("Danh sách chế độ đang che bảng ${combo.label}. Đóng danh sách rồi bấm Tiếp tục.")
+        }
         if(last!=null&&RankScreens.same(l.signature,last)) {
             l.done(null)
             if(still<STILL_TRIES) {

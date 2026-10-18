@@ -9,6 +9,29 @@ class ChessWikiTest {
         return FloatArray(750*15) { random.nextFloat()*255 }
     }
 
+    @Test fun overlappingSkillProbesAreOneTargetButSeparatedIconsRemainDistinct() {
+        val targets=ChessWiki.mergeSkillProbes(listOf(
+            ChessWiki.Tile(.405,.55,"lower-patch"),ChessWiki.Tile(.405,.50,"upper-patch"),
+            ChessWiki.Tile(.405,.66,"another-icon")))
+        assertEquals(2,targets.size)
+        assertEquals(.525,targets[0].y,.0001)
+        assertEquals(setOf("upper-patch","lower-patch"),targets[0].aliases)
+        assertEquals(.66,targets[1].y,.0001)
+        assertEquals(2,ChessWiki.mergeSkillProbes(listOf(
+            ChessWiki.Tile(.405,.50,"same-y-left"),ChessWiki.Tile(.55,.50,"same-y-right"))).size)
+        assertTrue(ChessWiki.mergeSkillProbes(emptyList()).isEmpty())
+    }
+
+    @Test fun saturatedBackgroundIsNotMistakenForAnIllustratedSkill() {
+        assertFalse(ChessWiki.skillProbeTextured(IntArray(49) { 0xff343576.toInt() }))
+        assertFalse(ChessWiki.skillProbeTextured(IntArray(49) {
+            val shade=88+it%3;0xff000000.toInt() or (shade shl 16) or (shade shl 8) or shade
+        }))
+        assertTrue(ChessWiki.skillProbeTextured(IntArray(49) {
+            val shade=20+(it*37)%215;0xff000000.toInt() or (shade shl 16) or (shade shl 8) or shade
+        }))
+    }
+
     @Test fun selectionUsesOnlyChosenTabs() {
         val opts=ChessWiki.Options(setOf("truyen-thuyet","tat-ca-quan-co"),openGame=false)
         assertEquals(listOf("tat-ca-quan-co","truyen-thuyet"),opts.topics().map { it.key })
@@ -73,7 +96,9 @@ class ChessWikiTest {
         assertEquals(listOf("chess__thong-tin__thang-thua-vong__trang__001","chess__thong-tin__thang-thua-vong__trang__002"),kept)
         assertTrue("topic:thang-thua-vong" in done)
     }
-    @Test fun originalEquipmentImagesAreTaggedAutomaticallyFromCurrentTab() {
+    @Test fun originalEquipmentImagesAreTaggedAutomaticallyFromCurrentTab() = equipmentNative(ChessWikiReader.NativeResult.SAVED)
+    @Test fun verifiedAbsentEquipmentProbeKeepsCollectingWithoutMarkingASavedPhoto() = equipmentNative(ChessWikiReader.NativeResult.ABSENT)
+    private fun equipmentNative(nativeResult:ChessWikiReader.NativeResult) {
         val observed=listOf(GameScreens.Word("Bách khoa",.15,.03,.3,.09),
             GameScreens.Word("Cờ Liên Quân",.35,.03,.6,.09))
         val stored=ArrayList<String>()
@@ -96,8 +121,8 @@ class ChessWikiTest {
             override fun tap(x:Double,y:Double,then:(Boolean)->Unit)=then(true)
             override fun swipe(x:Double,y:Double,toX:Double,toY:Double,then:(Boolean)->Unit)=then(true)
             override fun nativeSave(group:String,item:String,x:Double,y:Double,
-                                            preserveDetail:Boolean,then:(Boolean)->Unit) {
-                native.add(group);then(true)
+                                            preserveDetail:Boolean,aliases:Set<String>,then:(ChessWikiReader.NativeResult)->Unit) {
+                native.add(group);then(nativeResult)
             }
             override fun later(ms:Long,then:()->Unit)=then()
             override fun seen(id:String)=id in finished
@@ -109,7 +134,8 @@ class ChessWikiTest {
             openGame=false,nativeGroups=setOf("trang-bi")), { outcome=it }).start()
         assertTrue(outcome is ChessWikiReader.Outcome.Done)
         assertEquals(listOf("trang-bi"),native)
-        assertTrue(finished.any { it.startsWith("native:trang-bi:") })
+        assertEquals(nativeResult==ChessWikiReader.NativeResult.SAVED,
+            finished.any { it.startsWith("native:trang-bi:") })
         assertEquals(1,stored.size)
     }
 

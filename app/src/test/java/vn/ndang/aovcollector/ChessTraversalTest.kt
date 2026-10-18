@@ -58,6 +58,14 @@ class ChessTraversalTest {
         val drawerPages:List<Int> = listOf(0),
         val ignoredDrawerDrags:Set<Int> = emptySet(),
         val closeOnDrawerDrag:Int? = null,
+        val skillIconsByPage:Map<Int,List<ChessWiki.Tile>> = emptyMap(),
+        val failedNativeItem:String? = null,
+        val absentNativeItem:String? = null,
+        val interruptAfterNative:Boolean = false,
+        val failedDetailPage:Int? = null,
+        val failCheckpoint:Boolean = false,
+        val savedDetailSignatures:Map<String,IntArray> = emptyMap(),
+        val signatureNoise:Int = 0,
         startPartway:Boolean = false,
         initiallyOpen:String? = null
     ):ChessWikiReader.Screen {
@@ -85,13 +93,15 @@ class ChessTraversalTest {
         val drags=ArrayList<Drag>()
         val modalDrags=ArrayList<DrawerDrag>()
         val nativePhotos=ArrayList<Pair<Int,String>>()
+        val nativeSkills=ArrayList<String>()
+        val detailSignatures=savedDetailSignatures.mapValues { it.value.copyOf() }.toMutableMap()
         val notes=ArrayList<String>()
         val progress=ArrayList<String>()
         val events=ArrayList<String>()
         var closeTaps=0
         var croppedTitleReads=0
         var outcome:ChessWikiReader.Outcome?=null
-        override val alive=true
+        override var alive=true
         override val completedHeroes get()=ledger.count { it.startsWith("item:$HERO_TOPIC:hero-") }
         override val completedHeroSlots get()=ChessWiki.heroSlots(ledger)
 
@@ -122,19 +132,20 @@ class ChessTraversalTest {
             then(object:ChessWikiReader.Look {
                 var consumed=false
                 override val words=if(words) content else emptyList()
-                override val signature=IntArray(96) { if(isModal) 73+detailPage!!*40 else 30+(at/7)%150 }
+                override val signature=IntArray(96) { if(isModal) 73+detailPage!!*40+signatureNoise else 30+(at/7)%150 }
                 override val modal=isModal
                 override val heroProfile=if(isModal) floatArrayOf() else profile(at)
                 override val height=HEIGHT
                 override fun hasHeroCard(x:Double,y:Double)=!isModal&&cardAt(x,y,at)!=null
                 override fun tiles(topic:ChessWiki.Topic)=tiles
+                override fun skillIcons()=skillIconsByPage[detailPage].orEmpty()
                 private fun release() {
                     assertFalse("Every captured frame must be kept or discarded exactly once",consumed)
                     consumed=true;released++
                 }
                 override fun keep(name:String,then:(Boolean)->Unit) {
                     release();saved.add(Capture(name,isModal,at,hero,detailPage));events.add("save:$name")
-                    post { then(true) }
+                    post { then(!isModal||detailPage!=failedDetailPage) }
                 }
                 override fun discard()=release()
             })
@@ -183,33 +194,53 @@ class ChessTraversalTest {
             }
             then(true)
         }
-        override fun nativeSave(group:String,item:String,x:Double,y:Double,preserveDetail:Boolean,
-                                then:(Boolean)->Unit) = post {
+        override fun nativeSave(group:String,item:String,x:Double,y:Double,preserveDetail:Boolean,aliases:Set<String>,
+                                then:(ChessWikiReader.NativeResult)->Unit) = post {
+            if(group=="chieu-quan-co") {
+                assertTrue("Skills belong to the open detail",preserveDetail)
+                assertNotNull(opened)
+                nativeSkills.add(item)
+                if(interruptAfterNative) alive=false
+                then(when(item) {
+                    failedNativeItem -> ChessWikiReader.NativeResult.FAILED
+                    absentNativeItem -> ChessWikiReader.NativeResult.ABSENT
+                    else -> ChessWikiReader.NativeResult.SAVED
+                })
+                return@post
+            }
             assertEquals("quan-co",group)
             assertFalse("A portrait-only save must remain on the hero list",preserveDetail)
             assertNull(opened)
             val index=cardAt(x,y,offset)
             assertNotNull("Native photo must target a currently visible card",index)
             nativePhotos.add(index!! to item)
-            then(true)
+            then(ChessWikiReader.NativeResult.SAVED)
         }
         override fun readHeroTitle(then:(String?)->Unit) = post { croppedTitleReads++;then(opened) }
         override fun later(ms:Long,then:()->Unit)=post(then)
         override fun seen(id:String)=id in ledger
         override fun finished(id:String) { ledger.add(id);finishedIds.add(id) }
+        override fun detailSignature(id:String)=detailSignatures[id]
+        override fun finishDetail(id:String,signature:IntArray):Boolean {
+            if(failCheckpoint) return false
+            detailSignatures[id]=signature.copyOf();finished(id);return true
+        }
         override fun note(message:String) { notes.add(message) }
         override fun say(message:String) { progress.add(message) }
 
-        fun run(details:Boolean=true,native:Boolean=false):ChessWikiReader.Outcome {
+        fun run(details:Boolean=true,native:Boolean=false,skills:Boolean=false,
+                expectInterrupted:Boolean=false):ChessWikiReader.Outcome? {
             ChessWikiReader(this,ChessWiki.Options(setOf(HERO_TOPIC),openGame=false,
-                heroDetails=details,nativeGroups=if(native) setOf("quan-co") else emptySet())) { outcome=it }.start()
+                heroDetails=details,nativeGroups=(if(native) setOf("quan-co") else emptySet())+
+                    (if(skills) setOf("chieu-quan-co") else emptySet()))) { outcome=it }.start()
             while(queue.isNotEmpty()) {
                 assertTrue("Reader must terminate rather than loop forever",++steps<10000)
                 queue.removeFirst().invoke()
             }
-            assertNotNull("Reader must report a terminal result",outcome)
+            if(expectInterrupted) { assertFalse(alive);assertNull(outcome) }
+            else assertNotNull("Reader must report a terminal result",outcome)
             assertEquals("No owned screenshots may leak",looks,released)
-            return outcome!!
+            return outcome
         }
     }
 
@@ -363,16 +394,37 @@ class ChessTraversalTest {
         assertFalse(run.finishedIds.any { it.startsWith("item:")||it.startsWith("hero-slot") })
     }
 
-    @Test fun nativePortraitOnlySavesEveryCardWithoutOpeningAnyDetails() {
+    @Test fun nativePortraitOnlyVerifiesEveryNameWithoutSavingDetailScreenshots() {
         val run=HeroScreen(names=NAMES.take(12),slide=listOf(.86,1.19))
         assertEquals(ChessWikiReader.Outcome.Done(3,0),run.run(details=false,native=true))
         assertEquals(run.names.indices.toList(),run.nativePhotos.map { it.first })
-        assertEquals(run.names,run.nativePhotos.map { it.second })
-        assertTrue(run.clicked.isEmpty())
-        assertEquals(0,run.closeTaps)
+        assertEquals(run.names.map { ChessWiki.safeName(it)+"-head" },run.nativePhotos.map { it.second })
+        assertEquals(run.names.indices.toList(),run.clicked.map { it.index })
+        assertEquals(run.names.size,run.closeTaps)
         assertEquals(0,run.croppedTitleReads)
         assertTrue(run.saved.all { !it.modal&&"__tuong__" !in it.name&&"__hang__" !in it.name })
         assertEquals(12,run.ledger.count { it.startsWith("native:quan-co:") })
+    }
+
+    @Test fun resumedPortraitOnlyRunDoesNotReopenAlreadyVerifiedNamedHeads() {
+        val run=HeroScreen(names=listOf("Violet","Arduin"),oldIds=setOf("native:quan-co:hero-violet"))
+        assertTrue(run.run(details=false,native=true) is ChessWikiReader.Outcome.Done)
+        assertEquals(listOf(1),run.clicked.map { it.index })
+        assertEquals(listOf("arduin-head"),run.nativePhotos.map { it.second })
+        assertTrue(run.saved.none { it.modal })
+    }
+
+    @Test fun portraitsUseVerifiedDrawerNamesWhenCardNamesAreMissingOrWrong() {
+        for(details in listOf(false,true)) {
+            val run=HeroScreen(names=listOf("Arduin","Violet"),hiddenLabels=setOf(0),
+                cardLabels=mapOf(1 to "Vioiet"),closeMotion=mapOf(0 to 18))
+            assertTrue(run.run(details=details,native=true) is ChessWikiReader.Outcome.Done)
+            assertEquals(listOf("arduin-head","violet-head"),run.nativePhotos.map { it.second })
+            assertFalse(run.nativePhotos.any { "slot-" in it.second||"vioiet" in it.second })
+            if(details) assertEquals(listOf("arduin","violet"),
+                run.saved.filter { it.modal }.map { it.name.split("__")[4] })
+            else assertTrue(run.saved.none { it.modal })
+        }
     }
 
     @Test fun verifiedMaxAtAnotherOrdinalRetriesOnceThenFailsWithoutMarkingTheSkippedHero() {
@@ -440,6 +492,97 @@ class ChessTraversalTest {
         assertTrue(ChessWiki.heroSlots(run.ledger).isEmpty())
         assertFalse(HERO_TOPIC_DONE in run.ledger)
         assertTrue((outcome as ChessWikiReader.Outcome.Failed).reason.contains("nội dung cũ"))
+    }
+
+    @Test fun interruptedSkillSaveResumesWithoutRewritingDetailsOrDownloadingSavedSkillsAgain() {
+        val a=ChessWiki.Tile(.405,.525,"skill-a")
+        val b=ChessWiki.Tile(.405,.66,"skill-b")
+        val icons=mapOf(0 to listOf(a),1 to listOf(a,b))
+        val first=HeroScreen(names=listOf("Violet"),drawerPages=listOf(0,1),
+            skillIconsByPage=icons,failedNativeItem="violet-skill-skill-b")
+        assertTrue(first.run(skills=true) is ChessWikiReader.Outcome.Failed)
+        assertEquals(listOf("violet-skill-skill-a","violet-skill-skill-b"),first.nativeSkills)
+        assertEquals(listOf(0,1),first.saved.filter { it.modal }.map { it.detailPage })
+        assertFalse(itemId("Violet") in first.ledger)
+        val resumed=HeroScreen(names=listOf("Violet"),drawerPages=listOf(0,1),
+            skillIconsByPage=icons,oldIds=first.ledger,savedDetailSignatures=first.detailSignatures,
+            signatureNoise=2,initiallyOpen="Violet")
+        assertTrue(resumed.run(skills=true) is ChessWikiReader.Outcome.Done)
+        assertTrue("Small pixel noise on resume cannot rewrite -detail-1 or -detail-2",
+            resumed.saved.none { it.modal })
+        assertEquals(listOf("violet-skill-skill-b"),resumed.nativeSkills)
+        assertTrue(itemId("Violet") in resumed.ledger)
+    }
+
+    @Test fun legacySuccessfulSkillProbeSuppressesItsNewMergedTargetOnResume() {
+        val merged=ChessWiki.Tile(.405,.525,"new-center",aliases=setOf("old-upper","old-lower"))
+        val run=HeroScreen(names=listOf("Violet"),skillIconsByPage=mapOf(0 to listOf(merged)),
+            oldIds=setOf("native:chieu-quan-co:violet:old-upper"))
+        assertTrue(run.run(skills=true) is ChessWikiReader.Outcome.Done)
+        assertTrue(run.nativeSkills.isEmpty())
+        assertTrue(itemId("Violet") in run.ledger)
+    }
+
+    @Test fun successfulMergedSkillPersistsRawAliasesAcrossAnInterruptedRun() {
+        val merged=ChessWiki.Tile(.405,.525,"new-center",aliases=setOf("old-upper","old-lower"))
+        val first=HeroScreen(names=listOf("Violet"),drawerPages=listOf(0,1),
+            skillIconsByPage=mapOf(0 to listOf(merged)),closeOnDrawerDrag=1)
+        assertTrue(first.run(skills=true) is ChessWikiReader.Outcome.Failed)
+        assertTrue("native:chieu-quan-co:violet:old-upper" in first.ledger)
+        assertTrue("native:chieu-quan-co:violet:old-lower" in first.ledger)
+        val resumed=HeroScreen(names=listOf("Violet"),drawerPages=listOf(0,1),oldIds=first.ledger,
+            savedDetailSignatures=first.detailSignatures,
+            skillIconsByPage=mapOf(0 to listOf(ChessWiki.Tile(.405,.50,"old-upper"))))
+        assertTrue(resumed.run(skills=true) is ChessWikiReader.Outcome.Done)
+        assertTrue(resumed.nativeSkills.isEmpty())
+    }
+
+    @Test fun stopDuringNativeSaveCannotAdvanceOrMarkAHeroComplete() {
+        val run=HeroScreen(names=listOf("Violet"),drawerPages=listOf(0,1),
+            skillIconsByPage=mapOf(0 to listOf(ChessWiki.Tile(.405,.525,"skill-a"))),
+            interruptAfterNative=true)
+        assertNull(run.run(skills=true,expectInterrupted=true))
+        assertEquals(1,run.nativeSkills.size)
+        assertTrue(run.modalDrags.isEmpty())
+        assertTrue(run.ledger.none { it.startsWith("native:chieu-quan-co:") })
+        assertFalse(itemId("Violet") in run.ledger)
+        assertEquals(1,run.detailSignatures.size)
+    }
+
+    @Test fun confirmedAbsentSavePhotoCandidateDoesNotBlockRealSkillsOrDetailPages() {
+        val run=HeroScreen(names=listOf("Violet"),drawerPages=listOf(0,1),
+            skillIconsByPage=mapOf(0 to listOf(ChessWiki.Tile(.405,.525,"real-icon"),
+                ChessWiki.Tile(.405,.66,"blue-background"))),
+            absentNativeItem="violet-skill-blue-background")
+        assertTrue(run.run(skills=true) is ChessWikiReader.Outcome.Done)
+        assertEquals(2,run.nativeSkills.size)
+        assertTrue("native:chieu-quan-co:violet:real-icon" in run.ledger)
+        assertFalse("native:chieu-quan-co:violet:blue-background" in run.ledger)
+        assertEquals(listOf(0,1),run.saved.filter { it.modal }.map { it.detailPage })
+    }
+
+    @Test fun changedContentOnResumeStopsBeforeOverwritingNumberedDetail() {
+        val first=HeroScreen(names=listOf("Violet"),drawerPages=listOf(0,1),closeOnDrawerDrag=1)
+        assertTrue(first.run() is ChessWikiReader.Outcome.Failed)
+        val resumed=HeroScreen(names=listOf("Violet"),drawerPages=listOf(0,1),
+            oldIds=first.ledger,savedDetailSignatures=first.detailSignatures,signatureNoise=40)
+        assertTrue(resumed.run() is ChessWikiReader.Outcome.Failed)
+        assertTrue(resumed.saved.none { it.modal })
+        assertTrue(resumed.modalDrags.isEmpty())
+        assertFalse(itemId("Violet") in resumed.ledger)
+    }
+
+    @Test fun failedImageOrCheckpointNeverAdvancesScrollSkillsOrHeroCompletion() {
+        for(checkpoint in listOf(false,true)) {
+            val run=HeroScreen(names=listOf("Violet"),drawerPages=listOf(0,1),
+                skillIconsByPage=mapOf(0 to listOf(ChessWiki.Tile(.405,.525,"skill-a"))),
+                failedDetailPage=if(checkpoint) null else 0,failCheckpoint=checkpoint)
+            assertTrue(run.run(skills=true) is ChessWikiReader.Outcome.Failed)
+            assertTrue(run.modalDrags.isEmpty())
+            assertTrue(run.nativeSkills.isEmpty())
+            assertFalse(run.ledger.any { it.startsWith("detail-page-v2:") })
+            assertFalse(itemId("Violet") in run.ledger)
+        }
     }
 
     @Test fun sidebarScrollingSavesEachChangedFullPageOnceDespiteIgnoredAndTerminalDrags() {
