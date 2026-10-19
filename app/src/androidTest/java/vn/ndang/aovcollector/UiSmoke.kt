@@ -339,7 +339,7 @@ class UiSmoke:Instrumentation() {
                     screen.compress(Bitmap.CompressFormat.PNG,100,it)
                 };screen.recycle()
             }
-            val closePreview=cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Đóng") }.first { it.text?.toString()=="Đóng" }
+            val closePreview=cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Đóng") }.first { it.text?.toString()?.equals("Đóng",true)==true }
             check(closePreview.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             waitForIdleSync();SystemClock.sleep(300)
             check(GamePhotoImport.scan(targetContext,photoTree).size==4) { "Preview cancellation deleted a source" }
