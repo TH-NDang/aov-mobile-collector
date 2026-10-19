@@ -42,50 +42,60 @@ class MainActivity : Activity() {
     private val historyTrail = ArrayList<File?>()
     private val historySearchHandler = Handler(Looper.getMainLooper())
     private val historySearchExecutor = Executors.newSingleThreadExecutor()
-    private val imageExecutor = Executors.newSingleThreadExecutor()
+    private val imageExecutor = java.util.concurrent.ThreadPoolExecutor(
+        1,
+        1,
+        0L,
+        java.util.concurrent.TimeUnit.MILLISECONDS,
+        java.util.concurrent.LinkedBlockingQueue<Runnable>()
+    )
     private val viewerExecutor = Executors.newSingleThreadExecutor()
     private var viewerTask: java.util.concurrent.Future<*>? = null
     private var historySearchTask: Runnable? = null
     private var historySearchToken = 0
     private var historyResultsKey = ""
     private var historyResults = emptyList<File>()
-    private val thumbs = object : android.util.LruCache<String, Bitmap>(24 * 1024 * 1024) {
-        override fun sizeOf(key: String, value: Bitmap) = value.byteCount
+    private val thumbs = ImageLoadCache<Bitmap>(24 * 1024 * 1024) { it.byteCount }
+
+    private fun cancelImageRequests() {
+        thumbs.cancelRequests()
+        imageExecutor.queue.clear()
+        viewerTask?.cancel(false)
     }
 
-    private fun thumb(file: File, width: Int, height: Int, crop: Boolean = true): Bitmap? {
+    private fun decodeThumb(request: ImageLoadCache.Request): Bitmap? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        BitmapFactory.decodeFile(file.path, bounds)
+        BitmapFactory.decodeFile(request.path, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        val sample = ImageSampling.sample(bounds.outWidth, bounds.outHeight, width, height, crop)
-        val key = "${file.path}:${file.lastModified()}:${file.length()}:$sample"
-        return thumbs.get(key)
-            ?: BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = sample })?.also { thumbs.put(key, it) }
+        val sample = ImageSampling.sample(bounds.outWidth, bounds.outHeight, request.width, request.height, request.crop)
+        return BitmapFactory.decodeFile(request.path, BitmapFactory.Options().apply { inSampleSize = sample })
     }
 
     private fun loadThumb(file: File, width: Int, height: Int, view: ImageView, crop: Boolean = true) {
-        val request = Any()
-        view.tag = request
-        view.setImageDrawable(null)
+        val token = Any()
+        view.tag = token
+        if (!crop) viewerTask?.cancel(false)
+        val request = thumbs.request(file, width, height, crop)
+        val cached = request?.let { thumbs.cached(it) }
+        view.setImageBitmap(cached)
+        if (cached != null || request == null) return
+        val generation = thumbs.generation
         val task = Runnable {
             val bitmap = try {
-                thumb(file, width, height, crop)
+                thumbs.load(request, generation) { decodeThumb(request) }
             } catch (_: Exception) {
                 null
             } catch (_: OutOfMemoryError) {
                 null
             }
             runOnUiThread {
-                if (!isDestroyed && view.tag === request) view.setImageBitmap(bitmap)
+                if (!isDestroyed && generation == thumbs.generation && view.tag === token && request.unchanged()) {
+                    view.setImageBitmap(bitmap)
+                }
             }
         }
         try {
-            if (crop) {
-                imageExecutor.execute(task)
-            } else {
-                viewerTask?.cancel(false)
-                viewerTask = viewerExecutor.submit(task)
-            }
+            if (crop) imageExecutor.execute(task) else viewerTask = viewerExecutor.submit(task)
         } catch (_: java.util.concurrent.RejectedExecutionException) {}
     }
 
@@ -369,6 +379,8 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        cancelImageRequests()
+        thumbs.clear()
         historySearchToken++
         historySearchTask?.let { historySearchHandler.removeCallbacks(it) }
         historySearchExecutor.shutdownNow()
@@ -439,6 +451,7 @@ class MainActivity : Activity() {
     }
 
     private fun shell(): LinearLayout {
+        cancelImageRequests()
         Ui.use(this)
         val root = Ui.stack(this).apply { setBackgroundColor(Ui.canvas) }
         root.setOnApplyWindowInsetsListener { v, ins ->
@@ -673,6 +686,7 @@ class MainActivity : Activity() {
 
         fun render(list: List<File>, filter: String) {
             if (historyRoot !== root) return
+            cancelImageRequests()
             visible = list
             body.removeAllViews()
             val searching = filter.isNotBlank()

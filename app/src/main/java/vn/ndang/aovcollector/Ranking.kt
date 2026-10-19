@@ -379,6 +379,9 @@ class RankingReader(
         const val MAX_TRIES = 4
         const val MAX_LINK_TAPS = 2
         const val MAX_MENU_READS = 3
+        const val SWITCH_LOAD_MS = 6000L
+        const val SETTLE_INTERVAL_MS = 1500L
+        const val MAX_SETTLE_READS = 6
 
         /** More pages than the table has: five heroes a page, three new ones per scroll. */
         const val MAX_PAGES = 80
@@ -395,6 +398,8 @@ class RankingReader(
     private var pages = 0
     private var communityChosen = false
     private var fullLinkTaps = 0
+    private var needsSettlement = true
+    private var loadRested = false
     private val left = ArrayList<RankScreens.Combo>()
 
     fun start() = navigate(0, 0)
@@ -598,7 +603,11 @@ class RankingReader(
                 } else {
                     l.done(null)
                     screen.note("Đổi bảng xếp hạng")
-                    tap(w, "Đổi bảng xếp hạng", 2500) { prepare(combo, tries + 1) }
+                    needsSettlement = true
+                    tap(w, "Đổi bảng xếp hạng", SWITCH_LOAD_MS) {
+                        loadRested = true
+                        prepare(combo, tries + 1)
+                    }
                 }
             }
             mode != combo.mode -> {
@@ -607,13 +616,55 @@ class RankingReader(
                 screen.say("Chọn ${combo.mode.label}")
                 tap(button, "Mở danh sách chế độ", 1200) { pick(combo, button, tries, 0) }
             }
-            // Save this verified, current frame. No second OCR observation, leaked bitmap, or
-            // intervening navigation between verifying the requested table and its first photo.
+            // A switched table must settle before its first photo; every retained frame is verified.
             else -> {
-                screen.say(combo.label)
-                screen.note("Chụp ${combo.label}")
-                scanFrame(combo, 1, null, 0, l)
+                if (!loadRested) {
+                    l.done(null)
+                    screen.say("Đang chờ dữ liệu bảng tải…")
+                    screen.later(SWITCH_LOAD_MS) {
+                        loadRested = true
+                        prepare(combo, tries)
+                    }
+                } else if (needsSettlement) {
+                    settle(combo, 0, null, l)
+                } else {
+                    startCapture(combo, l)
+                }
             }
+        }
+    }
+
+    private fun startCapture(combo: RankScreens.Combo, frame: Look) {
+        needsSettlement = false
+        screen.say(combo.label)
+        screen.note("Chụp ${combo.label}")
+        scanFrame(combo, 1, null, 0, frame)
+    }
+
+    /** Header changes can precede rows and portraits; keep only a fresh, stable data frame. */
+    private fun settle(combo: RankScreens.Combo, reads: Int, previous: IntArray?, frame: Look) {
+        val button = RankScreens.modeButton(frame.words)
+        val verified = RankScreens.table(frame.words) == combo.table &&
+            RankScreens.mode(button) == combo.mode &&
+            !frame.menuOverlay &&
+            button != null &&
+            RankScreens.menuModes(frame.words, button).isEmpty()
+        val rows = frame.words.filter { it.y in .35..0.95 && it.x in .28..0.78 }.distinctBy { it.text }
+            .sumOf { Regex("[0-9]+(?:[.,][0-9]+)?").findAll(it.text).count() } >= 3
+        val signature = if (verified && rows) frame.signature.copyOf() else null
+        if (signature != null && previous != null && RankScreens.same(signature, previous)) {
+            startCapture(combo, frame)
+            return
+        }
+        frame.done(null)
+        if (reads + 1 >= MAX_SETTLE_READS) {
+            fail("Dữ liệu ${combo.label} chưa tải ổn định. Chờ bảng tải xong rồi bấm Tiếp tục.")
+            return
+        }
+        screen.say("Đang chờ dữ liệu bảng tải ổn định…")
+        screen.note("Chờ dữ liệu ${combo.label}: ${reads + 1}/$MAX_SETTLE_READS")
+        screen.later(SETTLE_INTERVAL_MS) {
+            look(true) { settle(combo, reads + 1, signature, it) }
         }
     }
 
@@ -639,7 +690,11 @@ class RankingReader(
         // to tap; the focused OCR gets another chance without changing the menu's state.
         if (option != null && visible.size >= 2) {
             screen.note("Bấm ${combo.mode.label} tại ${(option.x * 100).toInt()},${(option.y * 100).toInt()}%; sẽ xác nhận lại")
-            tap(option, "Chọn ${combo.mode.label}", 1800) { prepare(combo, tries + 1) }
+            needsSettlement = true
+            tap(option, "Chọn ${combo.mode.label}", SWITCH_LOAD_MS) {
+                loadRested = true
+                prepare(combo, tries + 1)
+            }
         } else if (reads + 1 < MAX_MENU_READS) {
             screen.say("Đang đọc danh sách chế độ · ${reads + 1}/$MAX_MENU_READS")
             screen.later(900) { pick(combo, current, tries, reads + 1) }

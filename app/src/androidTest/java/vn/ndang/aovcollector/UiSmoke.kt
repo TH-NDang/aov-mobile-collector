@@ -1071,19 +1071,7 @@ class UiSmoke : Instrumentation() {
             check(jobService == null && !CollectorService.libraryBusy) { "The ZIP job did not stop" }
             notifications.cancelAll()
             val activity = startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            val decode = MainActivity::class.java.getDeclaredMethod(
-                "thumb",
-                File::class.java,
-                Int::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType,
-                Boolean::class.javaPrimitiveType
-            ).apply { isAccessible = true }
-            runOnMainSync {
-                for (crop in listOf(true, false)) {
-                    val displayed = decode.invoke(activity, qualityFixture, 336, 198, crop) as Bitmap
-                    check(displayed.width == 128 && displayed.height == 128) { "Small original was sampled down in gallery/viewer" }
-                }
-            }
+            ImageCacheSmoke.check(this, activity as MainActivity, qualityFixture)
 
             val professionFolder = File(targetContext.filesDir, "captures/title-test/tuong-tac/nghe/nghe/dau-si-1234abcd").apply {
                 mkdirs()
@@ -2076,6 +2064,8 @@ class UiSmoke : Instrumentation() {
             drawText("Tỷ lệ Ban", 1280f, 315f, paint)
             drawText("Synthetic fixture", 220f, 440f, paint)
             drawText("50,00%", 840f, 440f, paint)
+            drawText("22,54%", 1060f, 440f, paint)
+            drawText("4,69%", 1280f, 440f, paint)
         }
         val fixtureWords = GameText.rankingWords(fixture)
         check(RankScreens.switchButton(fixtureWords) == null && RankScreens.page(fixtureWords, false) == RankScreens.Page.RANKING) {
@@ -2202,6 +2192,8 @@ class UiSmoke : Instrumentation() {
                 }
                 canvas.drawText("Synthetic row", 250f, 405f, paint)
                 canvas.drawText("123,45", 915f, 405f, paint)
+                canvas.drawText("45,67", 1150f, 405f, paint)
+                canvas.drawText("8,90", 1370f, 405f, paint)
                 if (open) {
                     paint.color = Color.rgb(45, 48, 110)
                     canvas.drawRect(990f, 245f, 1450f, 460f, paint)

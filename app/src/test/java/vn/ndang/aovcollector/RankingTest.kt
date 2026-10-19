@@ -240,6 +240,7 @@ class RankingTest {
                     if (open) Mode.values().forEachIndexed { i, m -> add(w(m.label, .6, .313 + .065 * i)) }
                 }
                 add(w("Omega", .13, .41))
+                add(w("49,25% 22,54% 4,69%", .55, .6))
             }
             else -> emptyList()
         }
@@ -580,15 +581,15 @@ class RankingTest {
         assertFalse(diagnostic.contains("UID"))
     }
 
-    @Test fun aVerifiedSelectedTableIsSavedBeforeAnotherOcrFrameCanLoseTheSwitch() {
+    @Test fun initialSelectedTableSettlesEvenWhenTheSwitchLabelFlickers() {
         val combo = RankScreens.Combo(Table.RATES, Mode.ALL)
         val web = Web(Page.RANKING, reading = { words, n ->
             if (n % 2 == 0) words.filterNot { it.plain.contains("doibangxephang") } else words
         })
             .run(wanted = listOf(combo))
         assertTrue(web.outcome is RankingReader.Outcome.Done)
-        assertEquals(1, web.wordLooks)
-        assertEquals(1, web.savedAtLooks.first())
+        assertEquals(3, web.wordLooks)
+        assertEquals(3, web.savedAtLooks.first())
         assertEquals(List(4) { combo }, web.savedFrames)
         assertTrue(web.tapped.isEmpty())
     }
