@@ -515,19 +515,29 @@ class UiSmoke : Instrumentation() {
             while (selectablePhoto() == null && SystemClock.uptimeMillis() < selectionDeadline) {
                 SystemClock.sleep(150)
             }
+
+            fun awaitCleanupCount(count: Int): AccessibilityNodeInfo {
+                val deadline = SystemClock.uptimeMillis() + 10_000
+                while (SystemClock.uptimeMillis() < deadline) {
+                    val button = cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Xóa đã chọn ($count)") }
+                        .firstOrNull { it.text?.toString()?.equals("Xóa đã chọn ($count)", true) == true }
+                    if (button != null && button.isEnabled == (count > 0)) return button
+                    SystemClock.sleep(100)
+                }
+                error("Cleanup count did not settle at $count with enabled=${count > 0}")
+            }
+
             val photo = selectablePhoto() ?: error("Cleanup thumbnail did not become selectable")
             val photoDescription = photo.contentDescription?.toString()
             check(photo.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             waitForIdleSync()
-            val deleteOne = cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Xóa đã chọn (1)") }.firstOrNull()
-                ?: error("Cleanup selection did not update the delete count")
+            val deleteOne = awaitCleanupCount(1)
             check(deleteOne.isEnabled) { "Cleanup selection did not enable deletion" }
             val selectedPhoto = cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Chọn xóa ảnh nguồn") }
                 .first { it.contentDescription?.toString() == photoDescription && it.isChecked }
             check(selectedPhoto.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             waitForIdleSync()
-            val deleteUnselected = cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Xóa đã chọn (0)") }.firstOrNull()
-                ?: error("Cleanup deselection did not reset the delete count")
+            val deleteUnselected = awaitCleanupCount(0)
             check(!deleteUnselected.isEnabled) { "Cleanup deselection left deletion enabled" }
             val closePreview = cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Đóng") }.first {
                 it.text?.toString()?.equals("Đóng", true) ==
