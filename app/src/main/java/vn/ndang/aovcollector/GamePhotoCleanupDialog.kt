@@ -134,7 +134,10 @@ object GamePhotoCleanupDialog {
             require((flags and Intent.FLAG_GRANT_WRITE_URI_PERMISSION)!=0) {
                 "Android chưa cấp quyền ghi/xóa. Không xóa ảnh nào; bạn có thể dọn thủ công bằng ứng dụng Tệp."
             }
-            activity.contentResolver.takePersistableUriPermission(uri,flags)
+            if((flags and Intent.FLAG_GRANT_READ_URI_PERMISSION)!=0)
+                activity.contentResolver.takePersistableUriPermission(uri,
+                    Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            else activity.contentResolver.takePersistableUriPermission(uri,Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             require(GamePhotoCleanup.canWrite(activity,request.tree)) { "Chưa giữ được quyền đọc/ghi của đúng thư mục Pictures." }
             show(activity,request.runId)
         } catch(e:Exception) { message(activity,e.message?:"Không nhận được quyền dọn Pictures. Chưa xóa ảnh nào.") }
