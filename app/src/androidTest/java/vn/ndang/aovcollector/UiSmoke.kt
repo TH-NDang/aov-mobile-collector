@@ -477,7 +477,20 @@ class UiSmoke : Instrumentation() {
                 Intent(targetContext, MainActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
-            runOnMainSync { GamePhotoCleanupDialog.show(cleanupActivity, nativeRun) }
+            val cleanupIdleDeadline = SystemClock.uptimeMillis() + 15_000
+            var cleanupOpened = false
+            while (!cleanupOpened && SystemClock.uptimeMillis() < cleanupIdleDeadline) {
+                runOnMainSync {
+                    if (!CollectorService.libraryBusy && !GamePhotoSync.busy && !FileJob.running) {
+                        GamePhotoCleanupDialog.show(cleanupActivity, nativeRun)
+                        cleanupOpened = true
+                    }
+                }
+                if (!cleanupOpened) SystemClock.sleep(150)
+            }
+            check(cleanupOpened) {
+                "Cleanup remained busy: library=${CollectorService.libraryBusy}, sync=${GamePhotoSync.busy}, file=${FileJob.running}"
+            }
             val previewDeadline = SystemClock.uptimeMillis() + 15_000
 
             fun cleanupNodes() = automation.windows.mapNotNull { it.root }
@@ -708,8 +721,10 @@ class UiSmoke : Instrumentation() {
                 }
             }
             val boardPages = listOf(
-                "ranked", "ranked-new", "season-memory", "season-data", "season-heroes", "season-open", "season-first", "season-title", "season-reward",
-                "region", "region-country", "region-area", "region-province", "board-province", "board-country", "board-valhein", "picker", "trailer1", "top"
+                "ranked", "ranked-new", "season-memory", "season-data", "season-heroes", "season-open", "season-first",
+                "season-title", "season-reward",
+                "region", "region-country", "region-area", "region-province", "board-province", "board-country", "board-valhein",
+                "picker", "trailer1", "top"
             ).associateWith {
                 board(it)
             }
