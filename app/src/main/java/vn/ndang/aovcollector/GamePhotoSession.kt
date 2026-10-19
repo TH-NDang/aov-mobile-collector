@@ -195,20 +195,9 @@ object GamePhotoSession {
         val verified = saved.integrity
         require(OriginalPhotoCopy.matches(original, verified)) { "Ảnh nguồn đã thay đổi" }
         val identity = fingerprint("reused|$group|${saved.key}|${verified.sha256}")
-        val folder = File(run, "anh-goc/" + GamePhotoImport.groupPath(group)).apply { mkdirs() }
-        val directory = folder.relativeTo(run).invariantSeparatorsPath + "/"
-        val claims = state.optJSONObject("targetClaims") ?: JSONObject()
-        val localClaims = claims.keys().asSequence().filter { it.startsWith(directory) }
-            .associate { it.removePrefix(directory) to claims.getString(it) }
-        val base = ChessCaptureFiles.nativeBase(group, saved.key.removePrefix(ChessBlessings.PREFIX), 1)
-        val name = ChessCaptureFiles.nativeTarget(
-            base,
-            original.extension.lowercase(),
-            identity,
-            folder.listFiles().orEmpty().map { it.name }.toSet(),
-            localClaims
-        )
-        val target = File(folder, name)
+        val destination = reuseDestination(run, state, group, saved, identity)
+        val target = destination.file
+        val claims = destination.claims
         val path = target.relativeTo(run).invariantSeparatorsPath
         if (!OriginalPhotoCopy.matches(target, verified)) {
             require(!target.exists() || claims.optString(path) == identity) { "Tên ảnh đã thuộc về ảnh khác" }
@@ -216,26 +205,7 @@ object GamePhotoSession {
             claims.put(path, identity)
             state.put("targetClaims", claims)
             store(context, runId, state)
-            val part = File(folder, name + ".part")
-            val history = try {
-                CaptureHistory.begin(context, runId, target)
-            } catch (_: Exception) {
-                null
-            }
-            var committed = false
-            try {
-                val copied = original.inputStream().use { OriginalPhotoCopy.copy(it, part, verified.bytes) }
-                require(copied == verified) { "Ảnh nguồn đã thay đổi" }
-                require(part.renameTo(target)) { "Không lưu được bản sao trong lượt" }
-                committed = true
-            } finally {
-                part.delete()
-                history?.let {
-                    try {
-                        CaptureHistory.finish(context, it, committed)
-                    } catch (_: Exception) {}
-                }
-            }
+            copyReusedOriginal(context, runId, original, target, verified)
         }
         RunImageManifest.record(run, target, group, item, identity, verified, reused = true)
         // Keep the original verified title anchor; a noisy request must not chain OCR aliases.
@@ -247,6 +217,54 @@ object GamePhotoSession {
             target,
             saved.aliases
         )
+    }
+
+    private data class ReuseDestination(val file: File, val claims: JSONObject)
+
+    private fun reuseDestination(
+        run: File,
+        state: JSONObject,
+        group: String,
+        saved: BlessingPhotoIndex.Saved,
+        identity: String
+    ): ReuseDestination {
+        val folder = File(run, "anh-goc/" + GamePhotoImport.groupPath(group)).apply { mkdirs() }
+        val directory = folder.relativeTo(run).invariantSeparatorsPath + "/"
+        val claims = state.optJSONObject("targetClaims") ?: JSONObject()
+        val localClaims = claims.keys().asSequence().filter { it.startsWith(directory) }
+            .associate { it.removePrefix(directory) to claims.getString(it) }
+        val base = ChessCaptureFiles.nativeBase(group, saved.key.removePrefix(ChessBlessings.PREFIX), 1)
+        val name = ChessCaptureFiles.nativeTarget(
+            base,
+            saved.file.extension.lowercase(),
+            identity,
+            folder.listFiles().orEmpty().map { it.name }.toSet(),
+            localClaims
+        )
+        return ReuseDestination(File(folder, name), claims)
+    }
+
+    private fun copyReusedOriginal(context: Context, runId: String, original: File, target: File, verified: OriginalPhotoCopy.Integrity) {
+        val part = File(target.parentFile, target.name + ".part")
+        val history = try {
+            CaptureHistory.begin(context, runId, target)
+        } catch (_: Exception) {
+            null
+        }
+        var committed = false
+        try {
+            val copied = original.inputStream().use { OriginalPhotoCopy.copy(it, part, verified.bytes) }
+            require(copied == verified) { "Ảnh nguồn đã thay đổi" }
+            require(part.renameTo(target)) { "Không lưu được bản sao trong lượt" }
+            committed = true
+        } finally {
+            part.delete()
+            history?.let {
+                try {
+                    CaptureHistory.finish(context, it, committed)
+                } catch (_: Exception) {}
+            }
+        }
     }
 
     /** The stable alias proves the item came from a recognized cyan blessing heading. */

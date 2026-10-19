@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <baseline version="1.0">
     <file name="app/src/androidTest/java/vn/ndang/aovcollector/UiSmoke.kt">
-        <error line="682" column="141" source="standard:max-line-length" />
-        <error line="683" column="141" source="standard:max-line-length" />
+        <error line="711" column="141" source="standard:max-line-length" />
+        <error line="712" column="141" source="standard:max-line-length" />
     </file>
     <file name="app/src/main/java/vn/ndang/aovcollector/AfterRunProtocol.kt">
         <error line="16" column="141" source="standard:max-line-length" />

@@ -320,7 +320,15 @@ class UiSmoke : Instrumentation() {
             val reused = File(reuseDir, "anh-goc/chuc-phuc/thuong/giay-phut-huy-hoang.jpg")
             check(reused.isFile && reused.readBytes().contentEquals(violetCopy.readBytes()))
             check(GamePhotoSession.state(targetContext, reuseRun)!!.getJSONArray("saves").length() == 0)
-            check(JSONObject(File(reuseDir, "images.json").readText()).getJSONArray("images").length() == 1)
+            val reusedImages = JSONObject(File(reuseDir, "images.json").readText()).getJSONArray("images")
+            check(reusedImages.length() == 1)
+            val reusedImage = reusedImages.getJSONObject(0)
+            val reusedIntegrity = reused.inputStream().use { OriginalPhotoCopy.digest(it) }
+            check(reusedImage.getBoolean("reused"))
+            check(reusedImage.getLong("bytes") == reusedIntegrity.bytes && reusedImage.getString("sha256") == reusedIntegrity.sha256)
+            val reusedClaims = GamePhotoSession.state(targetContext, reuseRun)!!.getJSONObject("targetClaims")
+            check(reusedClaims.getString(reusedImage.getString("path")) == reusedImage.getString("sourceId"))
+            check(reuseDir.walkTopDown().none { it.name.endsWith(".part") }) { "Reused original left a partial file" }
             check(GamePhotoSession.hasMark(targetContext, reuseRun, "chuc-phuc-thuong", "Giây phút huy hoàng", setOf(blessingKey)))
             check(reuseDir.walkTopDown().count { GamePhotoImport.isImage(it) } == 1)
             check(GamePhotoImport.scan(targetContext, photoTree).size == 4)
@@ -487,6 +495,27 @@ class UiSmoke : Instrumentation() {
                 }
                 screen.recycle()
             }
+            val selectionDeadline = SystemClock.uptimeMillis() + 10_000
+
+            fun selectablePhoto() = cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Chọn xóa ảnh nguồn") }
+                .firstOrNull { it.isCheckable && it.isEnabled }
+            while (selectablePhoto() == null && SystemClock.uptimeMillis() < selectionDeadline) {
+                SystemClock.sleep(150)
+            }
+            val photo = selectablePhoto() ?: error("Cleanup thumbnail did not become selectable")
+            val photoDescription = photo.contentDescription?.toString()
+            check(photo.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            waitForIdleSync()
+            val deleteOne = cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Xóa đã chọn (1)") }.firstOrNull()
+                ?: error("Cleanup selection did not update the delete count")
+            check(deleteOne.isEnabled) { "Cleanup selection did not enable deletion" }
+            val selectedPhoto = cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Chọn xóa ảnh nguồn") }
+                .first { it.contentDescription?.toString() == photoDescription && it.isChecked }
+            check(selectedPhoto.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            waitForIdleSync()
+            val deleteUnselected = cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Xóa đã chọn (0)") }.firstOrNull()
+                ?: error("Cleanup deselection did not reset the delete count")
+            check(!deleteUnselected.isEnabled) { "Cleanup deselection left deletion enabled" }
             val closePreview = cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Đóng") }.first {
                 it.text?.toString()?.equals("Đóng", true) ==
                     true

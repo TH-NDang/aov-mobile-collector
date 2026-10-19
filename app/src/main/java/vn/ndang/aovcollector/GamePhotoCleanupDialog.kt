@@ -254,74 +254,92 @@ object GamePhotoCleanupDialog {
         private data class Row(val box: CheckBox, val image: ImageView, val text: TextView)
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
-            val rowView = convertView as? LinearLayout ?: LinearLayout(activity).apply {
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(0, Ui.dp(activity, 5), 0, Ui.dp(activity, 5))
-                val box = CheckBox(activity)
-                val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
-                val text = TextView(activity).apply {
-                    textSize = 13f
-                    setPadding(Ui.dp(activity, 8), 0, 0, 0)
-                }
-                addView(box, LinearLayout.LayoutParams(Ui.dp(activity, 42), Ui.dp(activity, 64)))
-                addView(image, LinearLayout.LayoutParams(Ui.dp(activity, 72), Ui.dp(activity, 72)))
-                addView(text, LinearLayout.LayoutParams(0, -2, 1f))
-                tag = Row(box, image, text)
-            }
+            val rowView = convertView as? LinearLayout ?: createRowView()
             val row = rowView.tag as Row
             val pick = getItem(position)
+            bindSelection(rowView, row, pick)
+            bindThumbnail(row, pick)
+            return rowView
+        }
+
+        private fun createRowView() = LinearLayout(activity).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, Ui.dp(activity, 5), 0, Ui.dp(activity, 5))
+            val box = CheckBox(activity)
+            val image = ImageView(activity).apply { scaleType = ImageView.ScaleType.FIT_CENTER }
+            val text = TextView(activity).apply {
+                textSize = 13f
+                setPadding(Ui.dp(activity, 8), 0, 0, 0)
+            }
+            addView(box, LinearLayout.LayoutParams(Ui.dp(activity, 42), Ui.dp(activity, 64)))
+            addView(image, LinearLayout.LayoutParams(Ui.dp(activity, 72), Ui.dp(activity, 72)))
+            addView(text, LinearLayout.LayoutParams(0, -2, 1f))
+            tag = Row(box, image, text)
+        }
+
+        private fun bindSelection(rowView: LinearLayout, row: Row, pick: GamePhotoCleanup.Candidate) {
             row.box.setOnCheckedChangeListener(null)
             row.box.isChecked = pick.identity in selected
             row.box.isEnabled = cache.get(pick.identity) != null
             row.box.contentDescription = "Chọn xóa ảnh nguồn ${pick.source.name}"
-            row.text.text = "Pictures/${listOf(pick.source.relativeDir,pick.source.name).filter { it.isNotBlank() }.joinToString("/")}\n" +
-                "Bản lưu: ${pick.path}"
+            val sourcePath = listOf(pick.source.relativeDir, pick.source.name).filter { it.isNotBlank() }.joinToString("/")
+            row.text.text = "Pictures/$sourcePath\n" + "Bản lưu: ${pick.path}"
             row.box.setOnCheckedChangeListener { _, checked ->
                 if (checked) selected.add(pick.identity) else selected.remove(pick.identity)
                 changed()
             }
             rowView.setOnClickListener { if (row.box.isEnabled) row.box.isChecked = !row.box.isChecked }
+        }
+
+        private fun bindThumbnail(row: Row, pick: GamePhotoCleanup.Candidate) {
             row.image.contentDescription = "Xem trước ${pick.source.name}"
             row.image.tag = pick.identity
             row.image.setImageBitmap(cache.get(pick.identity))
             if (cache.get(pick.identity) == null) {
-                thumbnails.execute {
-                    if (closed) return@execute
-                    val bitmap = try {
-                        // The local original was verified equal to the source. Never ask a provider for a thumbnail.
-                        val file = GamePhotoCleanup.confinedFile(
-                            File(activity.filesDir, "captures/${preview.runId}"),
-                            pick.path,
-                            pick.group
-                        )
-                        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                        BitmapFactory.decodeFile(file.path, bounds)
-                        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-                            null
-                        } else {
-                            val sample = ImageSampling.sample(bounds.outWidth, bounds.outHeight, 144, 144, true)
-                            BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = sample })
-                        }
-                    } catch (_: Exception) {
-                        null
-                    } catch (_: OutOfMemoryError) {
-                        null
-                    }
-                    if (bitmap != null && !closed) cache.put(pick.identity, bitmap)
-                    main.post {
-                        if (!closed && alive(activity) && bitmap == null && selected.remove(pick.identity)) changed()
-                        if (!closed && alive(activity) && row.image.tag == pick.identity) {
-                            row.image.setImageBitmap(bitmap)
-                            row.box.isEnabled = bitmap != null
-                            if (bitmap == null) {
-                                row.box.isChecked = false
-                                row.text.append("\nKhông xem trước được ảnh; không thể chọn xóa.")
-                            }
-                        }
-                    }
+                loadThumbnail(row, pick)
+            }
+        }
+
+        private fun loadThumbnail(row: Row, pick: GamePhotoCleanup.Candidate) {
+            thumbnails.execute {
+                if (closed) return@execute
+                val bitmap = decodeThumbnail(pick)
+                if (bitmap != null && !closed) cache.put(pick.identity, bitmap)
+                main.post { applyThumbnail(row, pick, bitmap) }
+            }
+        }
+
+        private fun decodeThumbnail(pick: GamePhotoCleanup.Candidate): Bitmap? = try {
+            // The local original was verified equal to the source. Never ask a provider for a thumbnail.
+            val file = GamePhotoCleanup.confinedFile(
+                File(activity.filesDir, "captures/${preview.runId}"),
+                pick.path,
+                pick.group
+            )
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.path, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                null
+            } else {
+                val sample = ImageSampling.sample(bounds.outWidth, bounds.outHeight, 144, 144, true)
+                BitmapFactory.decodeFile(file.path, BitmapFactory.Options().apply { inSampleSize = sample })
+            }
+        } catch (_: Exception) {
+            null
+        } catch (_: OutOfMemoryError) {
+            null
+        }
+
+        private fun applyThumbnail(row: Row, pick: GamePhotoCleanup.Candidate, bitmap: Bitmap?) {
+            if (!closed && alive(activity) && bitmap == null && selected.remove(pick.identity)) changed()
+            if (!closed && alive(activity) && row.image.tag == pick.identity) {
+                row.image.setImageBitmap(bitmap)
+                row.box.isEnabled = bitmap != null
+                if (bitmap == null) {
+                    row.box.isChecked = false
+                    row.text.append("\nKhông xem trước được ảnh; không thể chọn xóa.")
                 }
             }
-            return rowView
         }
     }
 }
