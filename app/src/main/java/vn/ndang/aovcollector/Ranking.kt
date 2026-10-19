@@ -189,12 +189,18 @@ object RankScreens {
     const val MODE_RIGHT = .75
     const val MODE_BOTTOM = .52
 
+    /** Only the screenshot crop supplies mode targets; smaller web-node boxes can use another coordinate scale. */
+    fun withFocusedModes(ordinary: List<GameScreens.Word>, focused: List<GameScreens.Word>): List<GameScreens.Word> =
+        ordinary.filterNot(::inModeArea) + focused
+
+    private fun inModeArea(word: GameScreens.Word) = word.x in .35..0.80 && word.y in .12..0.55
+
     /**
      * Reconstruct adjacent OCR elements on one row. Lines can include table numbers to the left of
      * the menu; starting at "Đấu" keeps a target's centre inside its actual label. Never join rows.
      */
     private fun modeLabels(words: List<GameScreens.Word>): List<GameScreens.Word> {
-        val local = words.filter { compact(it) && it.x in .35..0.80 && it.y in .12..0.55 }
+        val local = words.filter { compact(it) && inModeArea(it) }
         val result = ArrayList<GameScreens.Word>()
         for (first in local.filter { it.plain.startsWith("dau") }) {
             var joined = first
@@ -351,6 +357,8 @@ class RankingReader(
 
         fun tap(x: Double, y: Double, then: (Boolean) -> Unit)
 
+        fun tap(word: GameScreens.Word, label: String, then: (Boolean) -> Unit) = tap(word.x, word.y, then)
+
         /** Drags the page up by [d] screen heights (down when negative); [fling] is a quick flick, else it rests before lifting. */
         fun drag(d: Double, fling: Boolean, then: (Boolean) -> Unit)
 
@@ -414,6 +422,15 @@ class RankingReader(
     private fun tap(x: Double, y: Double, wait: Long, then: () -> Unit) {
         if (!screen.alive) return
         screen.tap(x, y) { ok ->
+            if (screen.alive && !ended) {
+                if (ok) screen.later(wait, then) else fail("Không chạm được màn hình")
+            }
+        }
+    }
+
+    private fun tap(word: GameScreens.Word, label: String, wait: Long, then: () -> Unit) {
+        if (!screen.alive) return
+        screen.tap(word, label) { ok ->
             if (screen.alive && !ended) {
                 if (ok) screen.later(wait, then) else fail("Không chạm được màn hình")
             }
@@ -581,14 +598,14 @@ class RankingReader(
                 } else {
                     l.done(null)
                     screen.note("Đổi bảng xếp hạng")
-                    tap(w.x, w.y, 2500) { prepare(combo, tries + 1) }
+                    tap(w, "Đổi bảng xếp hạng", 2500) { prepare(combo, tries + 1) }
                 }
             }
             mode != combo.mode -> {
                 l.done(null)
                 screen.note("Mở danh sách chế độ: $mode → ${combo.mode}")
                 screen.say("Chọn ${combo.mode.label}")
-                tap(button.x, button.y, 1200) { pick(combo, button, tries, 0) }
+                tap(button, "Mở danh sách chế độ", 1200) { pick(combo, button, tries, 0) }
             }
             // Save this verified, current frame. No second OCR observation, leaked bitmap, or
             // intervening navigation between verifying the requested table and its first photo.
@@ -622,7 +639,7 @@ class RankingReader(
         // to tap; the focused OCR gets another chance without changing the menu's state.
         if (option != null && visible.size >= 2) {
             screen.note("Bấm ${combo.mode.label} tại ${(option.x * 100).toInt()},${(option.y * 100).toInt()}%; sẽ xác nhận lại")
-            tap(option.x, option.y, 1800) { prepare(combo, tries + 1) }
+            tap(option, "Chọn ${combo.mode.label}", 1800) { prepare(combo, tries + 1) }
         } else if (reads + 1 < MAX_MENU_READS) {
             screen.say("Đang đọc danh sách chế độ · ${reads + 1}/$MAX_MENU_READS")
             screen.later(900) { pick(combo, current, tries, reads + 1) }

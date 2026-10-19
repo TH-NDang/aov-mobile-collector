@@ -32,7 +32,7 @@ object GameText {
         if (screen.width <= screen.height) return ordinary
         // Half-size whole-screen OCR can merge a menu row with a table number or split
         // "Đấu" from its mode. Read the small controls separately at native 2x scale.
-        if (RankScreens.needsModeOcr(ordinary)) return ordinary + rankingModes(screen)
+        if (RankScreens.needsModeOcr(ordinary)) return RankScreens.withFocusedModes(ordinary, rankingModes(screen))
         return if (RankScreens.needsFullRankingOcr(ordinary)) ordinary + rankingHeader(screen) else ordinary
     }
 

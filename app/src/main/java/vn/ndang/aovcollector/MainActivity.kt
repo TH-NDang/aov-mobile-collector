@@ -506,6 +506,18 @@ class MainActivity : Activity() {
                 setOnClickListener { AfterRunSettings.show(this@MainActivity) { showHistory() } }
             }
         )
+        top.addView(
+            CheckBox(this).apply {
+                text = "Hiện vùng thao tác"
+                contentDescription = "Hiện điểm chạm, đường vuốt và khung nhận dạng; tự ẩn khi chụp ảnh"
+                val prefs = getSharedPreferences("ui", MODE_PRIVATE)
+                isChecked = prefs.getBoolean(GestureDebugOverlay.PREFERENCE, false)
+                setOnCheckedChangeListener { _, checked ->
+                    prefs.edit().putBoolean(GestureDebugOverlay.PREFERENCE, checked).apply()
+                    CollectorService.current?.updateGestureDebug()
+                }
+            }
+        )
         root.addView(top)
     }
 
@@ -1838,7 +1850,11 @@ class MainActivity : Activity() {
             } catch (
                 e: Exception
             ) {
-                if (FileJob.cancelled) (if (exporting) "Đã hủy lưu ZIP; file ZIP dở đã được xóa." else "Đã hủy nhập ZIP; phần đã nhập được xóa.") else "Không hoàn tất: ${e.message}"
+                if (FileJob.cancelled) {
+                    if (exporting) "Đã hủy lưu ZIP; file ZIP dở đã được xóa." else "Đã hủy nhập ZIP; phần đã nhập được xóa."
+                } else {
+                    "Không hoàn tất: ${e.message}"
+                }
             }
             if (exporting) {
                 try {

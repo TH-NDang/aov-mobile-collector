@@ -21,7 +21,6 @@
     <file name="app/src/main/java/vn/ndang/aovcollector/CollectorService.kt">
         <error line="15" column="1" source="standard:no-wildcard-imports" />
         <error line="17" column="1" source="standard:no-wildcard-imports" />
-        <error line="1336" column="141" source="standard:max-line-length" />
     </file>
     <file name="app/src/main/java/vn/ndang/aovcollector/GameEntry.kt">
         <error line="18" column="141" source="standard:max-line-length" />
@@ -34,7 +33,6 @@
         <error line="8" column="1" source="standard:no-wildcard-imports" />
         <error line="17" column="1" source="standard:no-wildcard-imports" />
         <error line="18" column="1" source="standard:no-wildcard-imports" />
-        <error line="1841" column="141" source="standard:max-line-length" />
     </file>
     <file name="app/src/main/java/vn/ndang/aovcollector/Ui.kt">
         <error line="8" column="1" source="standard:no-wildcard-imports" />

@@ -1465,6 +1465,7 @@ class UiSmoke : Instrumentation() {
                 runOnMainSync { service = CollectorService.current }
                 service != null
             }
+            GestureDebugSmoke.run(this, service!!)
             runOnMainSync { service!!.showPanel() }
             // The real asynchronous image writer feeds a durable, ordered second overlay.
             val historyDir = File(targetContext.filesDir, "captures/progress-smoke").apply { mkdirs() }
@@ -2194,10 +2195,28 @@ class UiSmoke : Instrumentation() {
                     RankScreens.Mode.values().forEachIndexed { i, m -> canvas.drawText(m.label, 1025f, 300f + 60f * i, paint) }
                 }
             }
+        val misplaced = GameScreens.Word("Đấu hạng (Tất cả)", .32, .12, .40, .14)
+        val source = fixture(RankScreens.Table.RATES, RankScreens.Mode.ALL, false)
+        for ((width, height) in listOf(1280 to 720, 2048 to 922, 2400 to 1080)) {
+            val resized = Bitmap.createScaledBitmap(source, width, height, true)
+            try {
+                val controls = GameText.rankingWords(resized, listOf(misplaced))
+                val target = RankScreens.modeButton(controls) ?: error("Resized mode control unreadable: ${width}x$height")
+                check(target.x in .49..0.63 && target.y in .17..0.24) {
+                    "Resized mode target escaped visible control: ${width}x$height at ${target.x},${target.y}"
+                }
+                report.append("PASS resized mode target ${width}x$height: ${target.x},${target.y}\n")
+            } finally {
+                if (resized !== source) resized.recycle()
+            }
+        }
+        source.recycle()
         for (combo in RankScreens.COMBOS) {
             val menu = fixture(combo.table, RankScreens.Mode.ALL, true)
+            val initial = fixture(combo.table, RankScreens.Mode.ALL, false)
             val closed = fixture(combo.table, combo.mode, false)
-            val menuWords = GameText.rankingWords(menu)
+            val menuWords = GameText.rankingWords(menu, listOf(misplaced))
+            val initialWords = GameText.rankingWords(initial, listOf(misplaced))
             val closedWords = GameText.rankingWords(closed)
             check(RankScreens.menuOverlay(menu.width, menu.height) { y, row -> menu.getPixels(row, 0, menu.width, 0, y, menu.width, 1) })
             check(
@@ -2213,7 +2232,7 @@ class UiSmoke : Instrumentation() {
             val active = java.util.concurrent.atomic.AtomicBoolean(true)
             val ended = java.util.concurrent.CountDownLatch(1)
             var outcome: RankingReader.Outcome? = null
-            var open = true
+            var open = combo.mode == RankScreens.Mode.ALL
             var picked: RankScreens.Mode? = null
             var saves = 0
             var consumed = 0
@@ -2226,9 +2245,23 @@ class UiSmoke : Instrumentation() {
                 override fun look(words: Boolean, then: (RankingReader.Look?) -> Unit) {
                     acquired++
                     val wasOpen = open
-                    val shot = (if (wasOpen) menu else closed).copy(Bitmap.Config.ARGB_8888, false)
+                    val shot = (
+                        if (wasOpen) {
+                            menu
+                        } else if (picked == null) {
+                            initial
+                        } else {
+                            closed
+                        }
+                        ).copy(Bitmap.Config.ARGB_8888, false)
                     val read = if (words) {
-                        if (wasOpen) menuWords else closedWords
+                        if (wasOpen) {
+                            menuWords
+                        } else if (picked == null) {
+                            initialWords
+                        } else {
+                            closedWords
+                        }
                     } else {
                         emptyList<GameScreens.Word>()
                     }
@@ -2265,13 +2298,17 @@ class UiSmoke : Instrumentation() {
                 }
 
                 override fun tap(x: Double, y: Double, then: (Boolean) -> Unit) {
-                    // Starting with a popup must select its row, never toggle the button.
-                    check(open && x in .48..0.72 && y in .27..0.49) { "Unexpected dropdown tap $x,$y" }
-                    val row = RankScreens.Mode.values().minBy { kotlin.math.abs(y - (.31 + .065 * it.ordinal)) }
-                    check(row == combo.mode) { "Selected $row instead of ${combo.mode}" }
+                    if (!open) {
+                        check(picked == null && x in .49..0.63 && y in .17..0.24) { "Dropdown opening missed visible control: $x,$y" }
+                        open = true
+                    } else {
+                        check(x in .48..0.72 && y in .27..0.49) { "Unexpected dropdown option tap $x,$y" }
+                        val row = RankScreens.Mode.values().minBy { kotlin.math.abs(y - (.31 + .065 * it.ordinal)) }
+                        check(row == combo.mode) { "Selected $row instead of ${combo.mode}" }
+                        picked = row
+                        open = false
+                    }
                     taps++
-                    picked = row
-                    open = false
                     handler.post { then(true) }
                 }
 
@@ -2296,7 +2333,8 @@ class UiSmoke : Instrumentation() {
             }
             try {
                 check(ended.await(15, java.util.concurrent.TimeUnit.SECONDS)) { "Selection timed out: ${combo.slug}" }
-                check(outcome is RankingReader.Outcome.Done && saves == 1 && taps == 1 && acquired == consumed) {
+                val expectedTaps = if (combo.mode == RankScreens.Mode.ALL) 1 else 2
+                check(outcome is RankingReader.Outcome.Done && saves == 1 && taps == expectedTaps && acquired == consumed) {
                     "Selection ${combo.slug}: $outcome saves=$saves taps=$taps consumed=$consumed/$acquired"
                 }
                 val png = File(targetContext.filesDir, "captures/$folder").walkTopDown().filter { it.extension == "png" }.single()
@@ -2306,11 +2344,12 @@ class UiSmoke : Instrumentation() {
                 } finally {
                     actual.recycle()
                 }
-                report.append("PASS ${combo.slug}: one correct mode tap, one closed-menu PNG, $consumed/$acquired frames released\n")
+                report.append("PASS ${combo.slug}: $taps verified mode taps, one closed-menu PNG, $consumed/$acquired frames released\n")
             } finally {
                 runOnMainSync {
                     active.set(false)
                     menu.recycle()
+                    initial.recycle()
                     closed.recycle()
                 }
             }

@@ -47,6 +47,29 @@ class CollectorService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
+    private var gestureDebug: GestureDebugOverlay? = null
+    private var debugGeneration = 0
+    internal val gestureDebugView: View? get() = gestureDebug?.overlayView
+    private var debugCaptureHidden = false
+    private val debugCaptureShield = CaptureOverlayShield {
+        debugCaptureHidden = it
+        gestureDebug?.shield(it)
+    }
+
+    private fun clearGestureDebug() {
+        debugGeneration++
+        gestureDebug?.clear()
+    }
+
+    internal fun updateGestureDebug() {
+        clearGestureDebug()
+        gestureDebug = if (uiPrefs.getBoolean(GestureDebugOverlay.PREFERENCE, false)) {
+            GestureDebugOverlay(this, handler).also { it.shield(debugCaptureHidden) }
+        } else {
+            null
+        }
+    }
+
     private var panel: LinearLayout? = null
     private val captureProgress by lazy {
         CaptureProgressPanel(this, { swallowed = true }, { exportCaptureHistory(it) }) {
@@ -258,6 +281,7 @@ class CollectorService : AccessibilityService() {
 
     override fun onServiceConnected() {
         current = this
+        updateGestureDebug()
         CrashLog.install(this)
         upgradeBuiltIn()
         try {
@@ -366,6 +390,8 @@ class CollectorService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        clearGestureDebug()
+        gestureDebug = null
         afterRunChat?.cancel()
         afterRunChat = null
         if (running) {
@@ -427,6 +453,7 @@ class CollectorService : AccessibilityService() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        clearGestureDebug()
         if (panel != null) {
             dismissMacroPicker()
             rebuildPanel()
@@ -1333,7 +1360,10 @@ class CollectorService : AccessibilityService() {
                             return@setOnClickListener
                         }
                         uiPrefs.edit().putInt("count", n).apply()
-                        BuiltInMacros.create("Danh sách tướng", n, true, fast.isChecked, detailOnly.isChecked, directSkills.isChecked, entering, checking, traceEntry.isChecked)
+                        BuiltInMacros.create(
+                            "Danh sách tướng", n, true, fast.isChecked, detailOnly.isChecked,
+                            directSkills.isChecked, entering, checking, traceEntry.isChecked
+                        )
                     }
                     else -> BuiltInMacros.create(
                         single.text.toString(),
@@ -2670,6 +2700,7 @@ class CollectorService : AccessibilityService() {
     private var cancelStep: (() -> Unit)? = null
 
     private fun interrupt() {
+        clearGestureDebug()
         cancelStep?.invoke()
         cancelStep = null
     }
@@ -3022,12 +3053,23 @@ class CollectorService : AccessibilityService() {
      */
     internal fun touchGame(gesture: GestureDescription, tap: Boolean, result: (Boolean) -> Unit) = touchGame(listOf(gesture), tap, result)
 
-    internal fun touchGame(gestures: List<GestureDescription>, tap: Boolean, result: (Boolean) -> Unit) {
+    internal fun touchGame(gestures: List<GestureDescription>, tap: Boolean, result: (Boolean) -> Unit) =
+        touchGameTarget(gestures, tap, null, null, result)
+
+    private fun touchGameTarget(
+        gestures: List<GestureDescription>,
+        tap: Boolean,
+        target: GameScreens.Word?,
+        label: String?,
+        result: (Boolean) -> Unit
+    ) {
+        val debugSession = debugGeneration
         val session = captureShield.acquire()
         var finished = false
         val done = { ok: Boolean ->
             if (!finished) {
                 finished = true
+                if (!ok) gestureDebug?.clear()
                 captureShield.release(session)
                 result(ok)
             }
@@ -3039,6 +3081,7 @@ class CollectorService : AccessibilityService() {
                 return
             }
             swallowed = false
+            if (debugSession == debugGeneration) gestureDebug?.show(gestures, tap, target, label)
 
             fun part(i: Int) {
                 if (current !== this || !captureShield.contains(session)) {
@@ -3462,6 +3505,10 @@ class CollectorService : AccessibilityService() {
                         then(null)
                     }
                 }
+            }
+
+            override fun tap(word: GameScreens.Word, label: String, then: (Boolean) -> Unit) {
+                touchGameTarget(listOf(tapAt(word.x, word.y)), true, word, label, then)
             }
 
             override fun tap(x: Double, y: Double, then: (Boolean) -> Unit) {
@@ -4096,8 +4143,10 @@ class CollectorService : AccessibilityService() {
 
     /** Takes a screenshot with the panel hidden; [done] gets a software bitmap to recycle, or null. */
     internal fun grab(anyApp: Boolean = false, done: (Bitmap?) -> Unit) {
+        val debugSession = debugCaptureShield.acquire()
         val session = captureShield.acquire()
         val finish = { b: Bitmap? ->
+            debugCaptureShield.release(debugSession)
             captureShield.release(session)
             done(b)
         }
