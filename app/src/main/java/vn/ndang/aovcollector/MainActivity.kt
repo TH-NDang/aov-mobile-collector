@@ -125,6 +125,8 @@ class MainActivity : Activity() {
                     ?.let { return it }
             }
             val n = file.nameWithoutExtension
+            // Keep type, mode and page visible for both legacy and descriptive filenames.
+            RankingCaptureFiles.title(n)?.let { return it }
             if (photoPath != null) {
                 return file.nameWithoutExtension.replace(Regex("-[a-f0-9]{14}$"), "").replace('-', ' ')
             }
@@ -150,8 +152,6 @@ class MainActivity : Activity() {
                 ).find(n) != null -> Regex("-(so-1-may-chu|tinh|mien|quoc-gia|may-chu)-(\\d{2})$").find(n)!!.groupValues.let { g ->
                     BoardScreens.Tab.values().first { it.slug == g[1] }.label + " · trang ${g[2].toInt()}"
                 }
-                // A page of the hero statistics: 0003-ty-le-dau-5v5-07.
-                RankScreens.COMBOS.any { n.contains(it.slug) } -> "Trang ${n.substringAfterLast('-').toIntOrNull() ?: ""}"
                 else -> "Ảnh chụp"
             }
         }
@@ -546,7 +546,7 @@ class MainActivity : Activity() {
             } else {
                 0L
             }
-        }.thenBy { it.name }
+        }.thenBy { RankingCaptureFiles.sortKey(it.name) }.thenBy { it.name }
     ).orEmpty()
 
     /** Local search in this folder, or every nested folder when searching from history root. */
@@ -1044,7 +1044,7 @@ class MainActivity : Activity() {
         val images = (
             file.parentFile?.listFiles()?.filter {
                 GamePhotoImport.isImage(it)
-            }?.sortedBy { it.name }
+            }?.sortedWith(compareBy<File> { RankingCaptureFiles.sortKey(it.name) }.thenBy { it.name })
             ).orEmpty().ifEmpty { listOf(file) }
         var pos = images.indexOf(file).coerceAtLeast(0)
         val content = Ui.stack(this).apply { setPadding(dp(16), dp(6), dp(16), dp(12)) }

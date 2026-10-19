@@ -55,7 +55,9 @@ object ZipFiles {
         val names = files.associateWith { relative(it, root) }
         val folders = files.groupBy {
             names.getValue(it).split('/').dropLast(1)
-        }.toSortedMap(byFolder).values.map { it.sortedWith(compareBy(byName) { f -> f.name }) }
+        }.toSortedMap(byFolder).values.map {
+            it.sortedWith(compareBy(byName) { f: File -> RankingCaptureFiles.sortKey(f.name) }.thenBy(byName) { f -> f.name })
+        }
         val budget = limit - END_BYTES
         val parts = ArrayList<MutableList<File>>()
         var used = 0L

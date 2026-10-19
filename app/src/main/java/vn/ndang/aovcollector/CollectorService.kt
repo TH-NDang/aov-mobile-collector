@@ -3393,6 +3393,8 @@ class CollectorService : AccessibilityService() {
      */
     private fun ranking(s: JSONObject, alive: () -> Boolean, finish: (RankingReader.Outcome) -> Unit) {
         val stamp = "%04d".format(index + 1)
+        val rankingSteps =
+            macro?.steps?.let { steps -> (0 until steps.length()).count { steps.getJSONObject(it).optString("type") == "ranking" } } ?: 0
         val key = "$runId/$stamp"
         val done = rankingDone?.takeIf { it.first == key }?.second ?: HashSet<String>().also { rankingDone = key to it }
         val screen = object : RankingReader.Screen {
@@ -3445,7 +3447,7 @@ class CollectorService : AccessibilityService() {
                                         override fun keep(name: String, then: (Boolean) -> Unit) {
                                             if (consumed) return then(false)
                                             consumed = true
-                                            store(b, runId, "$stamp-$name") { ok ->
+                                            store(b, runId, RankingCaptureFiles.screenshotBase("$stamp-$name", rankingSteps)) { ok ->
                                                 if (!ok) note("Không lưu được ảnh thống kê: $name")
                                                 refreshPanel()
                                                 then(ok)
