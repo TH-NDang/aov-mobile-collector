@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Pinned official Maven Central artifact; keep local formatting identical to CI.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+version=1.5.0
+sha256=a27854622198800f50971a049dcdba38f2105d47e7e7258786c7d28045c5735d
+cache="${XDG_CACHE_HOME:-$HOME/.cache}/aov-collector"
+jar="$cache/ktlint-$version.jar"
+mkdir -p "$cache"
+if [[ ! -f "$jar" ]]; then
+    curl --fail --location --retry 3 \
+        "https://repo.maven.apache.org/maven2/com/pinterest/ktlint/ktlint-cli/$version/ktlint-cli-$version-all.jar" \
+        --output "$jar.tmp"
+    printf '%s  %s\n' "$sha256" "$jar.tmp" | sha256sum --check --status
+    mv "$jar.tmp" "$jar"
+fi
+printf '%s  %s\n' "$sha256" "$jar" | sha256sum --check --status
+exec java -Xmx1g -jar "$jar" --baseline=config/ktlint-baseline.xml "$@" \
+    '**/*.kt' '**/*.kts' '!**/build/**'

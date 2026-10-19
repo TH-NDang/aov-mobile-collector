@@ -1,11 +1,11 @@
 package vn.ndang.aovcollector
 
+import java.io.File
+import java.nio.file.Files
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.*
 import org.junit.Test
-import java.io.File
-import java.nio.file.Files
 
 class RunImageManifestTest {
     private val source = "a".repeat(64)
@@ -13,22 +13,41 @@ class RunImageManifestTest {
 
     private fun withRun(block: (File) -> Unit) {
         val run = Files.createTempDirectory("run-images-").toFile()
-        try { block(run) } finally { run.deleteRecursively() }
+        try {
+            block(run)
+        } finally {
+            run.deleteRecursively()
+        }
     }
 
-    private fun image(run: File, path: String, content: String = path): File =
-        File(run, path).apply { parentFile.mkdirs(); writeText(content) }
+    private fun image(run: File, path: String, content: String = path): File = File(run, path).apply {
+        parentFile.mkdirs()
+        writeText(content)
+    }
 
     private fun integrity(file: File) = file.inputStream().use { OriginalPhotoCopy.digest(it) }
+
     private fun manifest(run: File) = File(run, RunImageManifest.FILE)
+
     private fun document(run: File) = JSONObject(manifest(run).readText())
+
     private fun images(run: File) = document(run).getJSONArray("images")
-    private fun record(run: File, file: File, group: String = "quan-co", item: String = "violet-head",
-                       sourceId: String = source, reused: Boolean = false) =
-        RunImageManifest.record(run, file, group, item, sourceId, integrity(file), reused)
+
+    private fun record(
+        run: File,
+        file: File,
+        group: String = "quan-co",
+        item: String = "violet-head",
+        sourceId: String = source,
+        reused: Boolean = false
+    ) = RunImageManifest.record(run, file, group, item, sourceId, integrity(file), reused)
 
     private fun rejects(block: () -> Unit) {
-        try { block() } catch (_: Exception) { return }
+        try {
+            block()
+        } catch (_: Exception) {
+            return
+        }
         fail("Invalid manifest operation was accepted")
     }
 
@@ -90,9 +109,15 @@ class RunImageManifestTest {
 
     @Test fun neverGuessesHeroFromFilenameGroupOrAmbiguousItem() = withRun { run ->
         val cases = listOf(
-            "quan-co" to "unknown", "quan-co" to "-head", "quan-co" to "Violet-head",
-            "chieu-quan-co" to "violet-skill-", "chieu-quan-co" to "-skill-1",
-            "chieu-quan-co" to "violet", "phe" to "violet-head", "nghe" to "violet-skill-1")
+            "quan-co" to "unknown",
+            "quan-co" to "-head",
+            "quan-co" to "Violet-head",
+            "chieu-quan-co" to "violet-skill-",
+            "chieu-quan-co" to "-skill-1",
+            "chieu-quan-co" to "violet",
+            "phe" to "violet-head",
+            "nghe" to "violet-skill-1"
+        )
         cases.forEachIndexed { index, (group, item) ->
             val file = image(run, "anh-goc/quan-co/anh-quan-co/violet-head-$index.png")
             record(run, file, group, item)
@@ -139,16 +164,23 @@ class RunImageManifestTest {
             rejects { record(run, image(run, "quan-co/violet-detail-1.png")) }
             rejects { record(run, image(run, "anh-goc/trang-bi/item.png.part")) }
             assertFalse(manifest(run).exists())
-        } finally { outside.delete() }
+        } finally {
+            outside.delete()
+        }
     }
 
     @Test fun refusesMalformedAndUnsupportedManifestsWithoutOverwritingThem() = withRun { run ->
         val file = image(run, "anh-goc/trang-bi/item.png")
-        val invalid = listOf("{", "[]", "{}", "{\"schemaVersion\":1,\"collectionMode\":\"chess\",\"images\":[] } trailing",
+        val invalid = listOf(
+            "{",
+            "[]",
+            "{}",
+            "{\"schemaVersion\":1,\"collectionMode\":\"chess\",\"images\":[] } trailing",
             "{\"schemaVersion\":2,\"collectionMode\":\"chess\",\"images\":[]}",
             "{\"schemaVersion\":\"1\",\"collectionMode\":\"chess\",\"images\":[]}",
             "{\"schemaVersion\":1,\"collectionMode\":\"all\",\"images\":[]}",
-            "{\"schemaVersion\":1,\"collectionMode\":\"chess\",\"images\":[{}]}")
+            "{\"schemaVersion\":1,\"collectionMode\":\"chess\",\"images\":[{}]}"
+        )
         invalid.forEach { text ->
             manifest(run).writeText(text)
             rejects { record(run, file, "trang-bi", "item") }
@@ -168,7 +200,8 @@ class RunImageManifestTest {
             { it.put("path", "anh-goc/trang-bi/item.png.part") }, { it.put("bytes", "12") },
             { it.put("bytes", -1) }, { it.put("sha256", "wrong") }, { it.put("type", "portrait") },
             { it.put("sourceId", "content://private/source") }, { it.put("hero", "violet") },
-            { it.put("reused", "true") })
+            { it.put("reused", "true") }
+        )
         mutations.forEach { mutate ->
             val doc = JSONObject(good)
             mutate(doc.getJSONArray("images").getJSONObject(0))
@@ -243,7 +276,9 @@ class RunImageManifestTest {
             assertEquals("do not change", secret.readText())
             Files.delete(partial.toPath())
             Files.delete(link.toPath())
-        } finally { outside.deleteRecursively() }
+        } finally {
+            outside.deleteRecursively()
+        }
     }
 
     @Test fun aPriorImageReplacedByAnOutsideSymlinkIsNoLongerPublished() = withRun { run ->
@@ -260,7 +295,9 @@ class RunImageManifestTest {
             assertEquals("anh-goc/trang-bi/next.png", images(run).getJSONObject(0).getString("path"))
             assertEquals("same original bytes", outside.readText())
             Files.delete(file.toPath())
-        } finally { outside.delete() }
+        } finally {
+            outside.delete()
+        }
     }
 
     @Test fun concurrentRecordsNeverLoseAnotherCommittedEntry() = withRun { run ->
@@ -268,8 +305,11 @@ class RunImageManifestTest {
         val failures = java.util.Collections.synchronizedList(ArrayList<Throwable>())
         val threads = files.map { file ->
             Thread {
-                try { record(run, file, "trang-bi", file.name) }
-                catch (error: Throwable) { failures.add(error) }
+                try {
+                    record(run, file, "trang-bi", file.name)
+                } catch (error: Throwable) {
+                    failures.add(error)
+                }
             }.apply { start() }
         }
         threads.forEach { it.join() }

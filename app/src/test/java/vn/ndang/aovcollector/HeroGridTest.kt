@@ -1,112 +1,209 @@
 package vn.ndang.aovcollector
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
-import org.junit.Test
 import java.io.DataInputStream
 import java.util.zip.GZIPInputStream
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.random.Random
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Test
 
 /** Runs [ListNavigator] against a drawn All-heroes screen whose swipes slide on by a random amount. */
 class HeroGridTest {
-    private class FakeList(val heroes:Int,seed:Int,val slide:ClosedFloatingPointRange<Double>) {
-        val w=2400; val h=1080; var offset=0.0
+    private class FakeList(val heroes: Int, seed: Int, val slide: ClosedFloatingPointRange<Double>) {
+        val w = 2400
+        val h = 1080
+        var offset = 0.0
+
         /** What the game shows: the list, a hero page opened from it, or the lobby, which has no back arrow. */
         enum class Page { LIST, HERO, LOBBY }
-        var page=Page.LIST
-        val rows=(heroes+4)/5
-        val maxOffset=maxOf(0.0,(HeroGrid.ROW0+(rows-1)*HeroGrid.PITCH-.78)*h)
-        private val random=Random(seed)
-        private val particles=List(400) { random.nextInt(w)*h+random.nextInt(h) }.toSet()
-        fun cardAt(x:Int,y:Int):Int? {
-            if(y<.12*h) return null
-            val cy=y+offset
-            for(c in 0 until 5) {
-                if(abs(x-HeroGrid.columns[c]*w)>.053*w) continue
-                val r=Math.round((cy/h-HeroGrid.ROW0)/HeroGrid.PITCH).toInt()
-                if(r<0||r>=rows||abs(cy-(HeroGrid.ROW0+r*HeroGrid.PITCH)*h)>.185*h) return null
-                return (r*5+c).takeIf { it<heroes }
+
+        var page = Page.LIST
+        val rows = (heroes + 4) / 5
+        val maxOffset = maxOf(0.0, (HeroGrid.ROW0 + (rows - 1) * HeroGrid.PITCH - .78) * h)
+        private val random = Random(seed)
+        private val particles = List(400) { random.nextInt(w) * h + random.nextInt(h) }.toSet()
+
+        fun cardAt(x: Int, y: Int): Int? {
+            if (y < .12 * h) return null
+            val cy = y + offset
+            for (c in 0 until 5) {
+                if (abs(x - HeroGrid.columns[c] * w) > .053 * w) continue
+                val r = Math.round((cy / h - HeroGrid.ROW0) / HeroGrid.PITCH).toInt()
+                if (r < 0 || r >= rows || abs(cy - (HeroGrid.ROW0 + r * HeroGrid.PITCH) * h) > .185 * h) return null
+                return (r * 5 + c).takeIf { it < heroes }
             }
             return null
         }
+
         /** The white "<" at the top left, drawn from the stroke ends measured on the game's screens. */
-        private fun arrow(x:Int,y:Int):Boolean {
-            if(x>.13*w||y>.11*h) return false
-            val tx=.0758*w; val ty=.0546*h; val ex=.1054*w
-            return listOf(.0296*h,.0806*h).any { ey -> val dx=ex-tx; val dy=ey-ty
-                val t=(((x-tx)*dx+(y-ty)*dy)/(dx*dx+dy*dy)).coerceIn(0.0,1.0); hypot(x-tx-t*dx,y-ty-t*dy)<.005*h }
+        private fun arrow(x: Int, y: Int): Boolean {
+            if (x > .13 * w || y > .11 * h) return false
+            val tx = .0758 * w
+            val ty = .0546 * h
+            val ex = .1054 * w
+            return listOf(.0296 * h, .0806 * h).any { ey ->
+                val dx = ex - tx
+                val dy = ey - ty
+                val t = (((x - tx) * dx + (y - ty) * dy) / (dx * dx + dy * dy)).coerceIn(0.0, 1.0)
+                hypot(x - tx - t * dx, y - ty - t * dy) < .005 * h
+            }
         }
+
         // Static gradient background with particles; cards scroll and some are greyed out like unowned heroes.
-        fun readRow(y:Int,row:IntArray) {
-            if(page!=Page.LIST) {
+        fun readRow(y: Int, row: IntArray) {
+            if (page != Page.LIST) {
                 // Hero art and the lobby: detailed everywhere, but not white.
-                for(x in 0 until w) { val n=((x*73856093) xor (y*19349663)) ushr 8 and 127; row[x]=if(page==Page.HERO&&arrow(x,y)) -1 else (0xff shl 24) or (n shl 16) or ((n/2) shl 8) or (40+n) }
+                for (x in 0 until w) {
+                    val n =
+                        ((x * 73856093) xor (y * 19349663)) ushr 8 and 127
+                    row[x] =
+                        if (page == Page.HERO && arrow(x, y)) -1 else (0xff shl 24) or (n shl 16) or ((n / 2) shl 8) or (40 + n)
+                }
                 return
             }
-            for(x in 0 until w) {
-                if(arrow(x,y)) { row[x]=-1; continue }
-                val i=cardAt(x,y)
-                row[x]=if(i==null) { if(x*h+y in particles) 0xffd0c8ff.toInt() else (0xff shl 24) or ((30+20*y/h) shl 16) or (26 shl 8) or (60+30*y/h) }
-                else { val n=((x*73856093) xor ((y+offset.toInt())*19349663) xor (i*83492791)) ushr 8 and 63; val base=40+(i*37)%150
-                    val v=if(i%7==3) base/4+n/6 else (base+n-32).coerceIn(0,255); (0xff shl 24) or (v shl 16) or (((v+i*11)%256) shl 8) or ((v*2+i)%256) }
+            for (x in 0 until w) {
+                if (arrow(x, y)) {
+                    row[x] = -1
+                    continue
+                }
+                val i = cardAt(x, y)
+                row[x] =
+                    if (i ==
+                        null
+                    ) {
+                        if (x * h + y in
+                            particles
+                        ) {
+                            0xffd0c8ff.toInt()
+                        } else {
+                            (0xff shl 24) or ((30 + 20 * y / h) shl 16) or (26 shl 8) or (60 + 30 * y / h)
+                        }
+                    } else {
+                        val n = ((x * 73856093) xor ((y + offset.toInt()) * 19349663) xor (i * 83492791)) ushr 8 and 63
+                        val base = 40 + (i * 37) % 150
+                        val v = if (i % 7 ==
+                            3
+                        ) {
+                            base / 4 + n / 6
+                        } else {
+                            (base + n - 32).coerceIn(0, 255)
+                        }
+                        (0xff shl 24) or (v shl 16) or (((v + i * 11) % 256) shl 8) or
+                            ((v * 2 + i) % 256)
+                    }
             }
         }
+
         /** The game slides on after the finger lifts and loses a few pixels to its drag threshold. */
-        fun drag(d:Double,fling:Boolean) {
-            val factor=if(fling) random.nextDouble(3.0,5.0) else random.nextDouble(slide.start,slide.endInclusive)
-            offset=(offset+d*h*factor-15*Math.signum(d)).coerceIn(0.0,maxOffset)
+        fun drag(d: Double, fling: Boolean) {
+            val factor = if (fling) random.nextDouble(3.0, 5.0) else random.nextDouble(slide.start, slide.endInclusive)
+            offset = (offset + d * h * factor - 15 * Math.signum(d)).coerceIn(0.0, maxOffset)
         }
     }
 
-    private class Run(heroes:Int,seed:Int,slide:ClosedFloatingPointRange<Double>,startAt:Double=0.0,val names:List<String> =List(heroes) { "Hero $it" }) {
-        val list=FakeList(heroes,seed,slide).apply { offset=maxOffset*startAt }
-        val state=ListNavigator.State()
-        val tapped=ArrayList<Int?>()
-        val kept=ArrayList<String>()
-        var swipes=0
-        var backs=0
+    private class Run(
+        heroes: Int,
+        seed: Int,
+        slide: ClosedFloatingPointRange<Double>,
+        startAt: Double = 0.0,
+        val names: List<String> = List(heroes) {
+            "Hero $it"
+        }
+    ) {
+        val list = FakeList(heroes, seed, slide).apply { offset = maxOffset * startAt }
+        val state = ListNavigator.State()
+        val tapped = ArrayList<Int?>()
+        val kept = ArrayList<String>()
+        var swipes = 0
+        var backs = 0
+
         /** Looks after which a hero page that is still closing shows the list by itself. */
-        var closingLooks=0
-        val screen=object:ListNavigator.Screen {
-            override val alive=true
-            override fun look(then:(ListNavigator.Shot?)->Unit) {
-                val grid=HeroGrid.isGrid(list.w,list.h,list::readRow)
-                val profile=if(grid) HeroGrid.profile(list.w,list.h,list::readRow) else FloatArray(0)
-                val arrow=!grid&&HeroGrid.hasBackArrow(list.w,list.h,list::readRow)
-                if(closingLooks>0&&--closingLooks==0) list.page=FakeList.Page.LIST
-                then(object:ListNavigator.Shot {
-                    override val profile=profile
-                    override val height=list.h
-                    override val backArrow=arrow
-                    override fun hasCard(x:Double,y:Double)=HeroGrid.hasCard(list.w,list.h,x,y,list::readRow)
-                    override fun done(keep:String?) { if(keep!=null) kept+=keep }
+        var closingLooks = 0
+        val screen = object : ListNavigator.Screen {
+            override val alive = true
+
+            override fun look(then: (ListNavigator.Shot?) -> Unit) {
+                val grid = HeroGrid.isGrid(list.w, list.h, list::readRow)
+                val profile = if (grid) HeroGrid.profile(list.w, list.h, list::readRow) else FloatArray(0)
+                val arrow = !grid && HeroGrid.hasBackArrow(list.w, list.h, list::readRow)
+                if (closingLooks > 0 && --closingLooks == 0) list.page = FakeList.Page.LIST
+                then(object : ListNavigator.Shot {
+                    override val profile = profile
+                    override val height = list.h
+                    override val backArrow = arrow
+
+                    override fun hasCard(x: Double, y: Double) = HeroGrid.hasCard(list.w, list.h, x, y, list::readRow)
+
+                    override fun done(keep: String?) {
+                        if (keep != null) kept += keep
+                    }
+
                     // Each card's name across its bottom, as ML Kit reads it, for the cards on screen.
-                    override fun words(then:(List<GameScreens.Word>)->Unit) = then(if(list.page!=FakeList.Page.LIST) emptyList() else names.indices.mapNotNull { i ->
-                        val y=(HeroGrid.ROW0+(i/5)*HeroGrid.PITCH)+HeroFinder.NAME_BELOW-list.offset/list.h; val x=HeroGrid.columns[i%5]
-                        if(y<.15||y>.98) null else GameScreens.Word(names[i],x-.04,y-.015,x+.04,y+.015) })
+                    override fun words(then: (List<GameScreens.Word>) -> Unit) = then(
+                        if (list.page !=
+                            FakeList.Page.LIST
+                        ) {
+                            emptyList()
+                        } else {
+                            names.indices.mapNotNull { i ->
+                                val y = (HeroGrid.ROW0 + (i / 5) * HeroGrid.PITCH) + HeroFinder.NAME_BELOW - list.offset / list.h
+                                val x = HeroGrid.columns[i % 5]
+                                if (y < .15 || y > .98) null else GameScreens.Word(names[i], x - .04, y - .015, x + .04, y + .015)
+                            }
+                        }
+                    )
                 })
             }
-            override fun drag(d:Double,fling:Boolean,then:(Boolean)->Unit) { swipes++; if(list.page==FakeList.Page.LIST) list.drag(d,fling); then(true) }
-            override fun tap(x:Double,y:Double,then:(Boolean)->Unit) {
-                val card=if(list.page==FakeList.Page.LIST) list.cardAt((x*(list.w-1)).toInt(),(y*(list.h-1)).toInt()) else null
-                tapped+=card; if(card!=null) list.page=FakeList.Page.HERO; then(true)
+
+            override fun drag(d: Double, fling: Boolean, then: (Boolean) -> Unit) {
+                swipes++
+                if (list.page ==
+                    FakeList.Page.LIST
+                ) {
+                    list.drag(d, fling)
+                }
+                then(true)
             }
-            override fun back(then:(Boolean)->Unit) { backs++; list.page=if(list.page==FakeList.Page.HERO) FakeList.Page.LIST else FakeList.Page.LOBBY; then(true) }
-            override fun later(ms:Long,then:()->Unit) { then() }
+
+            override fun tap(x: Double, y: Double, then: (Boolean) -> Unit) {
+                val card = if (list.page == FakeList.Page.LIST) {
+                    list.cardAt(
+                        (x * (list.w - 1)).toInt(),
+                        (y * (list.h - 1)).toInt()
+                    )
+                } else {
+                    null
+                }
+                tapped += card
+                if (card != null) list.page = FakeList.Page.HERO
+                then(true)
+            }
+
+            override fun back(then: (Boolean) -> Unit) {
+                backs++
+                list.page =
+                    if (list.page == FakeList.Page.HERO) FakeList.Page.LIST else FakeList.Page.LOBBY
+                then(true)
+            }
+
+            override fun later(ms: Long, then: () -> Unit) {
+                then()
+            }
         }
+
         /**
          * Picks cards in order like a batch run, with the macro's back tap after each hero; the game ignores
          * that tap after the cards in [ignoredBack]. Returns the cards actually tapped and how the run ended.
          */
-        fun collect(limit:Int,ignoredBack:Set<Int> = emptySet()):Pair<List<Int?>,String> {
-            for(card in 0 until limit) {
-                var outcome:ListNavigator.Outcome?=null
-                ListNavigator(card,state,screen) { outcome=it }.start()
-                when(val o=outcome) {
-                    is ListNavigator.Outcome.Tapped -> if(card !in ignoredBack) list.page=FakeList.Page.LIST
+        fun collect(limit: Int, ignoredBack: Set<Int> = emptySet()): Pair<List<Int?>, String> {
+            for (card in 0 until limit) {
+                var outcome: ListNavigator.Outcome? = null
+                ListNavigator(card, state, screen) { outcome = it }.start()
+                when (val o = outcome) {
+                    is ListNavigator.Outcome.Tapped -> if (card !in ignoredBack) list.page = FakeList.Page.LIST
                     is ListNavigator.Outcome.End -> return tapped to "end at $card"
                     is ListNavigator.Outcome.Missing -> return tapped to "missing at $card"
                     is ListNavigator.Outcome.Failed -> return tapped to "failed at $card: ${o.reason}"
@@ -115,110 +212,164 @@ class HeroGridTest {
             }
             return tapped to "limit"
         }
+
         /** Finds [name] with [HeroSearch] from card [hint]: the card tapped and how it ended. */
-        fun search(name:String,hint:Int):Pair<Int?,String> {
-            var result:Pair<ListNavigator.Outcome,Int?>?=null
-            HeroSearch(name,hint,{ card,approve,then -> ListNavigator(card,state,screen,approve,then).start() }) { o,card -> result=o to card }.start()
-            val (o,card)=result?:return null to "no outcome"
-            return tapped.lastOrNull() to (if(o is ListNavigator.Outcome.Tapped) "tapped $card" else o.toString())
+        fun search(name: String, hint: Int): Pair<Int?, String> {
+            var result: Pair<ListNavigator.Outcome, Int?>? = null
+            HeroSearch(name, hint, { card, approve, then -> ListNavigator(card, state, screen, approve, then).start() }) { o, card ->
+                result =
+                    o to card
+            }.start()
+            val (o, card) = result ?: return null to "no outcome"
+            return tapped.lastOrNull() to (if (o is ListNavigator.Outcome.Tapped) "tapped $card" else o.toString())
         }
     }
 
     @Test fun keepsHeroNamesWithTheirPlacesOnTheList() {
-        val e=HeroIndex.parse("0\tFlowborn\n3\tFlowborn\n7\tBolt Baron\n-1\tViolet\nx\tQi\n5\t12/100\n9\tChưa rõ tên\n")
-        assertEquals(listOf("0 Flowborn","3 Flowborn","7 Bolt Baron","-1 Qi","-1 Violet"),e.map { "${it.index} ${it.name}" })
-        assertEquals(listOf(7),HeroIndex.find(e,"Bolt Barom").map { it.index })
-        assertEquals(listOf(0,3),HeroIndex.find(e,"flowborn").map { it.index })
-        assertEquals(listOf<Int>(),HeroIndex.find(e,"Violet").map { it.index })
-        assertEquals(listOf("Bolt Baron","Flowborn","Qi","Violet"),HeroIndex.names(e))
+        val e = HeroIndex.parse("0\tFlowborn\n3\tFlowborn\n7\tBolt Baron\n-1\tViolet\nx\tQi\n5\t12/100\n9\tChưa rõ tên\n")
+        assertEquals(listOf("0 Flowborn", "3 Flowborn", "7 Bolt Baron", "-1 Qi", "-1 Violet"), e.map { "${it.index} ${it.name}" })
+        assertEquals(listOf(7), HeroIndex.find(e, "Bolt Barom").map { it.index })
+        assertEquals(listOf(0, 3), HeroIndex.find(e, "flowborn").map { it.index })
+        assertEquals(listOf<Int>(), HeroIndex.find(e, "Violet").map { it.index })
+        assertEquals(listOf("Bolt Baron", "Flowborn", "Qi", "Violet"), HeroIndex.names(e))
         // Seen on the list: placed, no longer a name alone; a card read again takes the name read.
-        val placed=HeroIndex.put(HeroIndex.put(e,8,"Violet"),7,"Tamyn")
-        assertEquals(listOf("0 Flowborn","3 Flowborn","7 Tamyn","8 Violet","-1 Qi"),placed.map { "${it.index} ${it.name}" })
-        assertEquals(placed.map { "${it.index} ${it.name}" },HeroIndex.parse(HeroIndex.format(placed)).map { "${it.index} ${it.name}" })
+        val placed = HeroIndex.put(HeroIndex.put(e, 8, "Violet"), 7, "Tamyn")
+        assertEquals(listOf("0 Flowborn", "3 Flowborn", "7 Tamyn", "8 Violet", "-1 Qi"), placed.map { "${it.index} ${it.name}" })
+        assertEquals(placed.map { "${it.index} ${it.name}" }, HeroIndex.parse(HeroIndex.format(placed)).map { "${it.index} ${it.name}" })
         // A name alone adds nothing for a hero already placed.
-        assertEquals(5,HeroIndex.put(placed,-1,"Flowborn").size)
+        assertEquals(5, HeroIndex.put(placed, -1, "Flowborn").size)
     }
 
     @Test fun findsAHeroByNameWhereverTheListPutsIt() {
-        val names=List(61) { "Hero $it" }.toMutableList().also { it[47]="Bolt Baron"; it[3]="Flowborn"; it[0]="Flowborn" }
+        val names = List(61) { "Hero $it" }.toMutableList().also {
+            it[47] = "Bolt Baron"
+            it[3] = "Flowborn"
+            it[0] = "Flowborn"
+        }
         // Where it was last seen.
-        assertEquals(47 to "tapped 47",Run(61,2,1.0..1.3,names=names).search("Bolt Baron",47))
+        assertEquals(47 to "tapped 47", Run(61, 2, 1.0..1.3, names = names).search("Bolt Baron", 47))
         // A new hero pushed it one card on: the card at the old place is another, and the list is searched.
-        assertEquals(47 to "tapped 47",Run(61,2,1.0..1.3,names=names).search("Bolt Baron",46))
+        assertEquals(47 to "tapped 47", Run(61, 2, 1.0..1.3, names = names).search("Bolt Baron", 46))
         // Never seen: down the list from the top, read as ML Kit may, a letter off.
-        assertEquals(47 to "tapped 47",Run(61,2,1.0..1.3,names=names).search("Bolt Barom",-1))
+        assertEquals(47 to "tapped 47", Run(61, 2, 1.0..1.3, names = names).search("Bolt Barom", -1))
         // Pushed a row on, off the screen of the old place: found on the next screens.
-        assertEquals(47 to "tapped 47",Run(61,2,1.0..1.3,names=names).search("Bolt Baron",43))
+        assertEquals(47 to "tapped 47", Run(61, 2, 1.0..1.3, names = names).search("Bolt Baron", 43))
         // Moved back towards the top: past the end of the list, then back up.
-        assertEquals(47 to "tapped 47",Run(61,2,1.0..1.3,names=names).search("Bolt Baron",56))
+        assertEquals(47 to "tapped 47", Run(61, 2, 1.0..1.3, names = names).search("Bolt Baron", 56))
         // Two cards of one name: the one remembered.
-        assertEquals(3 to "tapped 3",Run(61,2,1.0..1.3,names=names).search("Flowborn",3))
+        assertEquals(3 to "tapped 3", Run(61, 2, 1.0..1.3, names = names).search("Flowborn", 3))
         // Not on the list: to its end.
-        val run=Run(61,2,1.0..1.3,names=names); val (card,end)=run.search("Tamyn",10)
-        assertEquals(null to "End",card to end.substringAfterLast('$').substringBefore('@'))
+        val run = Run(61, 2, 1.0..1.3, names = names)
+        val (card, end) = run.search("Tamyn", 10)
+        assertEquals(null to "End", card to end.substringAfterLast('$').substringBefore('@'))
     }
 
-    private fun assertCollectsAll(heroes:Int,seed:Int,slide:ClosedFloatingPointRange<Double>,startAt:Double=0.0) {
-        val (tapped,end)=Run(heroes,seed,slide,startAt).collect(heroes+3)
-        assertEquals("tapped cards",(0 until heroes).toList(),tapped)
-        assertEquals("end at $heroes",end)
+    private fun assertCollectsAll(heroes: Int, seed: Int, slide: ClosedFloatingPointRange<Double>, startAt: Double = 0.0) {
+        val (tapped, end) = Run(heroes, seed, slide, startAt).collect(heroes + 3)
+        assertEquals("tapped cards", (0 until heroes).toList(), tapped)
+        assertEquals("end at $heroes", end)
     }
 
-    @Test fun oddLastRowIsCollectedOnceAndTheRunStopsAtTheEnd() = assertCollectsAll(61,6,1.0..1.3)
-    @Test fun fullRosterWithFourCardsInTheLastRow() = assertCollectsAll(129,1,1.0..1.3)
-    @Test fun shortListNeedsNoScroll() = assertCollectsAll(7,4,1.0..1.3)
-    @Test fun startsMidListByReturningToTheTop() = assertCollectsAll(43,8,1.0..1.3,startAt=.6)
+    @Test fun oddLastRowIsCollectedOnceAndTheRunStopsAtTheEnd() = assertCollectsAll(61, 6, 1.0..1.3)
+
+    @Test fun fullRosterWithFourCardsInTheLastRow() = assertCollectsAll(129, 1, 1.0..1.3)
+
+    @Test fun shortListNeedsNoScroll() = assertCollectsAll(7, 4, 1.0..1.3)
+
+    @Test fun startsMidListByReturningToTheTop() = assertCollectsAll(43, 8, 1.0..1.3, startAt = .6)
+
     /** If resting the finger does not stop the slide, swipes go 1.5-2.3 times as far; smaller steps must still keep count. */
-    @Test fun keepsCountWhenSwipesSlideFarBeyondTheDrag() = assertCollectsAll(129,3,1.5..2.3)
+    @Test fun keepsCountWhenSwipesSlideFarBeyondTheDrag() = assertCollectsAll(129, 3, 1.5..2.3)
 
     @Test fun shiftIsMeasuredBothWaysAndRejectedWithoutOverlap() {
-        val list=FakeList(60,9,1.0..1.0); list.offset=500.0; val a=HeroGrid.profile(list.w,list.h,list::readRow)
-        list.offset=1250.0; assertEquals(750,HeroGrid.shift(a,HeroGrid.profile(list.w,list.h,list::readRow)).px)
-        list.offset=320.0; assertEquals(-180,HeroGrid.shift(a,HeroGrid.profile(list.w,list.h,list::readRow)).px)
-        list.offset=2000.0; assertFalse(HeroGrid.shift(a,HeroGrid.profile(list.w,list.h,list::readRow)).reliable)
+        val list = FakeList(60, 9, 1.0..1.0)
+        list.offset = 500.0
+        val a = HeroGrid.profile(list.w, list.h, list::readRow)
+        list.offset = 1250.0
+        assertEquals(750, HeroGrid.shift(a, HeroGrid.profile(list.w, list.h, list::readRow)).px)
+        list.offset = 320.0
+        assertEquals(-180, HeroGrid.shift(a, HeroGrid.profile(list.w, list.h, list::readRow)).px)
+        list.offset = 2000.0
+        assertFalse(HeroGrid.shift(a, HeroGrid.profile(list.w, list.h, list::readRow)).reliable)
     }
 
     /** The run in the report stopped on Edras's page: the game had ignored the macro's back tap. */
     @Test fun returnsToTheListWhenTheGameIgnoredTheBackTap() {
-        val run=Run(61,5,1.0..1.3)
-        val (tapped,end)=run.collect(64,ignoredBack=setOf(4,17,40))
-        assertEquals("tapped cards",(0 until 61).toList(),tapped)
-        assertEquals("end at 61",end)
-        assertEquals(3,run.backs)
-        assertEquals("each screen left with the arrow is kept for the log",listOf("not-list-1","not-list-1","not-list-1"),run.kept.filter { it.startsWith("not-list") })
+        val run = Run(61, 5, 1.0..1.3)
+        val (tapped, end) = run.collect(64, ignoredBack = setOf(4, 17, 40))
+        assertEquals("tapped cards", (0 until 61).toList(), tapped)
+        assertEquals("end at 61", end)
+        assertEquals(3, run.backs)
+        assertEquals(
+            "each screen left with the arrow is kept for the log",
+            listOf("not-list-1", "not-list-1", "not-list-1"),
+            run.kept.filter {
+                it.startsWith("not-list")
+            }
+        )
     }
+
     @Test fun waitsForAListThatIsStillAppearingInsteadOfTappingBack() {
-        val run=Run(7,4,1.0..1.3).apply { list.page=FakeList.Page.HERO; closingLooks=1 }
-        assertEquals((0 until 7).toList() to "end at 7",run.collect(10))
-        assertEquals(0,run.backs)
+        val run = Run(7, 4, 1.0..1.3).apply {
+            list.page = FakeList.Page.HERO
+            closingLooks = 1
+        }
+        assertEquals((0 until 7).toList() to "end at 7", run.collect(10))
+        assertEquals(0, run.backs)
     }
+
     @Test fun doesNotTapWhereTheGameShowsNoBackArrow() {
-        val run=Run(20,2,1.0..1.3).apply { list.page=FakeList.Page.LOBBY }
-        val (tapped,end)=run.collect(5)
+        val run = Run(20, 2, 1.0..1.3).apply { list.page = FakeList.Page.LOBBY }
+        val (tapped, end) = run.collect(5)
         assertTrue(tapped.isEmpty())
-        assertEquals("failed at 0: Màn hình hiện tại không phải danh sách Tất cả tướng. Mở danh sách rồi bấm Tiếp tục.",end)
-        assertEquals(0,run.backs); assertEquals(0,run.swipes)
+        assertEquals("failed at 0: Màn hình hiện tại không phải danh sách Tất cả tướng. Mở danh sách rồi bấm Tiếp tục.", end)
+        assertEquals(0, run.backs)
+        assertEquals(0, run.swipes)
     }
+
     /**
      * Crops of real 2400x1080 screens, placed at the top left of an otherwise black screen. They are binary
      * PPM files (gzipped), since unit tests compile against android.jar, which has no image decoder.
      */
     @Test fun backArrowIsFoundOnRealScreensOnly() {
-        fun arrow(name:String):Boolean {
-            val input=DataInputStream(GZIPInputStream(javaClass.getResourceAsStream("/screens/$name.ppm.gz")!!))
-            fun token()=buildString { while(true) { val c=input.readUnsignedByte().toChar(); if(c.isWhitespace()) { if(isNotEmpty()) break } else append(c) } }
-            check(token()=="P6"); val w=token().toInt(); val h=token().toInt(); check(token()=="255")
-            val rgb=ByteArray(w*h*3).also { input.readFully(it) }
-            return HeroGrid.hasBackArrow(2400,1080) { y,row -> for(x in row.indices) row[x]=if(x<w&&y<h) { val i=(y*w+x)*3
-                (0xff shl 24) or ((rgb[i].toInt() and 255) shl 16) or ((rgb[i+1].toInt() and 255) shl 8) or (rgb[i+2].toInt() and 255) } else 0xff000000.toInt() }
+        fun arrow(name: String): Boolean {
+            val input = DataInputStream(GZIPInputStream(javaClass.getResourceAsStream("/screens/$name.ppm.gz")!!))
+
+            fun token() = buildString {
+                while (true) {
+                    val c = input.readUnsignedByte().toChar()
+                    if (c.isWhitespace()) {
+                        if (isNotEmpty()) break
+                    } else {
+                        append(c)
+                    }
+                }
+            }
+            check(token() == "P6")
+            val w = token().toInt()
+            val h = token().toInt()
+            check(token() == "255")
+            val rgb = ByteArray(w * h * 3).also { input.readFully(it) }
+            return HeroGrid.hasBackArrow(2400, 1080) { y, row ->
+                for (x in row.indices) {
+                    row[x] = if (x < w && y < h) {
+                        val i = (y * w + x) * 3
+                        (0xff shl 24) or ((rgb[i].toInt() and 255) shl 16) or ((rgb[i + 1].toInt() and 255) shl 8) or
+                            (rgb[i + 2].toInt() and 255)
+                    } else {
+                        0xff000000.toInt()
+                    }
+                }
+            }
         }
-        for(name in listOf("back-arrow-list","back-arrow-skill-panel","back-arrow-edras")) assertTrue(name,arrow(name))
-        for(name in listOf("no-arrow-hair","no-arrow-currency","no-arrow-card")) assertFalse(name,arrow(name))
+        for (name in listOf("back-arrow-list", "back-arrow-skill-panel", "back-arrow-edras")) assertTrue(name, arrow(name))
+        for (name in listOf("no-arrow-hair", "no-arrow-currency", "no-arrow-card")) assertFalse(name, arrow(name))
     }
 
     @Test fun anotherScreenIsNotTakenForTheList() {
-        val busy=IntArray(2400) { x -> (0xff shl 24) or (((x*7919) and 255) shl 8) }
-        assertFalse(HeroGrid.isGrid(2400,1080) { _,row -> busy.copyInto(row) })
-        val list=FakeList(20,2,1.0..1.0); assertTrue(HeroGrid.isGrid(list.w,list.h,list::readRow))
+        val busy = IntArray(2400) { x -> (0xff shl 24) or (((x * 7919) and 255) shl 8) }
+        assertFalse(HeroGrid.isGrid(2400, 1080) { _, row -> busy.copyInto(row) })
+        val list = FakeList(20, 2, 1.0..1.0)
+        assertTrue(HeroGrid.isGrid(list.w, list.h, list::readRow))
     }
 }
