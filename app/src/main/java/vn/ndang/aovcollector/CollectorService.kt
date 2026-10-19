@@ -2013,8 +2013,9 @@ class CollectorService : AccessibilityService() {
                     var ended = false
                     var timeout: Runnable? = null
 
-                    fun complete(result: NativeResult) {
+                    fun complete(result: NativeResult, reason: String? = null) {
                         if (ended) return
+                        if (result == NativeResult.FAILED && reason != null) note("Native Save Photo failed: $reason")
                         ended = true
                         timeout?.let { handler.removeCallbacks(it) }
                         captureShield.release(transaction)
@@ -2035,7 +2036,7 @@ class CollectorService : AccessibilityService() {
                     timeout = Runnable {
                         if (active()) {
                             pause("Lưu ảnh gốc quá 15 giây. Kiểm tra Save Photo rồi bấm Tiếp tục.")
-                            complete(NativeResult.FAILED)
+                            complete(NativeResult.FAILED, "transaction timed out after 15 seconds")
                         }
                     }
                     handler.postDelayed(timeout!!, 15_000L)
@@ -2096,6 +2097,7 @@ class CollectorService : AccessibilityService() {
                     }
 
                     fun settledPrompt(
+                        phase: String,
                         waitMs: Long,
                         ready: (Pair<List<GameScreens.Word>, NativeSaveEvidence.Scene>) -> Boolean,
                         done: (List<GameScreens.Word>, NativeSaveEvidence.Scene) -> Unit
@@ -2109,17 +2111,27 @@ class CollectorService : AccessibilityService() {
                             ::readPrompt,
                             ready
                         ) { evidence ->
-                            if (evidence == null) {
-                                complete(NativeResult.FAILED)
+                            fun deliver(value: Pair<List<GameScreens.Word>, NativeSaveEvidence.Scene>?) {
+                                if (value == null) {
+                                    complete(NativeResult.FAILED, "$phase: screenshot/OCR unavailable")
+                                } else {
+                                    if (!ready(value)) note("Native Save Photo $phase: unresolved scene=${value.second}")
+                                    done(value.first, value.second)
+                                }
+                            }
+                            if (preserveDetail) {
+                                NativeSaveReadiness.verify(evidence, ::active, ::later, ::readPrompt, ready, ::deliver)
                             } else {
-                                done(evidence.first, evidence.second)
+                                deliver(evidence)
                             }
                         }
                     }
                     touchGame(hold, false) { pushed ->
                         if (!active()) return@touchGame
-                        if (!pushed) return@touchGame complete(NativeResult.FAILED)
-                        settledPrompt(1000, { ChessWiki.nativeConfirm(it.first) != null }) { words, scene ->
+                        if (!pushed) return@touchGame complete(NativeResult.FAILED, "long-press rejected")
+                        settledPrompt("after long-press", 1000, {
+                            ChessWiki.nativeConfirm(it.first) != null || preserveDetail && it.second == NativeSaveEvidence.Scene.DETAIL
+                        }) { words, scene ->
                             val answer = ChessWiki.nativeConfirm(words)
                             val cancel = ChessWiki.nativeCancel(words)
                             if (answer == null) {
@@ -2153,12 +2165,14 @@ class CollectorService : AccessibilityService() {
                                     }
                                     scene == NativeSaveEvidence.Scene.PAGE && !preserveDetail ->
                                         complete(NativeResult.ABSENT)
-                                    else -> complete(NativeResult.FAILED)
+                                    else -> complete(NativeResult.FAILED, "after long-press: scene=$scene, no verified Sure")
                                 }
                             } else {
                                 tapNative(answer.first, answer.second) { pressed ->
-                                    if (!pressed) return@tapNative complete(NativeResult.FAILED)
-                                    settledPrompt(1150, { it.second == NativeSaveEvidence.Scene.PAGE }) { confirmWords, afterSave ->
+                                    if (!pressed) return@tapNative complete(NativeResult.FAILED, "Sure tap rejected")
+                                    settledPrompt("after Sure", 1150, {
+                                        it.second == if (preserveDetail) NativeSaveEvidence.Scene.DETAIL else NativeSaveEvidence.Scene.PAGE
+                                    }) { confirmWords, afterSave ->
                                         if (afterSave == NativeSaveEvidence.Scene.PROMPT) {
                                             val cancelPrompt = ChessWiki.nativeCancel(confirmWords)
                                             if (cancelPrompt != null) {
@@ -2170,7 +2184,10 @@ class CollectorService : AccessibilityService() {
                                         } else if (afterSave == NativeSaveEvidence.Scene.UNKNOWN ||
                                             (preserveDetail && afterSave != NativeSaveEvidence.Scene.DETAIL)
                                         ) {
-                                            complete(NativeResult.FAILED)
+                                            complete(
+                                                NativeResult.FAILED,
+                                                "after Sure: expected preserved detail=$preserveDetail, scene=$afterSave"
+                                            )
                                         } else {
                                             try {
                                                 io.execute {
@@ -2183,7 +2200,12 @@ class CollectorService : AccessibilityService() {
                                                         false
                                                     }
                                                     handler.post {
-                                                        if (active()) complete(if (marked) NativeResult.SAVED else NativeResult.FAILED)
+                                                        if (active()) {
+                                                            complete(
+                                                                if (marked) NativeResult.SAVED else NativeResult.FAILED,
+                                                                "save mark write failed"
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             } catch (e: Exception) {

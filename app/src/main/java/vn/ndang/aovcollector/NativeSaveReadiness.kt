@@ -42,4 +42,31 @@ internal object NativeSaveReadiness {
         }
         if (early) take(false) else later(waitMs) { take(true) }
     }
+
+    /** One fresh verification read, without repeating the long-press or confirmation tap. */
+    fun <T> verify(
+        initial: T?,
+        active: () -> Boolean,
+        later: (Long, () -> Unit) -> Unit,
+        read: ((T?) -> Unit) -> Unit,
+        ready: (T) -> Boolean,
+        then: (T?) -> Unit
+    ) {
+        if (!active()) return
+        if (initial != null && ready(initial)) {
+            then(initial)
+            return
+        }
+        later(700L) {
+            if (active()) {
+                var returned = false
+                read { value ->
+                    if (!returned && active()) {
+                        returned = true
+                        then(value)
+                    }
+                }
+            }
+        }
+    }
 }
