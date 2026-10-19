@@ -341,7 +341,9 @@ class UiSmoke:Instrumentation() {
             }
             val closePreview=cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Đóng") }.first { it.text?.toString()?.equals("Đóng",true)==true }
             check(closePreview.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            runOnMainSync { cleanupActivity.finish() }
             waitForIdleSync();SystemClock.sleep(300)
+            check(FileJob.screen==null) { "Cleanup preview left its activity in front of background-job tests" }
             check(GamePhotoImport.scan(targetContext,photoTree).size==4) { "Preview cancellation deleted a source" }
             // Destructive engine check is confined to this synthetic provider, never user Pictures.
             val eligible=GamePhotoCleanup.preview(targetContext,nativeRun)
