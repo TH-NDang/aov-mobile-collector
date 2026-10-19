@@ -28,7 +28,7 @@ public class PhotoTestProvider extends DocumentsProvider {
         values.put(Document.COLUMN_DOCUMENT_ID,id);values.put(Document.COLUMN_DISPLAY_NAME,id);
         values.put(Document.COLUMN_MIME_TYPE,root?Document.MIME_TYPE_DIR:id.endsWith(".zip")?"application/zip":"image/jpeg");
         values.put(Document.COLUMN_SIZE,file.length());values.put(Document.COLUMN_LAST_MODIFIED,file.lastModified());
-        values.put(Document.COLUMN_FLAGS,root?Document.FLAG_DIR_SUPPORTS_CREATE:Document.FLAG_SUPPORTS_WRITE);
+        values.put(Document.COLUMN_FLAGS,root?Document.FLAG_DIR_SUPPORTS_CREATE:(Document.FLAG_SUPPORTS_WRITE|Document.FLAG_SUPPORTS_DELETE));
         MatrixCursor.RowBuilder row=cursor.newRow();for(String column:cursor.getColumnNames()) row.add(values.get(column));
     }
     @Override public Cursor queryRoots(String[] projection) {

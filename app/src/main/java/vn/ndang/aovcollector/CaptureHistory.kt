@@ -21,7 +21,7 @@ object CaptureHistory {
         if(hero.isNotBlank()&&hero!="Chưa rõ tên") return HeroNames.slug(hero)
         val parts=f.nameWithoutExtension.substringAfter("chess__","").split("__")
         if(parts.size>=4&&parts[2] !in setOf("trang","hang")) return HeroNames.slug(parts[3])
-        if(path.startsWith(GamePhotoImport.ROOT+"/"))
+        if(ChessCaptureFiles.nativeRelativePath(path)!=null)
             return f.nameWithoutExtension.replace(Regex("-[a-f0-9]{14}$"),"").ifBlank { "anh-goc" }
         return if(parts.size>=2) HeroNames.slug(parts[1]) else "anh-chup"
     }
@@ -96,9 +96,9 @@ object CaptureHistory {
         "interrupted" -> "Lưu bị gián đoạn";else -> "Lưu thất bại"
     }
     fun description(path:String):String {
-        if(path.startsWith(GamePhotoImport.ROOT+"/")) {
-            val p=path.removePrefix(GamePhotoImport.ROOT+"/")
-            val group=GamePhotoImport.GROUPS.firstOrNull { it.key!="chua-phan-loai"&&p.startsWith(GamePhotoImport.groupPath(it.key)+"/") }
+        if(ChessCaptureFiles.nativeRelativePath(path)!=null) {
+            val key=ChessCaptureFiles.nativeGroup(path)
+            val group=GamePhotoImport.GROUPS.firstOrNull { it.key==key }
             return "Ảnh gốc"+(group?.let { " · "+it.title }?:"")
         }
         ChessCaptureFiles.detail(path)?.let { return "Quân cờ · Chi tiết · Trang ${it.page}" }

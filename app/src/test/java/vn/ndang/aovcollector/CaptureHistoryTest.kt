@@ -18,4 +18,16 @@ class CaptureHistoryTest {
         assertEquals("Ảnh gốc · Quân cờ · Ảnh nhân vật",CaptureHistory.description(
             "anh-goc-co-lien-quan/quan-co/anh-quan-co/run-1/violet-head.jpg"))
     }
+
+    @Test fun runLocalNativeImagesAreNeverDescribedAsScreenshotsOrSkillSummaries() {
+        assertEquals("Ảnh gốc · Quân cờ · Ảnh nhân vật",CaptureHistory.description(
+            "run-1/anh-goc/quan-co/anh-quan-co/violet-head.jpg"))
+        assertEquals("Ảnh gốc · Quân cờ · Ảnh chiêu",CaptureHistory.description(
+            "run-1/anh-goc/quan-co/chieu-quan-co/violet-skill-2.png"))
+        assertEquals("Ảnh gốc · Trang bị",CaptureHistory.description(
+            "run-1/anh-goc/trang-bi/trang-bi-icon-3.webp"))
+        assertEquals("Ảnh gốc · Chúc Phúc · Thường",CaptureHistory.description(
+            "run-1/anh-goc/chuc-phuc/thuong/giay-phut-huy-hoang.jpg"))
+        assertEquals("Chiêu 2 · Tóm tắt",CaptureHistory.description("run-1/violet-skill-2.png"))
+    }
 }

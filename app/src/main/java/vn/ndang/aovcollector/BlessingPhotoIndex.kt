@@ -27,7 +27,7 @@ object BlessingPhotoIndex {
         require(ChessBlessings.isGroup(group)&&ChessBlessings.isKey(key))
         require(within(root,file)&&file.isFile&&file.length()>0&&file.canRead())
         val records=read(index)
-        records.put(identity(group,key),JSONObject().put("path",file.relativeTo(root).invariantSeparatorsPath)
+        records.put(identity(group,key),JSONObject().put("schemaVersion",2).put("path",file.relativeTo(root).invariantSeparatorsPath)
             .put("size",file.length()).put("sha256",sha(file)).put("aliases",JSONArray(aliases.sorted())))
         index.parentFile?.mkdirs()
         val temp=File(index.parentFile,index.name+".part")
@@ -37,7 +37,18 @@ object BlessingPhotoIndex {
 
     /** Missing, deleted, truncated, replaced or unreadable pictures never suppress a fresh save. */
     fun hasSaved(index:File,root:File,group:String,key:String,aliases:Set<String> =emptySet()):Boolean {
-        if(!ChessBlessings.isGroup(group)||!ChessBlessings.isKey(key)) return false
+        return findSaved(index,root,group,key,aliases)!=null
+    }
+
+    data class Saved(val file:File,val key:String,val aliases:Set<String>,val integrity:OriginalPhotoCopy.Integrity)
+
+    /** Old records were relative to the separate Pictures collection; new ones use captures/. */
+    fun findSaved(index:File,root:File,group:String,key:String,aliases:Set<String> =emptySet(),
+                  legacyRoot:File?=null):File? = findRecord(index,root,group,key,aliases,legacyRoot)?.file
+
+    fun findRecord(index:File,root:File,group:String,key:String,aliases:Set<String> =emptySet(),
+                   legacyRoot:File?=null):Saved? {
+        if(!ChessBlessings.isGroup(group)||!ChessBlessings.isKey(key)) return null
         val records=read(index)
         val exact=identity(group,key)
         val candidates=records.keys().asSequence().filter { stored ->
@@ -48,12 +59,20 @@ object BlessingPhotoIndex {
                 previous+stored.removePrefix(group+":"),aliases+key)
         }.toList()
         // Ambiguous near-matches must never choose an arbitrary existing blessing.
-        val matched=if(records.has(exact)) exact else candidates.singleOrNull()?:return false
-        val entry=records.optJSONObject(matched)?:return false
+        val matched=if(records.has(exact)) exact else candidates.singleOrNull()?:return null
+        val entry=records.optJSONObject(matched)?:return null
         val path=entry.getString("path")
-        val file=File(root,path)
-        if(path.isBlank()||!within(root,file)||!file.isFile||!file.canRead()||
-            file.length()<=0||file.length()!=entry.getLong("size")) return false
-        return try { sha(file)==entry.getString("sha256") } catch(_:java.io.IOException) { false }
+        val base=if(entry.optInt("schemaVersion",1)>=2) root else legacyRoot?:root
+        val file=File(base,path)
+        if(path.isBlank()||!within(base,file)||!file.isFile||!file.canRead()||
+            file.length()<=0||file.length()!=entry.getLong("size")) return null
+        return try {
+            if(sha(file)!=entry.getString("sha256")) null else {
+                val art=entry.optJSONArray("aliases")
+                Saved(file,matched.removePrefix(group+":"),
+                    (0 until (art?.length()?:0)).map { art!!.getString(it) }.toSet(),
+                    OriginalPhotoCopy.Integrity(entry.getLong("size"),entry.getString("sha256")))
+            }
+        } catch(_:java.io.IOException) { null }
     }
 }

@@ -7,8 +7,6 @@ import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
 import com.google.mlkit.vision.text.TextRecognition
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions
-import java.text.Normalizer
-import java.util.Locale
 import java.util.concurrent.TimeUnit
 
 object HeroNames {
@@ -82,7 +80,5 @@ object HeroNames {
             Tasks.await(task,8,TimeUnit.SECONDS)
         } catch(e:Exception) { null }
     }
-    fun slug(name:String):String = Normalizer.normalize(name,Normalizer.Form.NFD).replace(Regex("\\p{M}+"),"")
-        .lowercase(Locale.ROOT).replace('đ','d').replace("'","").replace("\u2019","")
-        .replace(Regex("[^a-z0-9]+"),"-").trim('-').take(48).ifEmpty { "chua-ro-ten" }
+    fun slug(name:String):String = StorageNames.ascii(name).take(48).ifEmpty { "chua-ro-ten" }
 }

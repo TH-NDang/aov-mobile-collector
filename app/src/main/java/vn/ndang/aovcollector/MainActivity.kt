@@ -79,9 +79,9 @@ class MainActivity : Activity() {
     private fun meta(dir:File):JSONObject = try { JSONObject(File(dir,if(File(dir,"hero.json").exists()) "hero.json" else "run.json").readText()) } catch(_:Exception) { JSONObject() }
     private fun photos(dir:File)=dir.walkTopDown().filter { GamePhotoImport.isImage(it) }.toList()
     private fun title(file:File):String {
-        val photoRoot=File(captures,GamePhotoImport.ROOT)
-        val photoPath=if(file.path.startsWith(photoRoot.path+File.separator))
-            file.relativeTo(photoRoot).invariantSeparatorsPath else null
+        val capturePath=if(file.path.startsWith(captures.path+File.separator))
+            file.relativeTo(captures).invariantSeparatorsPath else null
+        val photoPath=capturePath?.let(ChessCaptureFiles::nativeRelativePath)
         if(!file.isDirectory) {
             if(file.path.startsWith(captures.path+File.separator))
                 ChessCaptureFiles.exactDisplayName(file.relativeTo(captures).invariantSeparatorsPath)
@@ -110,20 +110,7 @@ class MainActivity : Activity() {
             }
         }
         RankScreens.folderTitle(file.name)?.let { return it }
-        if(file.name==GamePhotoImport.ROOT) return "Ảnh gốc Cờ Liên Quân · Pictures"
-        photoPath?.let { path ->
-            GamePhotoImport.nativeFolderTitle(path)?.let { return it }
-            val parent=path.substringBeforeLast('/',"")
-            if(GamePhotoImport.nativeFolderTitle(parent)!=null)
-                return "Lượt "+file.name.replace('-',' ')
-        }
-        // A profession/faction detail folder is not a native-photo run merely because its
-        // parent is named nghe/phe. Keep legacy run labels inside the native-photo root only.
-        if(photoPath!=null) {
-            GamePhotoImport.GROUPS.firstOrNull { it.key==file.name }?.let { return it.title }
-            if(file.parentFile?.name in GamePhotoImport.GROUPS.map { it.key })
-                return "Lượt "+file.name.replace('-',' ')
-        }
+        capturePath?.let(ChessCaptureFiles::nativeFolderTitle)?.let { return it }
         ChessWiki.TOPICS.firstOrNull { it.key==file.name }?.let { return it.label }
         when(file.name) {
             "thong-tin" -> return "Thông tin cơ bản"
@@ -270,10 +257,10 @@ class MainActivity : Activity() {
         headerAction(row,"float","Bảng nổi",Ui.accent) { val service=CollectorService.current;if(service==null) message("Bấm Bật Trợ năng, bật AOV Collector rồi quay lại.") else { service.showPanel();Toast.makeText(this,"Mở game, bấm Chọn macro trên bảng nổi để chọn cách chụp.",Toast.LENGTH_LONG).show() } }
         top.addView(row)
         top.addView(Ui.text(this,
-            if(GamePhotoImport.hasSource(this)) "Ảnh từ Pictures · "+GamePhotoImport.sourceLabel(this)+" ›"
-            else "Ảnh từ Pictures · Chọn thư mục để chép vào app ›",12f,Ui.accent,true).apply {
+            if(GamePhotoImport.hasSource(this)) "Tự đồng bộ ảnh gốc theo lượt · "+GamePhotoImport.sourceLabel(this)+" ›"
+            else "Ảnh gốc theo lượt · Chọn Pictures một lần ›",12f,Ui.accent,true).apply {
             setPadding(dp(6),dp(8),dp(6),dp(5))
-            contentDescription="Đồng bộ ảnh đã lưu trong Pictures vào app"
+            contentDescription="Thiết lập tự đồng bộ ảnh gốc vào cùng lượt thu thập"
             setOnClickListener { gamePhotosDialog() }
         })
         top.addView(Ui.text(this,"Sau khi hoàn tất · Drive → dot của bạn ›",12f,Ui.accent,true).apply {
@@ -563,10 +550,14 @@ class MainActivity : Activity() {
     private fun itemMenu(file:File) {
         val events=File(file,"events.txt")
         val steps=File(file,"${GameEntry.TRACE_DIR}/steps.jsonl")
-        val labels=if(file.isDirectory) listOfNotNull("Lưu thư mục thành ZIP","Sao chép vào Pictures / thư mục…","Đổi tên","Xóa thư mục",if(events.exists()) "Nhật ký lượt" else null,if(steps.exists()) "Xem lại các bước vào game" else null) else listOf("Lưu ảnh trong ZIP","Sao chép vào Pictures / thư mục…","Xóa ảnh")
+        val cleanup=file.isDirectory&&file.parentFile==captures&&
+            GamePhotoSession.state(this,file.name)?.optInt("storageVersion",0)?.let { it>=2 }==true
+        val labels=if(file.isDirectory) listOfNotNull("Lưu thư mục thành ZIP","Sao chép vào Pictures / thư mục…","Đổi tên","Xóa thư mục",if(events.exists()) "Nhật ký lượt" else null,if(steps.exists()) "Xem lại các bước vào game" else null,if(cleanup) "Dọn ảnh đã đồng bộ…" else null) else listOf("Lưu ảnh trong ZIP","Sao chép vào Pictures / thư mục…","Xóa ảnh")
         AlertDialog.Builder(this).setTitle(title(file)).setItems(labels.toTypedArray()) { _,i -> when(labels[i]) {
             "Lưu thư mục thành ZIP","Lưu ảnh trong ZIP" -> requestExport(listOf(file)); "Sao chép vào Pictures / thư mục…" -> requestCopy(listOf(file)); "Đổi tên" -> rename(file); "Nhật ký lượt" -> runLog(events)
-            "Xem lại các bước vào game" -> entrySteps(steps.parentFile!!); else -> delete(listOf(file)) } }.show()
+            "Xem lại các bước vào game" -> entrySteps(steps.parentFile!!)
+            "Dọn ảnh đã đồng bộ…" -> GamePhotoCleanupDialog.show(this,file.name)
+            else -> delete(listOf(file)) } }.show()
     }
     /** Starts, pauses with their reasons, failures and the end of a run, written by the collector. */
     private fun runLog(events:File) {
@@ -642,9 +633,10 @@ class MainActivity : Activity() {
                 val stats=GamePhotoSession.importNew(this,runId,{ FileJob.cancelled }) { n,total,name ->
                     FileJob.report(n.toLong(),total.toLong(),"Đang chép ảnh "+n+"/"+total,name)
                 }
+                val sameRun=(GamePhotoSession.state(this,runId)?.optInt("storageVersion",1)?:1)>=2
                 "Trước lượt: "+stats.before+" ảnh · Sau lượt: "+stats.after+
                     " ảnh · Thêm: "+stats.added+" ảnh.\n"+
-                    "Đã sao chép vào app: "+stats.copied+" ảnh theo từng nhóm."+
+                    "Đã sao chép: "+stats.copied+(if(sameRun) " ảnh vào cùng lượt thu thập." else " ảnh vào thư mục ảnh gốc của lượt cũ.")+
                     (if(stats.already>0) " "+stats.already+" ảnh đã chép trước đó, không lặp." else "")+
                     (if(stats.uncertain>0) " Không lấy "+stats.uncertain+
                         " ảnh mới không khớp thao tác Save Photo được xác nhận." else "")+
@@ -677,10 +669,11 @@ class MainActivity : Activity() {
                 (if(state?.has("after")==true) "\nSố ảnh sau lượt: "+state.optInt("after") else "")+
                 (if(pending>0) "\nĐang chờ ảnh xuất hiện / đọc lại: "+pending else "")
              else "\nChưa có lượt tải ảnh gốc nào được ghi mốc.")+
-            "\n\nApp tự phân loại theo mục đang thu thập: Quân cờ, chiêu, Phe, Nghề, Trang bị và ba nhóm Chúc Phúc. "+
+            "\n\nVới lượt mới, sau Save Photo → Sure, app tự chép ảnh vào Ảnh gốc trong cùng lượt thu thập. Không cần nhập thủ công. "+
+            "Ảnh được phân loại theo mục đang thu thập: Quân cờ, chiêu, Phe, Nghề, Trang bị và ba nhóm Chúc Phúc. "+
             "Chỉ sao chép ảnh mới khớp thao tác lưu, không quét chép ảnh cũ trong Pictures."
         val options=arrayOf("Chọn / đổi thư mục Pictures",
-            "Đồng bộ các ảnh mới sau lượt thu thập","Mở ảnh gốc đã nhập trong Lịch sử")
+            "Thử đồng bộ lại ảnh đang chờ","Mở ảnh gốc của lượt gần nhất")
         // AlertDialog's message hides its item list. Use explicit buttons so source setup and
         // the imported gallery remain reachable even with a long session summary.
         val body=Ui.stack(this).apply { setPadding(dp(20),dp(4),dp(20),dp(12)) }
@@ -707,7 +700,8 @@ class MainActivity : Activity() {
                          else if(run==null) message("Hãy chạy macro Cờ Liên Quân, bật nhóm Tải ảnh gốc và lưu ảnh trước.")
                          else syncGamePhotoRun(run)
                     2 -> {
-                        val images=File(captures,GamePhotoImport.ROOT)
+                        val images=if(run!=null&&(state?.optInt("storageVersion",1)?:1)>=2)
+                            File(captures,"$run/${ChessCaptureFiles.NATIVE_FOLDER}") else File(captures,GamePhotoImport.ROOT)
                         if(images.isDirectory) {
                             historyTrail.add(folder);folder=images;selected.clear();showHistory()
                         } else message("Chưa có ảnh gốc nào được sao chép.")
@@ -719,7 +713,7 @@ class MainActivity : Activity() {
         dialog.show()
     }
 
-    private fun importMenu() { AlertDialog.Builder(this).setTitle("Nhập file").setItems(arrayOf("Ảnh và thư mục từ ZIP","Macro từ JSON","Ảnh từ Pictures vào app")) { _,i ->
+    private fun importMenu() { AlertDialog.Builder(this).setTitle("Nhập file").setItems(arrayOf("Ảnh và thư mục từ ZIP","Macro từ JSON","Thiết lập tự đồng bộ ảnh gốc")) { _,i ->
         if(!editable()) return@setItems
         if(i==2) gamePhotosDialog()
         else startActivityForResult(Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
@@ -788,6 +782,7 @@ class MainActivity : Activity() {
     }
     @Deprecated("Legacy activity result API") override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
         super.onActivityResult(requestCode,resultCode,data)
+        if(GamePhotoCleanupDialog.handleActivityResult(this,requestCode,resultCode,data)) return
         if(resultCode!=RESULT_OK) {
             if(requestCode==AfterRun.REQUEST_FOLDER||requestCode==AfterRun.REQUEST_ZIP)
                 AfterRunSettings.show(this) { showHistory() }
@@ -825,7 +820,7 @@ class MainActivity : Activity() {
         Thread {
             val result=try {
                 if(exporting) {
-                    val entries=pendingExport.flatMap { if(it.isDirectory) it.walkTopDown().filter { f->f.isFile }.toList() else listOf(it) }.distinctBy { it.canonicalPath }
+                    val entries=pendingExport.flatMap { if(it.isDirectory) it.walkTopDown().filter { f->f.isFile }.toList() else listOf(it) }.filter(CaptureExports::include).distinctBy { it.canonicalPath }
                     require(entries.isNotEmpty()) { "Không có file để lưu" }
                     val out=contentResolver.openOutputStream(uri)?:error("Không mở được nơi lưu")
                     val parts=try { ZipFiles.export(entries,captures,out,{ FileJob.cancelled }) { done,all,number,part,name ->

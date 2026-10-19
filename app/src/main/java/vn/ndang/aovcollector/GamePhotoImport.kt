@@ -88,8 +88,6 @@ object GamePhotoImport {
     data class Result(val copied:Int,val skipped:Int,val failed:Int,val cancelled:Boolean,val root:File)
     private fun sha(text:String)=MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
         .take(7).joinToString("") { "%02x".format(it) }
-    private fun safe(text:String):String=text.replace(Regex("[^a-zA-Z0-9_.-]"),"-").trim('.','-')
-        .take(70).ifBlank { "image" }
     /**
      * A bounded, breadth-first traversal of the folder the user explicitly picked.
      * Does not search unrelated folders on the phone.
@@ -165,7 +163,7 @@ object GamePhotoImport {
             if(ledger.has(id)||(!existing&&item.modified>0&&item.modified<cutoff-120_000)) { skipped++;continue }
             val ext=item.name.substringAfterLast('.', "jpg").lowercase().takeIf { imageExtension(it) }
                 ?:when(item.mime) { "image/png" -> "png";"image/webp" -> "webp";else -> "jpg" }
-            val filename=safe(item.name.substringBeforeLast('.',item.name))+"-"+id+"."+ext
+            val filename=StorageNames.importedImage(item.name,id,ext)
             val target=File(dest,filename)
             val temp=File(dest,filename+".part")
             try {

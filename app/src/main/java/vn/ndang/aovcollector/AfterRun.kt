@@ -142,9 +142,9 @@ object AfterRun {
         val runDir=File(captures,run)
         require(runDir.isDirectory) { "Không còn dữ liệu của lượt" }
         val nativeRun=HeroNames.slug(run).take(42).ifBlank { "anh" }
-        val native=File(captures,GamePhotoImport.ROOT).walkTopDown()
-            .filter { it.isDirectory&&it.name==nativeRun }.flatMap { it.walkTopDown() }.filter { it.isFile }.toList()
-        val files=(runDir.walkTopDown().filter { it.isFile }.toList()+native).filter { it.extension!="part" }.distinct()
+        val native=if(GamePhotoSession.state(c,run)?.optInt("storageVersion",1)==2) emptyList() else
+            File(captures,GamePhotoImport.ROOT).walkTopDown().filter { it.isDirectory&&it.name==nativeRun }.flatMap { it.walkTopDown() }.filter { it.isFile }.toList()
+        val files=(runDir.walkTopDown().filter { it.isFile }.toList()+native).filter(CaptureExports::include).distinct()
         require(files.isNotEmpty()) { "Lượt chưa có dữ liệu để lưu" }
         val task=state(c,run)?:error("Mất tiến độ lưu Drive")
         val uri=if(DocumentsContract.isTreeUri(tree)) {

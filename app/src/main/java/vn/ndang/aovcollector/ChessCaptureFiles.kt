@@ -2,6 +2,7 @@ package vn.ndang.aovcollector
 
 /** File/display names only. Keep the original chess token when choosing its collection folder. */
 object ChessCaptureFiles {
+    const val NATIVE_FOLDER="anh-goc"
     private val slug=Regex("[a-z0-9][a-z0-9-]{0,89}")
     private val detailToken=Regex("(?:[0-9]{4,}-)?chess__quan-co__tat-ca-quan-co__tuong__([a-z0-9][a-z0-9-]{0,89})__([0-9]{3,})")
     private val head=Regex("[a-z0-9][a-z0-9-]{0,89}-head")
@@ -107,6 +108,46 @@ object ChessCaptureFiles {
         return match.groupValues[1].toIntOrNull()?.let { Detail(tail[3],it) }
     }
 
+    /** Both layouts are readable; new originals belong to their capture run. */
+    fun nativeRelativePath(path:String):String? {
+        val parts=path.split('/')
+        if(parts.any { it.isBlank()||it==".."||it=="." }) return null
+        return when {
+            parts.first()==GamePhotoImport.ROOT -> parts.drop(1).joinToString("/")
+            parts.size>=2&&parts[1]==NATIVE_FOLDER -> parts.drop(2).joinToString("/")
+            else -> null
+        }
+    }
+
+    fun nativeGroup(path:String):String? {
+        val relative=nativeRelativePath(path)?:return null
+        val parts=relative.split('/')
+        if(!GamePhotoImport.imageExtension(parts.last().substringAfterLast('.',""))) return null
+        val legacy=path.substringBefore('/')==GamePhotoImport.ROOT
+        return GamePhotoImport.GROUPS.firstOrNull { group ->
+            if(group.key=="chua-phan-loai") false else {
+                val prefix=GamePhotoImport.groupPath(group.key).split('/')
+                parts.size==prefix.size+(if(legacy) 2 else 1)&&parts.take(prefix.size)==prefix
+            }
+        }?.key
+    }
+
+    fun nativeFolderTitle(path:String):String? {
+        val relative=nativeRelativePath(path)?:return null
+        val legacy=path.substringBefore('/')==GamePhotoImport.ROOT
+        if(relative.isEmpty()) return if(legacy) "Ảnh gốc Cờ Liên Quân · Pictures" else "Ảnh gốc"
+        GamePhotoImport.nativeFolderTitle(relative)?.let { return it }
+        if(legacy) {
+            val parent=relative.substringBeforeLast('/',"")
+            if(GamePhotoImport.nativeFolderTitle(parent)!=null)
+                return "Lượt "+relative.substringAfterLast('/').replace('-',' ')
+            GamePhotoImport.GROUPS.firstOrNull { it.key==relative }?.let { return it.title }
+            if(parent in GamePhotoImport.GROUPS.map { it.key })
+                return "Lượt "+relative.substringAfterLast('/').replace('-',' ')
+        }
+        return null
+    }
+
     fun exactDisplayName(path:String):String? {
         if(detail(path)!=null) return path.substringAfterLast('/').removeSuffix(".png")
         val sections=path.split('/')
@@ -115,12 +156,13 @@ object ChessCaptureFiles {
             Regex("[a-z0-9][a-z0-9-]{0,89}-page-[1-9][0-9]*\\.png").matches(sections.last()))
             return sections.last().removeSuffix(".png")
 
-        val parts=path.split('/')
-        if(parts.size<4||parts.first()!="anh-goc-co-lien-quan"||parts.any { it==".."||it=="."||it.isBlank() }) return null
-        val file=parts.last();val base=file.substringBeforeLast('.',"")
-        val originalHead=parts.size==5&&parts.take(3)==listOf("anh-goc-co-lien-quan","quan-co","anh-quan-co")&&savedHead.matches(base)
-        val skill=parts.size==5&&parts.take(3)==listOf("anh-goc-co-lien-quan","quan-co","chieu-quan-co")&&
-            Regex("[a-z0-9][a-z0-9-]*-skill-[1-9][0-9]*(?:-[a-f0-9]{14}(?:-[0-9]+)?)?").matches(base)
-        return base.takeIf { (originalHead||skill)&&file.substringAfterLast('.') in setOf("png","jpg","jpeg","webp") }
+        val group=nativeGroup(path)?:return null
+        val base=path.substringAfterLast('/').substringBeforeLast('.',"")
+        val recognized=when(group) {
+            "quan-co" -> savedHead.matches(base)
+            "chieu-quan-co" -> Regex("[a-z0-9][a-z0-9-]*-skill-[1-9][0-9]*(?:-[a-f0-9]{14}(?:-[0-9]+)?)?").matches(base)
+            else -> Regex("[a-z0-9][a-z0-9-]{0,120}").matches(base)
+        }
+        return base.takeIf { recognized }
     }
 }

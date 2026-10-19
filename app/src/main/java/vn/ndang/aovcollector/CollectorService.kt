@@ -1297,8 +1297,8 @@ class CollectorService : AccessibilityService() {
             runAccountId=if(checking) pinned else null;runAccountUid=selectedUid
             if(runId.isEmpty()) {
                 val mode=m.json.optString("collectionMode","custom")
-                val slug=m.json.optString("heroName","").replace(Regex("[^a-zA-Z0-9_-]"),"-").take(40)
-                runId="$mode-${slug}-"+SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US).format(Date()); listRef=null; listTotal=null
+                val prefix=StorageNames.runPrefix(mode,m.json.optString("heroName",""))
+                runId="$prefix-"+SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US).format(Date()); listRef=null; listTotal=null
                 // Kept times come only from runs that go through without a pause.
                 entryMs=0L; prefs.edit().putBoolean("clean",true).putLong("entryMs",0L).commit()
             }

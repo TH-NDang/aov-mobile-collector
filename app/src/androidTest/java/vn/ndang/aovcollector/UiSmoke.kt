@@ -147,7 +147,7 @@ class UiSmoke:Instrumentation() {
             val violet=nativeFile("caYyujwz.png (1).jpg")
             val copied=GamePhotoSession.importNew(targetContext,nativeRun)
             check(copied.copied==1&&copied.pending==0) { "Late Pictures image was not imported: $copied" }
-            val imported=File(targetContext.filesDir,"captures/"+GamePhotoImport.ROOT)
+            val imported=File(targetContext.filesDir,"captures/$nativeRun/anh-goc")
             val violetCopy=imported.walkTopDown().first { it.isFile&&it.name.startsWith("violet-") }
             check(violetCopy.name=="violet-head.jpg"&&violetCopy.path.contains("quan-co/anh-quan-co"))
             check(CaptureHistory.entries(targetContext).any { it.name=="violet-head" })
@@ -194,6 +194,34 @@ class UiSmoke:Instrumentation() {
             check(GamePhotoSync.revision>oldRevision&&!GamePhotoSync.busy) { "After-Sure background sync did not finish" }
             check(imported.walkTopDown().any { it.isFile&&it.path.contains("tuong-tac/phe") })
             check(GamePhotoImport.scan(targetContext,photoTree).size==4) { "Original Pictures files changed" }
+            val nativeRunDir=File(targetContext.filesDir,"captures/$nativeRun")
+            val manifest=JSONObject(File(nativeRunDir,"images.json").readText())
+            val manifestImages=manifest.getJSONArray("images")
+            check(manifest.getString("collectionMode")=="chess"&&manifestImages.length()==3)
+            for(i in 0 until manifestImages.length()) {
+                val entry=manifestImages.getJSONObject(i)
+                val path=entry.getString("path")
+                check(path.startsWith("anh-goc/")&&!path.contains(".."))
+                check(OriginalPhotoCopy.matches(File(nativeRunDir,path),
+                    OriginalPhotoCopy.Integrity(entry.getLong("bytes"),entry.getString("sha256"))))
+            }
+            check(JSONObject(File(nativeRunDir,"run.json").readText()).getString("collectionMode")=="chess")
+            // Cross-run reuse copies verified bytes into this run, without another game save event.
+            val capturesRoot=File(targetContext.filesDir,"captures")
+            val blessingKey=ChessBlessings.key("Giây phút huy hoàng")
+            BlessingPhotoIndex.record(File(targetContext.filesDir,BlessingPhotoIndex.FILE),capturesRoot,
+                "chuc-phuc-thuong",blessingKey,violetCopy,setOf(blessingKey))
+            val reuseRun="smoke-native-reuse"
+            GamePhotoSession.begin(targetContext,reuseRun)
+            check(GamePhotoSession.hasMark(targetContext,reuseRun,"chuc-phuc-thuong","Giây phút huy hoàng",setOf(blessingKey)))
+            val reuseDir=File(capturesRoot,reuseRun)
+            val reused=File(reuseDir,"anh-goc/chuc-phuc/thuong/giay-phut-huy-hoang.jpg")
+            check(reused.isFile&&reused.readBytes().contentEquals(violetCopy.readBytes()))
+            check(GamePhotoSession.state(targetContext,reuseRun)!!.getJSONArray("saves").length()==0)
+            check(JSONObject(File(reuseDir,"images.json").readText()).getJSONArray("images").length()==1)
+            check(GamePhotoSession.hasMark(targetContext,reuseRun,"chuc-phuc-thuong","Giây phút huy hoàng",setOf(blessingKey)))
+            check(reuseDir.walkTopDown().count { GamePhotoImport.isImage(it) }==1)
+            check(GamePhotoImport.scan(targetContext,photoTree).size==4)
             // Full post-run pipeline: real SAF ZIP/read-back, no ChatGPT before Drive proof,
             // then navigate a separate fixture app's drawer -> dot -> composer -> Send.
             targetContext.contentResolver.takePersistableUriPermission(photoTree,
@@ -295,10 +323,42 @@ class UiSmoke:Instrumentation() {
             targetContext.getSharedPreferences("after-run",0).edit().clear().commit()
             File(targetContext.filesDir,"after-run").deleteRecursively()
             File(targetContext.filesDir,"smoke/native-photos.txt").writeText("late-indexed=ok; bytes-and-SHA=identical; resolution-and-MIME=original; corruption-repair=ok; classified=ok; dedup=ok; restore=ok")
+            // Cleanup preview is opt-in, starts with nothing selected, and cancelling deletes nothing.
+            val cleanupActivity=startActivitySync(Intent(targetContext,MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            runOnMainSync { GamePhotoCleanupDialog.show(cleanupActivity,nativeRun) }
+            val previewDeadline=SystemClock.uptimeMillis()+15_000
+            fun cleanupNodes()=automation.windows.mapNotNull { it.root }
+            while(cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Xóa đã chọn (0)") }.isEmpty()&&
+                SystemClock.uptimeMillis()<previewDeadline) SystemClock.sleep(150)
+            val deleteNone=cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Xóa đã chọn (0)") }.firstOrNull()
+                ?:error("Cleanup preview did not appear")
+            check(!deleteNone.isEnabled) { "Cleanup preselected originals" }
+            automation.takeScreenshot()?.let { screen ->
+                File(targetContext.filesDir,"smoke/native-cleanup-preview.png").outputStream().use {
+                    screen.compress(Bitmap.CompressFormat.PNG,100,it)
+                };screen.recycle()
+            }
+            val closePreview=cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Đóng") }.first { it.text?.toString()=="Đóng" }
+            check(closePreview.performAction(AccessibilityNodeInfo.ACTION_CLICK))
+            waitForIdleSync();SystemClock.sleep(300)
+            check(GamePhotoImport.scan(targetContext,photoTree).size==4) { "Preview cancellation deleted a source" }
+            // Destructive engine check is confined to this synthetic provider, never user Pictures.
+            val eligible=GamePhotoCleanup.preview(targetContext,nativeRun)
+            check(eligible.candidates.size==3&&eligible.candidates.none { it.source.name=="personal-before.jpg" })
+            val selectedSkill=eligible.candidates.single { it.group=="chieu-quan-co" }
+            val cleaned=GamePhotoCleanup.deleteSelected(targetContext,nativeRun,listOf(selectedSkill))
+            check(cleaned.deleted==1&&cleaned.failed==0&&cleaned.skipped==0) { "Verified cleanup failed: $cleaned" }
+            check(skillCopy.readBytes().contentEquals(sourceBytes)) { "Cleanup changed the run-local copy" }
+            val afterCleanup=GamePhotoSession.importNew(targetContext,nativeRun)
+            check(afterCleanup.pending==0&&afterCleanup.already==3) { "Cleanup made the completed run pending: $afterCleanup" }
+            check(GamePhotoImport.scan(targetContext,photoTree).size==3)
+            File(targetContext.filesDir,"smoke/native-cleanup.txt").writeText("preview-none-selected=ok; cancel=no-delete; personal=excluded; selected-synthetic-delete=ok; local-copy=intact; resync=complete")
             listOf(personal,violet,skill,faction).forEach { android.provider.DocumentsContract.deleteDocument(targetContext.contentResolver,it) }
             targetContext.contentResolver.releasePersistableUriPermission(photoTree,Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
             targetContext.getSharedPreferences("game-photo-source",0).edit().clear().commit()
             File(targetContext.filesDir,"captures/$nativeRun").deleteRecursively()
+            File(targetContext.filesDir,"captures/$reuseRun").deleteRecursively()
             imported.deleteRecursively()
             File(targetContext.filesDir,"pictures-copy-ledger.json").delete()
             val chessOptions=ChessWiki.Options(setOf("tat-ca-quan-co"),openGame=false,heroDetails=true)
@@ -965,16 +1025,16 @@ class UiSmoke:Instrumentation() {
                 .any { it.isChecked }) { "Enabling account verification did not enable game entry" }
             snap("11-account-setup-enabled")
             click("Hủy")
-            click("Ảnh từ Pictures · Chọn thư mục để chép vào app ›")
-            for(label in listOf("Chọn / đổi thư mục Pictures","Đồng bộ các ảnh mới sau lượt thu thập",
-                "Mở ảnh gốc đã nhập trong Lịch sử")) {
+            click("Ảnh gốc theo lượt · Chọn Pictures một lần ›")
+            for(label in listOf("Chọn / đổi thư mục Pictures","Thử đồng bộ lại ảnh đang chờ",
+                "Mở ảnh gốc của lượt gần nhất")) {
                 check(nodes().flatMap { it.findAccessibilityNodeInfosByText(label) }
                     .any { it.text?.toString()==label&&it.isVisibleToUser&&it.isEnabled }) {
                     "Pictures actions are hidden behind the dialog message: $label"
                 }
             }
             snap("12-pictures-actions")
-            click("Mở ảnh gốc đã nhập trong Lịch sử")
+            click("Mở ảnh gốc của lượt gần nhất")
             check(nodes().flatMap { it.findAccessibilityNodeInfosByText("Chưa có ảnh gốc nào được sao chép.") }.isNotEmpty())
             click("Đã hiểu")
             click("Sau khi hoàn tất · Drive → dot của bạn ›")

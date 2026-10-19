@@ -157,4 +157,51 @@ class ChessCaptureFilesTest {
         assertTrue(ChessCaptureFiles.isDetailCapture("chess__tuong-tac__phe__phe__cung-thu__001"))
     }
 
+    @Test fun runLocalNativeImagesKeepExactNamesInEveryGroup() {
+        val names=mapOf("quan-co" to "violet-head", "chieu-quan-co" to "violet-skill-2",
+            "phe" to "ma-toc", "nghe" to "cung-thu", "trang-bi" to "trang-bi-icon-3",
+            "chuc-phuc-thuong" to "giay-phut-huy-hoang",
+            "chuc-phuc-huyen-thoai-su-thi" to "nac-thang-vinh-dieu",
+            "chuc-phuc-truyen-thuyet" to "chuc-phuc-icon-1")
+        names.forEach { (group,base) ->
+            for(extension in listOf("png","jpg","jpeg","webp")) {
+                val relative=GamePhotoImport.groupPath(group)+"/$base.$extension"
+                val path="chess-run-1/anh-goc/$relative"
+                assertEquals(relative,ChessCaptureFiles.nativeRelativePath(path))
+                assertEquals(group,ChessCaptureFiles.nativeGroup(path))
+                assertEquals(base,ChessCaptureFiles.exactDisplayName(path))
+            }
+        }
+        val collision="violet-skill-2-${source.take(14)}-12"
+        assertEquals(collision,ChessCaptureFiles.exactDisplayName(
+            "chess-run-1/anh-goc/quan-co/chieu-quan-co/$collision.png"))
+    }
+
+    @Test fun runLocalNativeFoldersHaveLabelsWithoutInventingAnotherRun() {
+        assertEquals("Ảnh gốc",ChessCaptureFiles.nativeFolderTitle("run-1/anh-goc"))
+        assertEquals("Quân cờ",ChessCaptureFiles.nativeFolderTitle("run-1/anh-goc/quan-co"))
+        assertEquals("Tất cả quân cờ",ChessCaptureFiles.nativeFolderTitle("run-1/anh-goc/quan-co/anh-quan-co"))
+        assertEquals("Chiêu quân cờ",ChessCaptureFiles.nativeFolderTitle("run-1/anh-goc/quan-co/chieu-quan-co"))
+        assertEquals("Thường",ChessCaptureFiles.nativeFolderTitle("run-1/anh-goc/chuc-phuc/thuong"))
+        assertNull(ChessCaptureFiles.nativeFolderTitle("run-1/anh-goc/tuong-tac/phe/muc-khac"))
+        assertNull(ChessCaptureFiles.nativeFolderTitle("run-1/tuong-tac/phe/muc-khac"))
+        assertEquals("Ảnh gốc Cờ Liên Quân · Pictures",ChessCaptureFiles.nativeFolderTitle("anh-goc-co-lien-quan"))
+        assertEquals("Lượt run 1",ChessCaptureFiles.nativeFolderTitle(
+            "anh-goc-co-lien-quan/tuong-tac/phe/run-1"))
+    }
+
+    @Test fun nativePathsDoNotAcceptScreenshotFoldersOrTraversal() {
+        listOf("run-1/quan-co/anh-quan-co/violet-head.jpg",
+            "run-1/anh-goc/quan-co/anh-quan-co/run-2/violet-head.jpg",
+            "run-1/anh-goc/quan-co/anh-quan-co/../violet-head.jpg",
+            "run-1//anh-goc/quan-co/anh-quan-co/violet-head.jpg",
+            "run-1/anh-goc/unknown/violet-head.jpg",
+            "run-1/anh-goc/quan-co/anh-quan-co/violet-head.jpg.part").forEach {
+            assertNull(it,ChessCaptureFiles.nativeGroup(it))
+            assertNull(it,ChessCaptureFiles.exactDisplayName(it))
+        }
+        assertNull(ChessCaptureFiles.nativeRelativePath("run-1/quan-co/tat-ca-quan-co"))
+        assertNull(ChessCaptureFiles.nativeRelativePath("../anh-goc/quan-co"))
+    }
+
 }

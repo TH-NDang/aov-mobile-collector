@@ -92,7 +92,7 @@ object GamePhotoSession {
         source.forEach { baseline.put(it.id) }
         val state=JSONObject().put("tree",tree.toString()).put("before",source.size)
             .put("startedAt",System.currentTimeMillis()).put("baseline",baseline)
-            .put("saves",JSONArray()).put("status","collecting")
+            .put("saves",JSONArray()).put("status","collecting").put("storageVersion",2)
         store(context,runId,state)
         return source.size
     }
@@ -130,10 +130,56 @@ object GamePhotoSession {
         }) return true
         // An earlier run's save event alone is insufficient. Reuse only a named blessing
         // whose imported original is still readable and byte-for-byte intact.
+        val captures=File(context.filesDir,"captures")
         return names.filter(ChessBlessings::isKey).any { key ->
-            BlessingPhotoIndex.hasSaved(File(context.filesDir,BlessingPhotoIndex.FILE),
-                File(context.filesDir,"captures/"+GamePhotoImport.ROOT),group,key,names)
+            val original=BlessingPhotoIndex.findRecord(File(context.filesDir,BlessingPhotoIndex.FILE),
+                captures,group,key,names,File(captures,GamePhotoImport.ROOT))?:return@any false
+            val state=read(context,runId)
+            if(state.optInt("storageVersion",1)>=2)
+                reuseInRun(context,runId,state,group,item,original)
+            true
         }
+    }
+
+    /** Reuse verified bytes locally so exporting this run does not depend on another run. */
+    private fun reuseInRun(context:Context,runId:String,state:JSONObject,group:String,item:String,
+                           saved:BlessingPhotoIndex.Saved) {
+        val original=saved.file
+        val run=File(context.filesDir,"captures/$runId")
+        val verified=saved.integrity
+        require(OriginalPhotoCopy.matches(original,verified)) { "Ảnh nguồn đã thay đổi" }
+        val identity=fingerprint("reused|$group|${saved.key}|${verified.sha256}")
+        val folder=File(run,"anh-goc/"+GamePhotoImport.groupPath(group)).apply { mkdirs() }
+        val directory=folder.relativeTo(run).invariantSeparatorsPath+"/"
+        val claims=state.optJSONObject("targetClaims")?:JSONObject()
+        val localClaims=claims.keys().asSequence().filter { it.startsWith(directory) }
+            .associate { it.removePrefix(directory) to claims.getString(it) }
+        val base=ChessCaptureFiles.nativeBase(group,saved.key.removePrefix(ChessBlessings.PREFIX),1)
+        val name=ChessCaptureFiles.nativeTarget(base,original.extension.lowercase(),identity,
+            folder.listFiles().orEmpty().map { it.name }.toSet(),localClaims)
+        val target=File(folder,name)
+        val path=target.relativeTo(run).invariantSeparatorsPath
+        if(!OriginalPhotoCopy.matches(target,verified)) {
+            require(!target.exists()||claims.optString(path)==identity) { "Tên ảnh đã thuộc về ảnh khác" }
+            require(context.filesDir.usableSpace>verified.bytes+30L*1024*1024) { "Bộ nhớ trống quá ít" }
+            claims.put(path,identity);state.put("targetClaims",claims);store(context,runId,state)
+            val part=File(folder,name+".part")
+            val history=try { CaptureHistory.begin(context,runId,target) } catch(_:Exception) { null }
+            var committed=false
+            try {
+                val copied=original.inputStream().use { OriginalPhotoCopy.copy(it,part,verified.bytes) }
+                require(copied==verified) { "Ảnh nguồn đã thay đổi" }
+                require(part.renameTo(target)) { "Không lưu được bản sao trong lượt" }
+                committed=true
+            } finally {
+                part.delete()
+                history?.let { try { CaptureHistory.finish(context,it,committed) } catch(_:Exception) {} }
+            }
+        }
+        RunImageManifest.record(run,target,group,item,identity,verified,reused=true)
+        // Keep the original verified title anchor; a noisy request must not chain OCR aliases.
+        BlessingPhotoIndex.record(File(context.filesDir,BlessingPhotoIndex.FILE),
+            File(context.filesDir,"captures"),group,saved.key,target,saved.aliases)
     }
 
     /** The stable alias proves the item came from a recognized cyan blessing heading. */
@@ -145,7 +191,7 @@ object GamePhotoSession {
             saved.getString("group")==pick.group&&saved.getString("item")==pick.item&&key in savedItems(saved)
         }
         if(verified!=null) BlessingPhotoIndex.record(File(context.filesDir,BlessingPhotoIndex.FILE),
-            File(context.filesDir,"captures/"+GamePhotoImport.ROOT),pick.group,key,file,savedItems(verified))
+            File(context.filesDir,"captures"),pick.group,key,file,savedItems(verified))
     }
 
     private fun savedItems(saved:JSONObject):Set<String> {
@@ -185,12 +231,15 @@ object GamePhotoSession {
         val diff=Diff(old.size,all.size,all.count { it.id !in old },
             pinned+freshDiff.matching,freshDiff.unrelated)
         val matches=all.associateBy { it.id }
-        val destRoot=File(context.filesDir,"captures/"+GamePhotoImport.ROOT).apply { mkdirs() }
+        val runLocal=state.optInt("storageVersion",1)>=2
+        val run=File(context.filesDir,"captures/$runId")
+        val destRoot=if(runLocal) run else File(context.filesDir,"captures/"+GamePhotoImport.ROOT)
+        destRoot.mkdirs()
         val meta=File(destRoot,"run.json")
-        if(!meta.exists()) meta.writeText(JSONObject().put("collectionMode","game-photos")
-            .put("label","Ảnh gốc Cờ Liên Quân · Pictures")
+        if(!meta.exists()) meta.writeText(JSONObject().put("collectionMode",if(runLocal) "chess" else "game-photos")
+            .put("label",if(runLocal) "Cờ Liên Quân · Bách khoa" else "Ảnh gốc Cờ Liên Quân · Pictures")
             .put("createdAt",System.currentTimeMillis()).toString(2))
-        val ledgerFile=File(context.filesDir,LEDGER)
+        val ledgerFile=File(if(runLocal) run else context.filesDir,LEDGER)
         val ledger=try { JSONObject(ledgerFile.readText()) } catch(_:Exception) { JSONObject() }
         val integrity=state.optJSONObject("originalIntegrity")?:JSONObject()
         fun remember(pick:Pick,identity:String,target:File,verified:OriginalPhotoCopy.Integrity) {
@@ -201,8 +250,10 @@ object GamePhotoSession {
             ledgerPart.writeText(ledger.toString(2))
             require(ledgerPart.renameTo(ledgerFile)) { "Không lưu được sổ sao chép ảnh" }
             pin(assignments,pick,recorded)
+            assignments.optJSONObject(pick.id)?.put("sourceIdentity",identity)
             state.put("assignments",assignments).put("originalIntegrity",integrity)
             store(context,runId,state)
+            if(runLocal) RunImageManifest.record(run,target,pick.group,pick.item,identity,verified)
             recordImportedBlessing(context,state,pick,target)
         }
         fun sourceHash(image:GamePhotoImport.Photo)=context.contentResolver.openInputStream(image.uri)?.use {
@@ -212,7 +263,23 @@ object GamePhotoSession {
         for((index,pick) in diff.matching.withIndex()) {
             if(cancelled()) break
             progress(index,diff.matching.size,pick.group+"/"+pick.item)
-            val image=matches[pick.id]?:continue
+            val image=matches[pick.id]
+            if(image==null) {
+                // The user may have cleaned Pictures after a verified copy. That does not undo
+                // a completed save or require another in-game export while the local copy is intact.
+                val savedId=assignments.optJSONObject(pick.id)?.optString("sourceIdentity").orEmpty()
+                val saved=integrity.optJSONObject(savedId)
+                if(runLocal&&saved!=null) try {
+                    val local=File(run,saved.getString("path"))
+                    val expected=OriginalPhotoCopy.Integrity(saved.getLong("bytes"),saved.getString("sha256"))
+                    if(local.canonicalPath.startsWith(run.canonicalPath+File.separator)&&
+                        OriginalPhotoCopy.matches(local,expected)) {
+                        RunImageManifest.record(run,local,pick.group,pick.item,savedId,expected)
+                        already++
+                    }
+                } catch(_:Exception) { errors++ }
+                continue
+            }
             val identity=fingerprint(tree.toString()+"|"+image.key)
             var partial:File?=null
             var target:File?=null
@@ -236,7 +303,9 @@ object GamePhotoSession {
                 val header=context.contentResolver.openInputStream(image.uri)?.use { input -> val bytes=ByteArray(16);var count=0;while(count<bytes.size) { val n=input.read(bytes,count,bytes.size-count);if(n<=0) break;count+=n };bytes.copyOf(count) }
                     ?:error("Không mở được ảnh gốc")
                 val ext=OriginalPhotoCopy.extension(header,image.mime,image.name)
-                val file=File(destRoot,GamePhotoImport.groupPath(pick.group)+"/"+safe(runId)).apply { mkdirs() }
+                val directoryPath=if(runLocal) "anh-goc/"+GamePhotoImport.groupPath(pick.group)
+                    else GamePhotoImport.groupPath(pick.group)+"/"+safe(runId)
+                val file=File(destRoot,directoryPath).apply { mkdirs() }
                 val directory=file.relativeTo(destRoot).invariantSeparatorsPath+"/"
                 val claims=targetClaims.keys().asSequence().filter { it.startsWith(directory) }
                     .associate { it.removePrefix(directory) to targetClaims.getString(it) }
