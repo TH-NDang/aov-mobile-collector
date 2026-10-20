@@ -174,7 +174,11 @@ internal object GestureCalibrationSmoke {
                 store.reset(profile, swipe.id)
                 begin(listOf(tap, swipe))
                 check(service.calibrationView != null && dispatched.isEmpty()) { "First pending gesture ran automatically" }
-                check(!service.prepareEdit())
+                val pending = service.calibrationView
+                check(!service.prepareEdit()) { "Management access must stay blocked while teaching" }
+                check(service.calibrationView === pending && service.isWorking && dispatched.isEmpty()) {
+                    "Management request cancelled or advanced the pending teaching gesture"
+                }
             }
             test.waitForIdleSync()
             test.runOnMainSync {

@@ -364,6 +364,8 @@ class CollectorService : AccessibilityService() {
         afterRunChat != null
 
     fun prepareEdit(): Boolean {
+        // Teaching owns a suspended runner, not a resumable normal collection pause.
+        if (teaching) return false
         if (running) pause("Tạm dừng để quản lý dữ liệu")
         return gesturesInFlight == 0 &&
             !teachingEntry &&
