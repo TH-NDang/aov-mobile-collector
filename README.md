@@ -689,3 +689,12 @@ Trên bảng nổi, chọn macro rồi bấm **Chỉnh từng bước**. App t�
 Chế độ chỉnh không tạo ảnh thu thập, không tải ảnh gốc bằng **Save Photo / Sure**, không xuất hoặc gửi kết quả và không ghi đè tiến trình/lịch sử lượt thu thập. Các bước cần đọc màn hình vẫn có thể chụp tạm để nhận diện; bảng chỉnh được ẩn trong lúc chụp hoặc thực hiện thao tác. Các bước đăng nhập tự động và thao tác không được hỗ trợ sẽ không được giả lập bằng điểm chạm mẫu.
 
 Hiệu chỉnh được lưu riêng theo kích thước màn hình, chiều xoay và phần viền hệ thống. Điện thoại khác có thể chỉnh trực tiếp mà không sửa APK; app không tự chuyển hiệu chỉnh giữa các kích thước. Xoay màn hình kết thúc chế độ chỉnh để tránh lưu nhầm cấu hình; mở lại **Chỉnh từng bước** để bắt đầu lại từ luồng vào sảnh. Chế độ chỉnh luôn bắt đầu lại macro, không tiếp tục một con trỏ chỉnh đã lưu. Điểm không có hiệu chỉnh hợp lệ vẫn dùng mặc định của macro.
+
+
+### v0.13.13: bảng chỉnh gọn và không chặn điều hướng điện thoại
+
+- Bảng chỉnh không chiếm tiêu điểm và luôn chừa vùng thanh hệ thống, cử chỉ điều hướng và phần khuyết màn hình, kể cả khi game ẩn thanh điều hướng. Có thể dùng **Home / Đa nhiệm** mà không phải đóng bảng trước.
+- Trong lúc chỉnh, bảng điều khiển thu thập thông thường tạm ẩn; chỉ còn bảng chỉnh nhỏ, có thể kéo sang vị trí khác. Vùng game ngoài các điểm chỉnh vẫn được chặn để tránh vô tình đổi màn hình khi đang giữ một thao tác chờ. Bấm **Hủy** để thao tác trực tiếp trong game.
+- Kiểm tra ứng dụng đang mở bỏ qua các cửa sổ trợ năng của chính Collector, không nhầm bảng chỉnh thành ứng dụng ngoài game. Vẫn từ chối thao tác nếu một ứng dụng khác ở phía trước hoặc không xác định được màn hình đích; không dựa vào tên game đã thấy từ trước. Chế độ chỉnh yêu cầu game toàn màn hình; chia đôi màn hình, cửa sổ nổi và PiP không được hỗ trợ.
+- Rời game bằng Home / Đa nhiệm hủy thao tác đang chờ; quay lại không tự chạy tiếp. Nút **Chạy bước / Tiếp** vẫn chỉ chạy đúng một thao tác, không thử lại ngầm. Điểm đã **Lưu**, ưu tiên hiệu chỉnh và tiến trình thu thập bình thường được giữ nguyên.
+- Bộ kiểm thử thiết bị dùng một ứng dụng game giả riêng trong CI: nhận sự kiện chạm/vuốt Android thật, kiểm tra nút Home / Đa nhiệm thật, ứng dụng sai, hủy và không phát lại. Ứng dụng giả không nằm trong APK Collector và không đăng nhập game.

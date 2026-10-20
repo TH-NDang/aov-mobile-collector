@@ -6,9 +6,9 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.PixelFormat
 import android.view.Gravity
-import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -49,7 +49,7 @@ internal class GestureCalibrationEditor(
         val frame = android.widget.FrameLayout(context)
         val controls = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(12, 6, 12, 6)
+            setPadding(Ui.dp(context, 8), Ui.dp(context, 5), Ui.dp(context, 8), Ui.dp(context, 5))
             setBackgroundColor(Color.argb(240, 26, 28, 40))
         }
         val dragHandle = TextView(context).apply {
@@ -57,21 +57,22 @@ internal class GestureCalibrationEditor(
             contentDescription = "Kéo bảng điều khiển đến vị trí khác"
             setTextColor(Color.CYAN)
             textSize = 12f
-            setPadding(8, 8, 8, 8)
+            setPadding(0, Ui.dp(context, 3), 0, Ui.dp(context, 3))
         }
         controls.addView(dragHandle)
         val title = TextView(context).apply {
             text = (if (runtime) "Bước ${position + 1}" else "${position + 1}/$count") +
-                " · ${step.title} · Tạm dừng\n${step.hint}"
+                " · ${step.title} · Tạm dừng" + if (runtime) "" else "\n${step.hint}"
             setTextColor(Color.WHITE)
             textSize = 13f
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
         }
         controls.addView(title)
         controls.addView(
             TextView(context).apply {
                 text = if (runtime) {
-                    "Kéo điểm Chạm hoặc Đầu/Cuối để chỉnh. Chạy bước / Tiếp chỉ chạy thao tác đang xem, " +
-                        "rồi dừng trước thao tác kế. Lưu để dùng lại."
+                    "Kéo điểm để chỉnh. Lưu để dùng lại. Chạy 1 bước rồi dừng. Hủy để chạm game."
                 } else {
                     "Trước/Tiếp chỉ chọn bước. Kéo rồi Lưu trước khi đổi bước. Thử bước mới chạm game."
                 }
@@ -83,7 +84,16 @@ internal class GestureCalibrationEditor(
         fun row(): LinearLayout = LinearLayout(context).also { controls.addView(it) }
 
         fun button(row: LinearLayout, label: String, run: () -> Unit) {
-            row.addView(Ui.button(context, label) { if (!testing) run() }, LinearLayout.LayoutParams(0, -2, 1f))
+            row.addView(
+                Ui.button(context, label) { if (!testing) run() }.apply {
+                    textSize = 13f
+                    setPadding(Ui.dp(context, 5), 0, Ui.dp(context, 5), 0)
+                },
+                LinearLayout.LayoutParams(0, Ui.dp(context, 36), 1f).apply {
+                    topMargin = Ui.dp(context, 4)
+                    if (row.childCount > 0) leftMargin = Ui.dp(context, 4)
+                }
+            )
         }
         if (!runtime) {
             val navigation = row()
@@ -135,7 +145,7 @@ internal class GestureCalibrationEditor(
                 }
             }
         }
-        val options = row()
+        val options = if (runtime) execution else row()
         if (!runtime && step.recognition != null) {
             button(options, "Đọc vị trí") {
                 testing = true
@@ -190,7 +200,11 @@ internal class GestureCalibrationEditor(
             true
         }
         frame.addView(drawing, android.widget.FrameLayout.LayoutParams(-1, -1))
-        val panelWidth = (440 * context.resources.displayMetrics.density).toInt().coerceAtMost(wm.currentWindowMetrics.bounds.width())
+        val insetTypes = WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout() or WindowInsets.Type.mandatorySystemGestures()
+        val metrics = wm.currentWindowMetrics
+        val insets = metrics.windowInsets.getInsetsIgnoringVisibility(insetTypes)
+        val safeWidth = (metrics.bounds.width() - insets.left - insets.right).coerceAtLeast(1)
+        val panelWidth = Ui.dp(context, 320).coerceAtMost(safeWidth)
         frame.addView(controls, android.widget.FrameLayout.LayoutParams(panelWidth, -2, Gravity.TOP or Gravity.LEFT))
         frame.post {
             if (root === frame) {
@@ -200,26 +214,21 @@ internal class GestureCalibrationEditor(
                 )
             }
         }
-        frame.isFocusableInTouchMode = true
-        frame.setOnKeyListener { _, key, event ->
-            if (key == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
-                close()
-                true
-            } else {
-                false
-            }
-        }
         val params = WindowManager.LayoutParams(
             -1,
             -1,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.LEFT
             screenOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_BEHIND
-            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-            setFitInsetsTypes(0)
+            // Never own Home/Recents, edge gestures or cutouts, even when the game hides its bars.
+            // The remaining game area intentionally guards against changing a pending target by hand.
+            layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_NEVER
+            setFitInsetsTypes(insetTypes)
+            setFitInsetsIgnoringVisibility(true)
         }
         frame.visibility = if (hidden) View.INVISIBLE else View.VISIBLE
         if (hidden) {
@@ -229,7 +238,6 @@ internal class GestureCalibrationEditor(
         return try {
             wm.addView(frame, params)
             root = frame
-            frame.requestFocus()
             true
         } catch (_: Exception) {
             false
@@ -240,12 +248,12 @@ internal class GestureCalibrationEditor(
         val frame = root ?: return
         val invisible = hidden || testing
         val params = frame.layoutParams as WindowManager.LayoutParams
-        val flags = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        val flags = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         params.flags = if (invisible) params.flags or flags else params.flags and flags.inv()
+        params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         frame.visibility = if (invisible) View.INVISIBLE else View.VISIBLE
         try {
             wm.updateViewLayout(frame, params)
-            if (!invisible) frame.requestFocus()
         } catch (_: IllegalArgumentException) { }
     }
 

@@ -233,6 +233,7 @@ class CollectorService : AccessibilityService() {
         calibrationTesting = false
         teachingDispatch = false
         captureShield.reset()
+        applyPanelVisibility()
         teaching = false
         restoreTeachingState?.invoke()
         restoreTeachingState = null
@@ -264,7 +265,7 @@ class CollectorService : AccessibilityService() {
                     token != generation ||
                     session != calibrationSession ||
                     profile != calibrationProfile() ||
-                    (fixtureDispatch == null && foreground() != GAME) ||
+                    (fixtureDispatch == null && !calibrationGameAllowed()) ||
                     gesturesInFlight > 0 ||
                     !CalibrationCodec.validPoints(points)
                 ) {
@@ -303,10 +304,27 @@ class CollectorService : AccessibilityService() {
         calibrationEditor = editor
         editor.shield(debugCaptureHidden)
         if (!editor.show()) endTeaching("Không mở được bảng chỉnh từng bước")
+        applyPanelVisibility()
     }
 
-    /** Instrumentation drives the identical pending editor with a non-device dispatcher. Never injects input. */
+    /** Deterministic editor/cursor checks; no Android input is injected by this fixture. */
     internal fun beginTeachingFixture(actions: List<CalibrationAction>, onDispatch: (CalibrationAction, List<CalibrationPoint>) -> Unit) {
+        beginTeachingFixture(actions) { action, points, done ->
+            onDispatch(action, points)
+            done(true)
+        }
+    }
+
+    /** Device smoke checks install a synthetic GAME-package app and use the real safety/dispatch path. */
+    internal fun beginTeachingDeviceFixture(actions: List<CalibrationAction>) {
+        check(applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0)
+        beginTeachingFixture(actions, null)
+    }
+
+    private fun beginTeachingFixture(
+        actions: List<CalibrationAction>,
+        dispatch: ((CalibrationAction, List<CalibrationPoint>, (Boolean) -> Unit) -> Unit)?
+    ) {
         if (isWorking || libraryBusy) return
         isolateTeachingState()
         teaching = true
@@ -321,10 +339,7 @@ class CollectorService : AccessibilityService() {
             if (at >= actions.size) return endTeaching("Đã đi hết thao tác thử")
             previewTeaching(actions[at], { ok ->
                 if (ok) handler.post { step(at + 1) } else endTeaching("Đã dừng thao tác thử")
-            }, { action, points, done ->
-                onDispatch(action, points)
-                done(true)
-            })
+            }, dispatch)
         }
         step(0)
     }
@@ -533,11 +548,59 @@ class CollectorService : AccessibilityService() {
         note("Lượt chạy trọn không tạm dừng: đã lưu thời gian để ước tính lần sau")
     }
 
-    /** Package in front, or null when Android does not report one, which is common with Unity games. */
-    private fun foreground(): String? = try {
-        rootInActiveWindow?.packageName?.toString()
+    private fun foregroundWindows(): List<ForegroundWindow> = windows.orEmpty().map { window ->
+        val node = window.root
+        val name = try {
+            node?.packageName?.toString()
+        } finally {
+            node?.recycle()
+        }
+        val bounds = android.graphics.Rect().also(window::getBoundsInScreen)
+        ForegroundWindow(
+            name,
+            window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION,
+            window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY,
+            window.isFocused,
+            window.isActive,
+            WindowArea(bounds.left, bounds.top, bounds.right, bounds.bottom)
+        )
+    }
+
+    /** The focused underlying window, not a layer-high floating game or our own active overlay. */
+    internal fun foreground(): String? = try {
+        val reported = foregroundWindows()
+        if (reported.isEmpty()) {
+            rootInActiveWindow?.packageName?.toString()
+        } else {
+            WindowForegroundSafety.packageInFront(
+                reported,
+                packageName
+            )
+        }
     } catch (_: Exception) {
         null
+    }
+
+    /** Calibration uses full-display coordinates, so fail closed for unknown or multi-window targets. */
+    private fun calibrationGameAllowed(gestures: List<GestureDescription> = emptyList()): Boolean = try {
+        val metrics = wm.currentWindowMetrics
+        val b = metrics.bounds
+        val i = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+        val usable = WindowArea(b.left + i.left, b.top + i.top, b.right - i.right, b.bottom - i.bottom)
+        val target = WindowForegroundSafety.gameWindow(foregroundWindows(), packageName, GAME, usable)
+        target != null &&
+            gestures.all { gesture ->
+                (0 until gesture.strokeCount).all { stroke ->
+                    val pathBounds = android.graphics.RectF()
+                    gesture.getStroke(stroke).path.computeBounds(pathBounds, true)
+                    pathBounds.left >= target.bounds.left &&
+                        pathBounds.top >= target.bounds.top &&
+                        pathBounds.right < target.bounds.right &&
+                        pathBounds.bottom < target.bounds.bottom
+                }
+            }
+    } catch (_: Exception) {
+        false
     }
 
     private fun appName(p: String) = if (p == packageName) "AOV Collector" else p
@@ -624,7 +687,7 @@ class CollectorService : AccessibilityService() {
             !entering &&
             p != null &&
             p != GAME &&
-            p != packageName
+            (teaching || p != packageName)
         ) {
             pause("Đã rời game (đang mở ${appName(p)}) — tạm dừng")
         }
@@ -654,7 +717,14 @@ class CollectorService : AccessibilityService() {
         if (running && event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val p = event.packageName?.toString()
             // Notifications, keyboards and game boosters report window changes too; only pause if another app stays in front.
-            if (p != null && p != packageName && p != GAME) {
+            if (p != null && p != GAME && (teaching || p != packageName)) {
+                if (teaching && !teachingEntry) {
+                    val front = foreground()
+                    if (front != null && front != GAME) {
+                        endTeaching("Đã rời game; thao tác đang chỉnh đã hủy. Mở lại Chỉnh từng bước khi trở về game.")
+                        return
+                    }
+                }
                 handler.removeCallbacks(awayCheck)
                 handler.postDelayed(awayCheck, 1500)
             }
@@ -756,13 +826,19 @@ class CollectorService : AccessibilityService() {
     private fun shield(on: Boolean) {
         if (on == shielded) return
         shielded = on
-        captureProgress.shield(on)
+        applyPanelVisibility()
+    }
+
+    /** While editing, only the compact teaching controls are visible, never two competing panels. */
+    private fun applyPanelVisibility() {
+        val hidden = shielded || calibrationEditor != null
+        captureProgress.shield(hidden)
         val params = panelParams
         if (params !=
             null
         ) {
             params.flags =
-                if (on) {
+                if (hidden) {
                     params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
                 } else {
                     params.flags and
@@ -770,7 +846,7 @@ class CollectorService : AccessibilityService() {
                 }
         }
         val view = panel ?: return
-        view.visibility = if (on) View.INVISIBLE else View.VISIBLE
+        view.visibility = if (hidden) View.INVISIBLE else View.VISIBLE
         if (params != null &&
             view.isAttachedToWindow
         ) {
@@ -823,7 +899,7 @@ class CollectorService : AccessibilityService() {
         val layout = object : LinearLayout(this) {
             // A tap that still reaches the hidden panel must not press its buttons; the macro retries it.
             override fun dispatchTouchEvent(e: MotionEvent): Boolean {
-                if (!shielded) return super.dispatchTouchEvent(e)
+                if (!shielded && calibrationEditor == null) return super.dispatchTouchEvent(e)
                 if (e.actionMasked ==
                     MotionEvent.ACTION_DOWN
                 ) {
@@ -1026,7 +1102,7 @@ class CollectorService : AccessibilityService() {
             layout.addView(footer)
             layout.addView(Ui.button(this, "Chỉnh từng bước") { showCalibration() })
         }
-        if (shielded) layout.visibility = View.INVISIBLE
+        if (shielded || calibrationEditor != null) layout.visibility = View.INVISIBLE
         try {
             wm.addView(layout, params)
         } catch (e: Exception) {
@@ -1034,6 +1110,7 @@ class CollectorService : AccessibilityService() {
             return
         }
         panel = layout
+        applyPanelVisibility()
         uiPrefs.edit().putBoolean("panel", true).apply()
         layout.post {
             if (panel === layout &&
@@ -3482,7 +3559,7 @@ class CollectorService : AccessibilityService() {
         }
 
         fun send(attempt: Int) {
-            if (current !== this || !captureShield.contains(session) || (!allowRetries && foreground() != GAME)) {
+            if (current !== this || !captureShield.contains(session) || (!allowRetries && !calibrationGameAllowed(gestures))) {
                 done(false)
                 return
             }
@@ -3490,7 +3567,7 @@ class CollectorService : AccessibilityService() {
             if (debugSession == debugGeneration) gestureDebug?.show(gestures, tap, target, label)
 
             fun part(i: Int) {
-                if (current !== this || !captureShield.contains(session)) {
+                if (current !== this || !captureShield.contains(session) || (!allowRetries && !calibrationGameAllowed(gestures))) {
                     done(false)
                     return
                 }

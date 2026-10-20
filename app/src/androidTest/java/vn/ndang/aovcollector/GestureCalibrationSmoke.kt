@@ -117,9 +117,12 @@ internal object GestureCalibrationSmoke {
             test.runOnMainSync { editor.close() }
         }
 
-        // Service runtime fixtures below use only a fake dispatcher, never touch the game.
+        // Cursor/isolation fixtures use a fake dispatcher; the device fixture uses a synthetic touch receiver.
+        // Keep a positively identified synthetic app underneath so production foreground safety stays enabled.
+        TeachingDeviceSmoke.openFixture(test, service, automation)
         pendingGestureFixture(test, service, automation)
         stateIsolationFixture(test, service)
+        TeachingDeviceSmoke.run(test, service, automation)
         runtimeFixture(test, service)
     }
 

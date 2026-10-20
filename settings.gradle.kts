@@ -13,4 +13,4 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = "AOVMobileCollector"
-include(":app", ":chat-fixture")
+include(":app", ":chat-fixture", ":game-fixture")
