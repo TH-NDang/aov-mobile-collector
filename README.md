@@ -675,3 +675,18 @@ Các tùy chọn chạy nhanh, chỉ chụp Chi tiết, chuyển thẳng giữa 
 Ảnh gốc Cờ Liên Quân: chọn **Ảnh từ Pictures → Chọn / đổi thư mục Pictures → Bộ nhớ trong/Pictures** một lần, rồi bật các nhóm tải ảnh trong macro Cờ. Sau **Save Photo → Sure**, ảnh được tự chép vào thư viện app theo nhóm; file xuất hiện chậm được tự thử lại. Mở ảnh tại **Ảnh từ Pictures → Mở ảnh gốc đã nhập trong Lịch sử**.
 
 Sau mỗi lượt hoàn tất, có thể tự lưu vào ZIP đích hoặc thư mục Google Drive và gửi câu lệnh đã lưu trong ChatGPT → **dot của bạn**. Cấu hình tại **Sau khi hoàn tất** trên màn hình chính. App xác minh nội dung ZIP đọc lại và đợi thông báo tải thành công từ Drive có đúng tên file trước khi mở ChatGPT. Cần bật thông báo Drive và giữ dịch vụ Trợ năng hoạt động. Nếu Drive không phát thông báo xác nhận đúng tên ZIP, trạng thái giữ ở chờ và chưa gửi lệnh. Chưa xác nhận được lần gửi thì app không tự gửi trùng.
+
+## Chỉnh từng bước trên điện thoại
+
+Trên bảng nổi, chọn macro rồi bấm **Chỉnh từng bước**. App tạm dừng lượt đang chạy và mở danh sách thao tác mặc định ngay, không cần ghi lại một lượt trước.
+
+- **Trước / Tiếp / Các bước** chỉ chọn thao tác để chỉnh; không tự chạm game và không tự quay ngược màn hình game.
+- **Vào sảnh** mở game theo luồng vào sảnh hiện có rồi dừng. Nếu cần đăng nhập, hãy đăng nhập bằng tay; chế độ chỉnh không nhập tài khoản hay mật khẩu.
+- Mở đúng màn hình được ghi trong hướng dẫn của bước. Kéo vòng tròn để đổi điểm chạm; với vuốt, kéo riêng điểm **Đầu / Cuối**. **Đổi góc bảng** chuyển bảng lên trên hoặc xuống dưới để không che điểm cần chỉnh.
+- **Thử bước** mới thực hiện đúng một thao tác đang chọn. App vẫn tạm dừng sau khi thử; không tự lưu ảnh thu thập, xuất ảnh hoặc chạy các bước tiếp theo. Không có thao tác thử tự động khi kéo, lưu hay chuyển bước.
+- **Lưu** giữ hiệu chỉnh trong máy; **Mặc định** xóa hiệu chỉnh của bước trên cấu hình màn hình hiện tại. Hủy hoặc đổi bước bỏ thay đổi chưa lưu. Lượt thu thập bình thường sẽ dùng các hiệu chỉnh đã lưu.
+- Những bước dựa trên chữ/hình nhận diện có sẵn trong danh sách nhưng chỉ hiện điểm sau **Đọc vị trí**. Khi thử, app đọc lại màn hình mới, rồi áp dụng độ lệch; không dùng tọa độ cũ của một mục khác. Nếu chưa nhận ra đúng màn hình hoặc kết quả đọc đã quá cũ, app không thử.
+
+Phạm vi hiện tại: các mục/tab/thẻ và kéo nội dung Bách khoa Cờ Liên Quân; trang tổng quan, thuộc tính, tab và ô chiêu của tướng; nút đổi bảng và danh sách chế độ của Thống kê tướng. Mỗi macro chỉ hiện các nhóm được hỗ trợ và các mục Cờ đã chọn. Luồng Chiến khu, các bước đăng nhập, nhấn giữ tải ảnh gốc, **Save Photo / Sure** và các thao tác tùy ý trong macro nhập riêng chưa có bảng hiệu chỉnh. Một file mang đúng cấu trúc macro có sẵn dùng cùng danh sách cố định; app không lấy điểm từ các bước tùy ý của file để đưa vào bảng.
+
+Hiệu chỉnh được lưu riêng theo kích thước màn hình, chiều xoay và phần viền hệ thống. Điện thoại khác có thể chỉnh lại trực tiếp, không cần sửa APK; app không tự chuyển hiệu chỉnh giữa các kích thước. Xoay màn hình sẽ đóng bảng đang chỉnh để tránh lưu nhầm cấu hình. Các điểm mặc định của macro tướng phiên bản cũ đang chạy dở được giữ tới hết lượt; tạo lượt mới để dùng ID hiệu chỉnh mới.

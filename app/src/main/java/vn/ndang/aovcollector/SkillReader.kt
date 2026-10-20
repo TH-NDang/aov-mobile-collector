@@ -43,6 +43,8 @@ class SkillReader(
 
         fun tap(x: Double, y: Double, then: (Boolean) -> Unit)
 
+        fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = tap(action.points[0].x, action.points[0].y, then)
+
         /** Takes and keeps a screenshot named [name]. */
         fun shot(name: String, then: (Boolean) -> Unit)
 
@@ -111,9 +113,11 @@ class SkillReader(
         }
     }
 
-    private fun tap(x: Double, y: Double, wait: Long, then: () -> Unit) {
+    private fun tap(x: Double, y: Double, wait: Long, id: String, label: String, relative: Boolean = false, then: () -> Unit) {
         if (!screen.alive) return
-        screen.tap(x, y) { ok -> if (!ok) fail("Không chạm được màn hình tướng") else screen.later(wait, then) }
+        screen.calibrated(CalibrationAction("skills.v1.$id", label, listOf(CalibrationPoint(x, y)), relative)) { ok ->
+            if (!ok) fail("Không chạm được màn hình tướng") else screen.later(wait, then)
+        }
     }
 
     /** A failed screenshot is tried once more; Android sometimes refuses one right after a tap. */
@@ -137,7 +141,7 @@ class SkillReader(
             row.centres != null && known != null && !row.sameAs(known) && row.swap && returns < MAX_FORMS - 1 -> {
                 l.done(null)
                 if (returns == 0) screen.note("Hàng chiêu không ở dạng đầu như lần trước; bấm ↻ để về dạng đầu")
-                tap(SkillRow.SWAP_X, SkillRow.Y, settle + 300) { first(true, returns + 1) }
+                tap(SkillRow.SWAP_X, SkillRow.Y, settle + 300, "form.swap", "Tướng: đổi dạng") { first(true, returns + 1) }
             }
             row.centres != null -> {
                 l.done(null)
@@ -156,7 +160,7 @@ class SkillReader(
             // A panel may still be open over the page: tap empty space once and read again.
             !closed -> {
                 l.done(null)
-                tap(CLOSE_X, CLOSE_Y, settle) { first(true, returns) }
+                tap(CLOSE_X, CLOSE_Y, settle, "detail.close", "Tướng: đóng chiêu") { first(true, returns) }
             }
             else -> {
                 l.done("skill-row-unknown")
@@ -173,15 +177,27 @@ class SkillReader(
             val i = which[k]
             val name = (if (form > 1) "form-$form-" else "") + slot(i)
             val last = k == which.lastIndex
-            tap(centres[i], SkillRow.Y, settle) {
+            tap(centres[i], SkillRow.Y, settle, "row.${centres.size}.slot.$i", "Tướng: ô chiêu ${i + 1}/${centres.size}", relative = true) {
                 val detail = {
-                    tap(DETAIL_X, TAB_Y, tabWait) {
+                    tap(DETAIL_X, TAB_Y, tabWait, "detail.tab", "Tướng: Chi tiết chiêu") {
                         shot("$name-detail") {
-                            if (options.directSkills && !last) one(k + 1) else tap(CLOSE_X, CLOSE_Y, settle) { one(k + 1) }
+                            if (options.directSkills &&
+                                !last
+                            ) {
+                                one(k + 1)
+                            } else {
+                                tap(CLOSE_X, CLOSE_Y, settle, "detail.close", "Tướng: đóng chiêu") { one(k + 1) }
+                            }
                         }
                     }
                 }
-                if (options.detailOnly) detail() else tap(SUMMARY_X, TAB_Y, tabWait) { shot("$name-summary") { detail() } }
+                if (options.detailOnly) {
+                    detail()
+                } else {
+                    tap(SUMMARY_X, TAB_Y, tabWait, "summary.tab", "Tướng: Tóm tắt chiêu") {
+                        shot("$name-summary") { detail() }
+                    }
+                }
             }
         }
         one(0)
@@ -197,7 +213,13 @@ class SkillReader(
             return done()
         }
         val act = { next: () -> Unit ->
-            if (retries == 1) screen.later(1000, next) else tap(SkillRow.SWAP_X, SkillRow.Y, settle + 300, next)
+            if (retries ==
+                1
+            ) {
+                screen.later(1000, next)
+            } else {
+                tap(SkillRow.SWAP_X, SkillRow.Y, settle + 300, "form.swap", "Tướng: đổi dạng", then = next)
+            }
         }
         act {
             look { l ->

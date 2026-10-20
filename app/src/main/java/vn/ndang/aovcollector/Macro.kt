@@ -115,7 +115,7 @@ class Macro(val raw: String) {
 /** Coordinates calibrated from the user's 2400x1080 VN hero menu. */
 object BuiltInMacros {
     /** Bump when the generated steps change; selected built-in macros are then regenerated with the same settings. */
-    const val VERSION = 6
+    const val VERSION = 7
 
     /** "Tất cả": more cards than the game has; the run stops at the end of the list. */
     const val ALL = 300
@@ -179,8 +179,8 @@ object BuiltInMacros {
             steps.put(JSONObject().put("type", "wait").put("ms", ms))
         }
 
-        fun tap(x: Double, y: Double, ms: Int = settle) {
-            steps.put(JSONObject().put("type", "tap").put("x", x).put("y", y))
+        fun tap(x: Double, y: Double, id: String, ms: Int = settle) {
+            steps.put(JSONObject().put("type", "tap").put("x", x).put("y", y).put("calibrationId", id))
             waitFor(ms)
         }
 
@@ -189,14 +189,14 @@ object BuiltInMacros {
         }
 
         fun collect(prefix: String) {
-            tap(.60, .82)
+            tap(.60, .82, "hero.v1.overview")
             shot("$prefix-overview")
-            tap(.095, .89)
-            tap(.125, .765)
+            tap(.095, .89, "hero.v1.attributes.open")
+            tap(.125, .765, "hero.v1.attributes.tab")
             waitFor(600)
             shot("$prefix-attributes")
-            tap(.60, .82)
-            tap(.60, .82)
+            tap(.60, .82, "hero.v1.overview")
+            tap(.60, .82, "hero.v1.overview")
             // The skill row is read on the phone: four or five icons, and the other forms behind a ↻ button ([SkillReader]).
             steps.put(
                 JSONObject().put(
@@ -208,7 +208,7 @@ object BuiltInMacros {
 
         /** Back from the hero page to the list. */
         fun back() {
-            tap(HeroGrid.BACK_X, HeroGrid.BACK_Y)
+            tap(HeroGrid.BACK_X, HeroGrid.BACK_Y, "hero.v1.back")
             waitFor(if (fast) 1000 else 1400)
         }
     }

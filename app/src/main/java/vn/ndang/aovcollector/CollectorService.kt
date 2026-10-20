@@ -54,6 +54,7 @@ class CollectorService : AccessibilityService() {
     private val debugCaptureShield = CaptureOverlayShield {
         debugCaptureHidden = it
         gestureDebug?.shield(it)
+        calibrationEditor?.shield(it)
     }
 
     private fun clearGestureDebug() {
@@ -68,6 +69,325 @@ class CollectorService : AccessibilityService() {
         } else {
             null
         }
+    }
+
+    private val calibrationStore by lazy { CalibrationStore(getSharedPreferences("gesture-calibration", MODE_PRIVATE)) }
+    private var calibratedMacroHash: String? = null
+    private var calibratedActionIds = emptySet<String>()
+    private var calibrationSteps = emptyList<CalibrationStep>()
+    private var calibrationPosition = 0
+    private var calibrationSession = 0
+    private var teachingEntry = false
+    private var teachingEntryGeneration = 0
+    private var calibrationEditor: GestureCalibrationEditor? = null
+    private var calibrationTesting = false
+    private var gesturesInFlight = 0
+    internal val calibrationView: View? get() = calibrationEditor?.view
+
+    private fun calibrationProfile(): CalibrationProfile {
+        val metrics = wm.currentWindowMetrics
+        val b = metrics.bounds
+        val i = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+        return CalibrationProfile(b.width(), b.height(), wm.defaultDisplay.rotation, i.left, i.top, i.right, i.bottom)
+    }
+
+    private fun calibrationGestures(action: CalibrationAction, points: List<CalibrationPoint>): List<GestureDescription> {
+        val b = screen()
+
+        fun path() = Path().apply {
+            moveTo((points[0].x * (b.width() - 1)).toFloat(), (points[0].y * (b.height() - 1)).toFloat())
+            if (points.size == 2) lineTo((points[1].x * (b.width() - 1)).toFloat(), (points[1].y * (b.height() - 1)).toFloat())
+        }
+        val stroke = GestureDescription.StrokeDescription(path(), 0, action.durationMs, action.holdMs > 0)
+        val first = GestureDescription.Builder().addStroke(stroke).build()
+        if (action.holdMs == 0L) return listOf(first)
+        val end = points.last()
+        val hold = stroke.continueStroke(
+            Path().apply {
+                moveTo((end.x * (b.width() - 1)).toFloat(), (end.y * (b.height() - 1)).toFloat())
+            },
+            0,
+            action.holdMs,
+            false
+        )
+        return listOf(first, GestureDescription.Builder().addStroke(hold).build())
+    }
+
+    private fun calibratedTouch(action: CalibrationAction, then: (Boolean) -> Unit) = calibratedTouch(action, null, then)
+
+    private fun calibratedTouch(action: CalibrationAction, target: GameScreens.Word?, then: (Boolean) -> Unit) {
+        if (calibrationEditor != null || !running) return then(false)
+        val currentMacro = macro
+        if (calibratedMacroHash != currentMacro?.hash) {
+            calibratedMacroHash = currentMacro?.hash
+            calibratedActionIds = currentMacro?.let { CalibrationCatalog.steps(it.json).map { step -> step.action.id }.toSet() }.orEmpty()
+        }
+        val points = if (action.id in calibratedActionIds) calibrationStore.resolve(calibrationProfile(), action) else action.points
+        if (points.isEmpty()) return then(false)
+        touchGameTarget(calibrationGestures(action, points), points.size == 1, target, action.label, then)
+    }
+
+    internal fun showCalibration() {
+        pause("Tạm dừng để chỉnh từng bước")
+        if (busy || manualBusy || pendingSaves > 0 || afterRunChat != null || gesturesInFlight > 0) {
+            status("Đợi thao tác hiện tại kết thúc rồi mở Chỉnh từng bước lại")
+            return
+        }
+        captureShield.reset()
+        calibrationEditor?.close()
+        val selected = selected() ?: return status("Chọn macro trước khi chỉnh từng bước")
+        calibrationSteps = CalibrationCatalog.steps(selected.json)
+        if (calibrationSteps.isEmpty()) {
+            status("Macro này chưa có bảng chỉnh từng bước. Không hỗ trợ bước đăng nhập, xác nhận lưu ảnh và macro nhập riêng.")
+            return
+        }
+        calibrationPosition = 0
+        editCalibration(0)
+    }
+
+    private fun chooseCalibrationStep() {
+        calibrationEditor?.close()
+        display(
+            AlertDialog.Builder(themed())
+                .setTitle("Các bước mặc định · chọn để chỉnh")
+                .setItems(
+                    calibrationSteps.mapIndexed { i, step ->
+                        "${i + 1}. ${step.title}"
+                    }.toTypedArray()
+                ) { _, which -> editCalibration(which) }
+                .setNegativeButton("Hủy", null).create()
+        )
+    }
+
+    private fun editCalibration(position: Int) {
+        if (running || busy || teachingEntry || gesturesInFlight > 0 || position !in calibrationSteps.indices) return
+        calibrationEditor?.close()
+        calibrationPosition = position
+        val step = calibrationSteps[position]
+        val action = step.action
+        val profile = calibrationProfile()
+        val session = ++calibrationSession
+        val initial = if (step.recognition == null) calibrationStore.resolve(profile, action) else emptyList()
+        val editor = GestureCalibrationEditor(
+            this, step, position, calibrationSteps.size, initial,
+            navigate = { editCalibration(it) }, choose = { chooseCalibrationStep() }, enterLobby = { enterCalibrationLobby() },
+            scan = { done ->
+                handler.postDelayed({
+                    readCalibrationTarget(step) { fresh ->
+                        done(fresh.takeIf { session == calibrationSession && profile == calibrationProfile() })
+                    }
+                }, SHIELD_MS)
+            },
+            resolved = { calibrationStore.resolve(profile, it) },
+            save = { base, points -> !running && profile == calibrationProfile() && calibrationStore.save(profile, base, points) },
+            reset = { !running && profile == calibrationProfile() && calibrationStore.reset(profile, action.id) },
+            test = { base, points, done ->
+                fun perform(fresh: CalibrationAction?) {
+                    if (fresh == null ||
+                        session != calibrationSession ||
+                        running ||
+                        busy ||
+                        gesturesInFlight > 0 ||
+                        profile != calibrationProfile() ||
+                        foreground() != GAME
+                    ) {
+                        done(false)
+                    } else {
+                        val target = if (base.relative && fresh.points.size == points.size && base.points.size == points.size) {
+                            points.mapIndexed { i, point ->
+                                CalibrationPoint(
+                                    fresh.points[i].x + point.x - base.points[i].x,
+                                    fresh.points[i].y + point.y - base.points[i].y
+                                )
+                            }
+                        } else {
+                            points
+                        }
+                        if (!CalibrationCodec.validPoints(target)) {
+                            done(false)
+                            return
+                        }
+                        calibrationTesting = true
+                        var completed = false
+                        var testLease: Long? = null
+                        val finish = { ok: Boolean ->
+                            if (!completed) {
+                                completed = true
+                                testLease?.let { captureShield.release(it) }
+                                calibrationTesting = false
+                                done(ok)
+                            }
+                        }
+                        touchGameTarget(calibrationGestures(fresh, target), target.size == 1, null, fresh.label, finish, onSession = {
+                            testLease =
+                                it
+                        })
+                        handler.postDelayed({ finish(false) }, fresh.durationMs + fresh.holdMs + 5000)
+                    }
+                }
+                handler.postDelayed({
+                    if (step.recognition != null) readCalibrationTarget(step) { perform(it) } else perform(base)
+                }, SHIELD_MS)
+            },
+            closed = {
+                calibrationSession++
+                calibrationEditor = null
+                calibrationTesting = false
+                captureShield.reset()
+                refreshPanel()
+            }
+        )
+        calibrationEditor = editor
+        editor.shield(debugCaptureHidden)
+        if (!editor.show()) {
+            calibrationEditor = null
+            status("Không mở được Chỉnh từng bước")
+        }
+    }
+
+    private fun readCalibrationTarget(step: CalibrationStep, result: (CalibrationAction?) -> Unit) {
+        var completed = false
+
+        fun done(action: CalibrationAction?) {
+            if (!completed) {
+                completed = true
+                result(action)
+            }
+        }
+        handler.postDelayed({ done(null) }, 10000)
+        if (running || foreground() != GAME) return done(null)
+        val profile = calibrationProfile()
+        grab(anyApp = true) { image ->
+            if (image == null) return@grab done(null)
+            val observedAt = SystemClock.elapsedRealtime()
+            try {
+                io.execute {
+                    val point = try {
+                        val words = GameText.words(image)
+                        val id = step.action.id
+                        when {
+                            id.startsWith("ranking.v1.") -> {
+                                val button = RankScreens.modeButton(words)
+                                if (RankScreens.page(words, false) != RankScreens.Page.RANKING || button == null) {
+                                    null
+                                } else {
+                                    val word = when {
+                                        id.endsWith("table.switch") -> RankScreens.switchButton(words)
+                                        id.endsWith("mode.open") -> button
+                                        id.contains("mode.option.") && RankScreens.menuModes(words, button).size >= 2 ->
+                                            RankScreens.Mode.values().firstOrNull { id.endsWith("." + it.name.lowercase(Locale.ROOT)) }
+                                                ?.let { RankScreens.option(words, button, it) }
+                                        else -> null
+                                    }
+                                    word?.let { CalibrationPoint(it.x, it.y) }
+                                }
+                            }
+                            id.startsWith("skills.v1.row.") -> {
+                                val parts = id.split('.')
+                                val count = parts.getOrNull(3)?.toIntOrNull()
+                                val slot = parts.getOrNull(5)?.toIntOrNull()
+                                val row = SkillRow.read(image.width, image.height) { y, pixels ->
+                                    image.getPixels(pixels, 0, image.width, 0, y, image.width, 1)
+                                }
+                                if (row.centres?.size == count && slot != null) {
+                                    row.centres?.getOrNull(slot)?.let {
+                                        CalibrationPoint(it, SkillRow.Y)
+                                    }
+                                } else {
+                                    null
+                                }
+                            }
+                            id == "chess.v1.lobby.home.detected" -> {
+                                if (words.any { it.plain.contains("colienquan") }) {
+                                    words.firstOrNull { it.plain.contains("trangchu") && it.x < .24 }?.let { CalibrationPoint(it.x, it.y) }
+                                } else {
+                                    null
+                                }
+                            }
+                            id == "chess.v1.lobby.mode" -> {
+                                val reading = GameScreens.read(image.width, image.height) { y, row ->
+                                    image.getPixels(row, 0, image.width, 0, y, image.width, 1)
+                                }
+                                if (reading.kind ==
+                                    GameScreens.Kind.LOBBY
+                                ) {
+                                    ChessWiki.modeEntryPoint(words)?.let { CalibrationPoint(it.first, it.second) }
+                                } else {
+                                    null
+                                }
+                            }
+                            id.startsWith("chess.v1.topic.") && id.endsWith(".card") && !ChessWiki.modal(image) -> {
+                                val key = id.removePrefix("chess.v1.topic.").removeSuffix(".card")
+                                val topic = ChessWiki.TOPICS.firstOrNull { it.key == key }
+                                val correct = if (key == "tat-ca-quan-co") {
+                                    ChessWiki.heroListVisible(words)
+                                } else {
+                                    topic != null && words.any { it.plain == GameScreens.plain(topic.label) }
+                                }
+                                if (topic != null &&
+                                    correct
+                                ) {
+                                    ChessWiki.tiles(topic, image, words).firstOrNull()?.let { CalibrationPoint(it.x, it.y) }
+                                } else {
+                                    null
+                                }
+                            }
+                            else -> null
+                        }
+                    } catch (_: Exception) {
+                        null
+                    }
+                    image.recycle()
+                    handler.post {
+                        done(
+                            if (point != null &&
+                                CalibrationFreshness.valid(observedAt, SystemClock.elapsedRealtime()) &&
+                                !running &&
+                                profile == calibrationProfile() &&
+                                foreground() == GAME
+                            ) {
+                                step.action.copy(points = listOf(point))
+                            } else {
+                                null
+                            }
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+                image.recycle()
+                done(null)
+            }
+        }
+    }
+
+    private fun enterCalibrationLobby() {
+        calibrationEditor?.close()
+        if (isWorking || libraryBusy) return
+        val token = ++teachingEntryGeneration
+        teachingEntry = true
+        var completed = false
+
+        fun finish(outcome: GameEntry.Outcome) {
+            if (completed || token != teachingEntryGeneration || current !== this) return
+            completed = true
+            teachingEntry = false
+            captureShield.reset()
+            when (outcome) {
+                is GameEntry.Outcome.Ready -> {
+                    status("Đã vào sảnh · dừng tại đây để chỉnh từng bước")
+                    editCalibration(0)
+                }
+                is GameEntry.Outcome.Failed -> status(outcome.reason)
+            }
+        }
+        status("Đang vào sảnh; sẽ dừng tại sảnh. Bấm Dừng để hủy.")
+        enterGame(true, {
+            teachingEntry && token == teachingEntryGeneration && current === this
+        }, calibrationOnly = true, finish = ::finish)
+        handler.postDelayed(
+            { finish(GameEntry.Outcome.Failed("Vào sảnh quá lâu. Mở game bằng tay rồi chỉnh từng bước.")) },
+            GameEntry.LIMIT_MS + 5000
+        )
     }
 
     private var panel: LinearLayout? = null
@@ -94,11 +414,23 @@ class CollectorService : AccessibilityService() {
     private var stopped = false
     private var pendingSaves = 0
     private val saveWaiters = ArrayDeque<() -> Unit>()
-    val isWorking: Boolean get() = running || busy || manualBusy || pendingSaves > 0 || afterRunChat != null
+    val isWorking: Boolean get() = gesturesInFlight > 0 ||
+        teachingEntry ||
+        calibrationEditor != null ||
+        calibrationTesting ||
+        running ||
+        busy ||
+        manualBusy ||
+        pendingSaves > 0 ||
+        afterRunChat != null
 
     fun prepareEdit(): Boolean {
         if (running) pause("Tạm dừng để quản lý dữ liệu")
-        return !busy &&
+        return gesturesInFlight == 0 &&
+            !teachingEntry &&
+            calibrationEditor == null &&
+            !calibrationTesting &&
+            !busy &&
             !manualBusy &&
             pendingSaves == 0 &&
             afterRunChat == null
@@ -390,6 +722,9 @@ class CollectorService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        teachingEntry = false
+        teachingEntryGeneration++
+        calibrationEditor?.close()
         clearGestureDebug()
         gestureDebug = null
         afterRunChat?.cancel()
@@ -453,6 +788,7 @@ class CollectorService : AccessibilityService() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        calibrationEditor?.close()
         clearGestureDebug()
         if (panel != null) {
             dismissMacroPicker()
@@ -741,6 +1077,7 @@ class CollectorService : AccessibilityService() {
                 hidePanel()
             }
             layout.addView(footer)
+            layout.addView(Ui.button(this, "Chỉnh từng bước") { showCalibration() })
         }
         if (shielded) layout.visibility = View.INVISIBLE
         try {
@@ -1956,6 +2293,8 @@ class CollectorService : AccessibilityService() {
                 }
             }
 
+            override fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = calibratedTouch(action, then)
+
             override fun tap(x: Double, y: Double, then: (Boolean) -> Unit) {
                 touchGame(tapAt(x, y), true, then)
             }
@@ -1964,7 +2303,21 @@ class CollectorService : AccessibilityService() {
                 val start = if (d > 0) .92 else .24
                 val distance = kotlin.math.abs(d).coerceAtMost(.70)
                 val end = if (d > 0) start - distance else start + distance
-                touchGame(drag(.76, start, end, if (fling) 160 else 700, if (fling) 0 else 450), false, then)
+                if (fling) {
+                    touchGame(drag(.76, start, end, 160, 0), false, then)
+                } else {
+                    calibratedTouch(
+                        CalibrationAction(
+                            "chess.v1.herolist." + if (d > 0) "down" else "up",
+                            "Cờ: kéo danh sách quân cờ",
+                            listOf(CalibrationPoint(.76, start), CalibrationPoint(.76, end)),
+                            relative = true,
+                            durationMs = 700,
+                            holdMs = 450
+                        ),
+                        then
+                    )
+                }
             }
 
             override fun swipe(x: Double, y: Double, toX: Double, toY: Double, then: (Boolean) -> Unit) {
@@ -2425,6 +2778,7 @@ class CollectorService : AccessibilityService() {
     }
 
     private fun hidePanel() {
+        calibrationEditor?.close()
         captureProgress.close()
         dismissMacroPicker()
         activeDialog?.dismiss()
@@ -2465,6 +2819,9 @@ class CollectorService : AccessibilityService() {
     fun start() = startWithAccount(null)
 
     private fun startWithAccount(pickedAccount: String?) {
+        if (teachingEntry) return status("Đang vào sảnh để chỉnh từng bước; bấm Dừng nếu muốn hủy")
+        if (calibrationTesting || gesturesInFlight > 0) return status("Đợi thao tác thử kết thúc trước khi chạy macro")
+        calibrationEditor?.close()
         if (afterRunChat != null) {
             status("Đang gửi câu lệnh sau lượt trong ChatGPT")
             return
@@ -2722,6 +3079,10 @@ class CollectorService : AccessibilityService() {
     private var cancelStep: (() -> Unit)? = null
 
     private fun interrupt() {
+        calibrationEditor?.close()
+        if (teachingEntry) captureShield.reset()
+        teachingEntry = false
+        teachingEntryGeneration++
         clearGestureDebug()
         cancelStep?.invoke()
         cancelStep = null
@@ -2729,18 +3090,19 @@ class CollectorService : AccessibilityService() {
 
     private fun pause(s: String) {
         val was = running
+        val hadWork = running || busy
         interrupt()
         entering = false
         setRunning(false)
         if (was) prefs.edit().putBoolean("clean", false).apply()
-        save()
+        if (hadWork) save()
         if (was) note("Tạm dừng: $s")
         status(s)
     }
 
     /** A run to end: going, paused part way, not ended yet. */
     private fun canStop(): Boolean {
-        if (running || busy) return true
+        if (teachingEntry || running || busy) return true
         val m = selected() ?: return false
         return prefs.getString("hash", "") == m.hash &&
             !prefs.getString("run", "").isNullOrEmpty() &&
@@ -2749,6 +3111,13 @@ class CollectorService : AccessibilityService() {
     }
 
     private fun stop() {
+        calibrationEditor?.close()
+        if (teachingEntry) {
+            interrupt()
+            captureShield.reset()
+            status("Đã hủy vào sảnh; macro vẫn tạm dừng")
+            return
+        }
         if (!canStop()) {
             status("Chưa có lượt nào đang chạy hay tạm dừng để dừng")
             return
@@ -3053,7 +3422,16 @@ class CollectorService : AccessibilityService() {
                     val gesture = GestureDescription.Builder().addStroke(
                         GestureDescription.StrokeDescription(p, 0, if (swipe) s.optLong("ms", 500) else TAP_MS)
                     ).build()
-                    touchGame(gesture, !swipe) { done(it) }
+                    val actionId = s.optString("calibrationId")
+                    if (actionId in setOf("hero.v1.overview", "hero.v1.attributes.open", "hero.v1.attributes.tab", "hero.v1.back") &&
+                        m.json.optInt("builtinVersion") >= 7 &&
+                        !swipe
+                    ) {
+                        val defaults = CalibrationCatalog.steps(m.json).firstOrNull { it.action.id == actionId }?.action
+                        if (defaults != null) calibratedTouch(defaults) { done(it) } else touchGame(gesture, true) { done(it) }
+                    } else {
+                        touchGame(gesture, !swipe) { done(it) }
+                    }
                 }
             }
         } catch (
@@ -3083,10 +3461,14 @@ class CollectorService : AccessibilityService() {
         tap: Boolean,
         target: GameScreens.Word?,
         label: String?,
-        result: (Boolean) -> Unit
+        result: (Boolean) -> Unit,
+        onSession: ((Long) -> Unit)? = null
     ) {
+        if (calibrationEditor != null && !calibrationTesting) return result(false)
         val debugSession = debugGeneration
+        val allowRetries = !calibrationTesting
         val session = captureShield.acquire()
+        onSession?.invoke(session)
         var finished = false
         val done = { ok: Boolean ->
             if (!finished) {
@@ -3098,7 +3480,7 @@ class CollectorService : AccessibilityService() {
         }
 
         fun send(attempt: Int) {
-            if (current !== this || !captureShield.contains(session)) {
+            if (current !== this || !captureShield.contains(session) || (!allowRetries && foreground() != GAME)) {
                 done(false)
                 return
             }
@@ -3110,8 +3492,19 @@ class CollectorService : AccessibilityService() {
                     done(false)
                     return
                 }
+                var flightEnded = false
+                gesturesInFlight++
+
+                fun endFlight() {
+                    if (!flightEnded) {
+                        flightEnded = true
+                        gesturesInFlight--
+                        if (gesturesInFlight == 0 && !running && calibrationEditor == null) refreshPanel()
+                    }
+                }
                 val callback = object : GestureResultCallback() {
                     override fun onCompleted(g: GestureDescription?) {
+                        endFlight()
                         if (!captureShield.contains(session)) {
                             done(false)
                             return
@@ -3122,7 +3515,8 @@ class CollectorService : AccessibilityService() {
                         }
                         swallowedTaps++
                         if (busy) unsavedRetries++
-                        if (attempt <
+                        if (allowRetries &&
+                            attempt <
                             GESTURE_RETRIES
                         ) {
                             handler.postDelayed({ send(attempt + 1) }, SHIELD_MS)
@@ -3135,11 +3529,13 @@ class CollectorService : AccessibilityService() {
 
                     // A cancelled swipe may have scrolled part way, so only taps are repeated.
                     override fun onCancelled(g: GestureDescription?) {
+                        endFlight()
                         if (!captureShield.contains(session)) {
                             done(false)
                             return
                         }
-                        if (tap &&
+                        if (allowRetries &&
+                            tap &&
                             attempt < GESTURE_RETRIES
                         ) {
                             handler.postDelayed({ send(attempt + 1) }, SHIELD_MS)
@@ -3159,6 +3555,7 @@ class CollectorService : AccessibilityService() {
                     false
                 }
                 if (!sent) {
+                    endFlight()
                     failure = "Android không nhận thao tác chạm"
                     done(false)
                 }
@@ -3422,6 +3819,8 @@ class CollectorService : AccessibilityService() {
                 }
             }
 
+            override fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = calibratedTouch(action, then)
+
             override fun tap(x: Double, y: Double, then: (Boolean) -> Unit) {
                 touchGame(tapAt(x, y), true, then)
             }
@@ -3532,6 +3931,9 @@ class CollectorService : AccessibilityService() {
             override fun tap(word: GameScreens.Word, label: String, then: (Boolean) -> Unit) {
                 touchGameTarget(listOf(tapAt(word.x, word.y)), true, word, label, then)
             }
+
+            override fun calibrated(action: CalibrationAction, word: GameScreens.Word, then: (Boolean) -> Unit) =
+                calibratedTouch(action, word, then)
 
             override fun tap(x: Double, y: Double, then: (Boolean) -> Unit) {
                 touchGame(tapAt(x, y), true, then)
@@ -3696,16 +4098,22 @@ class CollectorService : AccessibilityService() {
      * popups to the hero list, checking the account's UID when the run asks for it. With the run's trace on,
      * each screenshot it decided on is kept scaled down in [GameEntry.TRACE_DIR], with the decision.
      */
-    private fun enterGame(toLobby: Boolean, alive: () -> Boolean, finish: (GameEntry.Outcome) -> Unit) {
+    private fun enterGame(toLobby: Boolean, alive: () -> Boolean, calibrationOnly: Boolean = false, finish: (GameEntry.Outcome) -> Unit) {
         val stamp = "%04d".format(index + 1)
-        val m = macro
+        val m = if (calibrationOnly) null else macro
         val account = if (m?.json?.optBoolean("checkAccount") == true) Accounts.load(this, runAccountId) else null
         if (m?.json?.optBoolean("checkAccount") == true && (account == null || account.uid != runAccountUid)) {
             finish(GameEntry.Outcome.Failed("Không đọc được tài khoản đã chọn cho lượt. Hãy lưu lại tài khoản trước khi chạy."))
             return
         }
         val expected = account?.uid
-        val trace = if (m?.json?.optBoolean("traceEntry", true) != false) File(filesDir, "captures/$runId/${GameEntry.TRACE_DIR}") else null
+        val trace = if (!calibrationOnly &&
+            m?.json?.optBoolean("traceEntry", true) != false
+        ) {
+            File(filesDir, "captures/$runId/${GameEntry.TRACE_DIR}")
+        } else {
+            null
+        }
         var traced = trace?.listFiles()?.count { it.extension == "jpg" } ?: 0
 
         /** One line of the trace, with the screenshot [small] scaled down when there is one; it is recycled here. */
@@ -3743,6 +4151,7 @@ class CollectorService : AccessibilityService() {
             override val alive get() = alive()
 
             override fun quit(then: (GameCloser.Result) -> Unit) {
+                if (calibrationOnly) return then(GameCloser.Result.NO_PAGE)
                 closeApp(GAME, alive = alive) { result ->
                     if (alive()) write(result.text, "SETTINGS", null, null)
                     then(result)
@@ -3792,6 +4201,15 @@ class CollectorService : AccessibilityService() {
                                 if (reading == null) {
                                     b.recycle()
                                     then(null)
+                                } else if (calibrationOnly &&
+                                    reading.kind in setOf(GameScreens.Kind.LOGIN, GameScreens.Kind.FORM, GameScreens.Kind.REGISTER)
+                                ) {
+                                    b.recycle()
+                                    finish(
+                                        GameEntry.Outcome.Failed(
+                                            "Hãy đăng nhập bằng tay rồi bấm Vào sảnh. Chế độ chỉnh không thao tác tài khoản."
+                                        )
+                                    )
                                 } else {
                                     then(object : GameEntry.Shot {
                                         override val reading: GameScreens.Reading = reading
@@ -3810,7 +4228,7 @@ class CollectorService : AccessibilityService() {
                                         }
 
                                         override fun done(keep: String?) {
-                                            if (keep != null) store(b, runId, "$stamp-$keep") {} else b.recycle()
+                                            if (!calibrationOnly && keep != null) store(b, runId, "$stamp-$keep") {} else b.recycle()
                                         }
                                     })
                                 }
@@ -3832,7 +4250,7 @@ class CollectorService : AccessibilityService() {
             }
 
             override fun signIn(then: (Boolean) -> Unit) {
-                signInGarena(then)
+                if (calibrationOnly) then(false) else signInGarena(then)
             }
 
             override fun later(ms: Long, then: () -> Unit) {
@@ -3842,7 +4260,7 @@ class CollectorService : AccessibilityService() {
             override fun now() = SystemClock.elapsedRealtime()
 
             override fun note(text: String) {
-                this@CollectorService.note(text)
+                if (!calibrationOnly) this@CollectorService.note(text)
             }
 
             override fun say(text: String) {
@@ -4059,8 +4477,8 @@ class CollectorService : AccessibilityService() {
             status("Đang lưu dữ liệu; vui lòng chờ")
             return
         }
-        if (busy || running || manualBusy) {
-            status("Tạm dừng trước khi chụp riêng")
+        if (gesturesInFlight > 0 || teachingEntry || calibrationEditor != null || calibrationTesting || busy || running || manualBusy) {
+            status("Đóng bảng chỉnh từng bước và tạm dừng trước khi chụp riêng")
             return
         }
         try {

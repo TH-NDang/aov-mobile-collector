@@ -1479,6 +1479,7 @@ class UiSmoke : Instrumentation() {
                 service != null
             }
             GestureDebugSmoke.run(this, service!!)
+            GestureCalibrationSmoke.run(this, service!!)
             runOnMainSync { service!!.showPanel() }
             // The real asynchronous image writer feeds a durable, ordered second overlay.
             val historyDir = File(targetContext.filesDir, "captures/progress-smoke").apply { mkdirs() }

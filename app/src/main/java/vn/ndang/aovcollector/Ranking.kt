@@ -359,6 +359,8 @@ class RankingReader(
 
         fun tap(word: GameScreens.Word, label: String, then: (Boolean) -> Unit) = tap(word.x, word.y, then)
 
+        fun calibrated(action: CalibrationAction, word: GameScreens.Word, then: (Boolean) -> Unit) = tap(word, action.label, then)
+
         /** Drags the page up by [d] screen heights (down when negative); [fling] is a quick flick, else it rests before lifting. */
         fun drag(d: Double, fling: Boolean, then: (Boolean) -> Unit)
 
@@ -433,9 +435,12 @@ class RankingReader(
         }
     }
 
-    private fun tap(word: GameScreens.Word, label: String, wait: Long, then: () -> Unit) {
+    private fun tap(word: GameScreens.Word, label: String, wait: Long, id: String, then: () -> Unit) {
         if (!screen.alive) return
-        screen.tap(word, label) { ok ->
+        screen.calibrated(
+            CalibrationAction("ranking.v1.$id", label, listOf(CalibrationPoint(word.x, word.y)), relative = true),
+            word
+        ) { ok ->
             if (screen.alive && !ended) {
                 if (ok) screen.later(wait, then) else fail("Không chạm được màn hình")
             }
@@ -604,7 +609,7 @@ class RankingReader(
                     l.done(null)
                     screen.note("Đổi bảng xếp hạng")
                     needsSettlement = true
-                    tap(w, "Đổi bảng xếp hạng", SWITCH_LOAD_MS) {
+                    tap(w, "Đổi bảng xếp hạng", SWITCH_LOAD_MS, "table.switch") {
                         loadRested = true
                         prepare(combo, tries + 1)
                     }
@@ -614,7 +619,7 @@ class RankingReader(
                 l.done(null)
                 screen.note("Mở danh sách chế độ: $mode → ${combo.mode}")
                 screen.say("Chọn ${combo.mode.label}")
-                tap(button, "Mở danh sách chế độ", 1200) { pick(combo, button, tries, 0) }
+                tap(button, "Mở danh sách chế độ", 1200, "mode.open") { pick(combo, button, tries, 0) }
             }
             // A switched table must settle before its first photo; every retained frame is verified.
             else -> {
@@ -691,7 +696,7 @@ class RankingReader(
         if (option != null && visible.size >= 2) {
             screen.note("Bấm ${combo.mode.label} tại ${(option.x * 100).toInt()},${(option.y * 100).toInt()}%; sẽ xác nhận lại")
             needsSettlement = true
-            tap(option, "Chọn ${combo.mode.label}", SWITCH_LOAD_MS) {
+            tap(option, "Chọn ${combo.mode.label}", SWITCH_LOAD_MS, "mode.option.${combo.mode.name.lowercase(java.util.Locale.ROOT)}") {
                 loadRested = true
                 prepare(combo, tries + 1)
             }
