@@ -50,32 +50,85 @@ class UiSmoke : Instrumentation() {
                     if (!file.exists()) file.writeText(BuiltInMacros.create("", 1, false))
                 }
             }
-            shell("settings put secure enabled_accessibility_services null")
-            SystemClock.sleep(500)
-            shell("settings put secure enabled_accessibility_services vn.ndang.aovcollector/vn.ndang.aovcollector.CollectorService")
-            shell("settings put secure accessibility_enabled 1")
-            if (teachingOnly) {
-                val activity = startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-                runOnMainSync { activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
-                val deadline = SystemClock.uptimeMillis() + 10_000
-                var service: CollectorService? = null
-                while (SystemClock.uptimeMillis() < deadline) {
-                    runOnMainSync { service = CollectorService.current }
-                    if (service != null &&
-                        targetContext.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
-                    ) {
-                        break
-                    }
-                    SystemClock.sleep(80)
+            // pm clear force-stops the disposable app between the focused and full suites.
+            // Start its real Activity before binding, and prove readiness before either suite
+            // uses the service (the full suite needs it in the early post-run pipeline).
+            val bootstrapActivity = startActivitySync(
+                Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            val accessibility = targetContext.getSystemService(android.view.accessibility.AccessibilityManager::class.java)
+            val startupLog = StringBuilder()
+            var startupService: CollectorService? = null
+
+            fun serviceEnabled() = accessibility.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK).any {
+                it.resolveInfo.serviceInfo.let { service ->
+                    service.packageName == targetContext.packageName && service.name == CollectorService::class.java.name
                 }
-                check(service != null) { "Teaching smoke accessibility service did not connect" }
-                check(targetContext.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE)
+            }
+
+            fun awaitStartup(timeout: Long = 10_000, condition: () -> Boolean): Boolean {
+                val until = SystemClock.uptimeMillis() + timeout
+                do {
+                    if (condition()) return true
+                    SystemClock.sleep(80)
+                } while (SystemClock.uptimeMillis() < until)
+                return condition()
+            }
+
+            fun assertServiceReady(stage: String) {
+                var working: Boolean? = null
+                runOnMainSync {
+                    startupService = CollectorService.current
+                    working = startupService?.isWorking
+                }
+                val enabled = serviceEnabled()
+                val state = "$stage: enabled=$enabled connected=${startupService != null} working=$working"
+                startupLog.appendLine(state)
+                File(targetContext.filesDir, "smoke").apply { mkdirs() }.resolve("startup-readiness.txt").writeText(startupLog.toString())
+                check(enabled && startupService != null && working == false) { "Accessibility service is not ready: $state" }
+            }
+            try {
+                for (attempt in 1..3) {
+                    shell("settings put secure enabled_accessibility_services null")
+                    val disconnected = awaitStartup {
+                        runOnMainSync { startupService = CollectorService.current }
+                        startupService == null && !serviceEnabled()
+                    }
+                    startupLog.appendLine("attempt=$attempt disconnected=$disconnected")
+                    check(disconnected) { "Previous accessibility binding did not disconnect" }
+                    shell("settings put secure enabled_accessibility_services vn.ndang.aovcollector/vn.ndang.aovcollector.CollectorService")
+                    shell("settings put secure accessibility_enabled 1")
+                    val connected = awaitStartup {
+                        runOnMainSync { startupService = CollectorService.current }
+                        startupService != null && serviceEnabled()
+                    }
+                    startupLog.appendLine("attempt=$attempt connected=$connected")
+                    if (connected) break
+                }
+                assertServiceReady("startup")
+            } finally {
+                val dest = File(targetContext.filesDir, "smoke").apply { mkdirs() }
+                File(dest, "startup-readiness.txt").writeText(startupLog.toString())
+                android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("dumpsys accessibility")).use {
+                    File(dest, "startup-accessibility.txt").writeBytes(it.readBytes())
+                }
+            }
+            if (teachingOnly) {
+                runOnMainSync { bootstrapActivity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+                check(
+                    awaitStartup {
+                        targetContext.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                    }
+                ) { "Teaching smoke did not enter landscape" }
                 waitForIdleSync()
-                GestureCalibrationSmoke.run(this, service!!, automation)
+                GestureCalibrationSmoke.run(this, startupService!!, automation)
                 result.putString("stream", "TEACHING_SMOKE_OK: synthetic editor, real input, navigation and safety checks passed\n")
                 finish(Activity.RESULT_OK, result)
                 return
             }
+            // Keep the original early pipeline independent of a visible history Activity.
+            runOnMainSync { bootstrapActivity.finish() }
+            waitForIdleSync()
             val image = Bitmap.createBitmap(2400, 1080, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(image)
             canvas.drawColor(Color.rgb(29, 32, 60))
@@ -372,6 +425,7 @@ class UiSmoke : Instrumentation() {
             targetContext.getSharedPreferences("after-run", 0).edit().putString("tree", photoTree.toString()).commit()
             val savedCommand = "Phân tích kết quả đã lưu trên Drive · smoke"
             AfterRun.saveConfig(targetContext, true, true, savedCommand)
+            assertServiceReady("before-post-run")
             AfterRun.finished(targetContext, nativeRun)
 
             fun awaitStage(wanted: String, timeout: Long = 25_000, run: String = nativeRun) {
@@ -380,7 +434,12 @@ class UiSmoke : Instrumentation() {
                     SystemClock.sleep(150)
                 }
                 check(AfterRun.state(targetContext, run)?.optString("stage") == wanted) {
-                    "Post-run expected $wanted: ${AfterRun.state(targetContext,run)}"
+                    var serviceState = ""
+                    runOnMainSync {
+                        val activeService = CollectorService.current
+                        serviceState = "serviceConnected=${activeService != null}, working=${activeService?.isWorking}"
+                    }
+                    "Post-run expected $wanted ($serviceState): ${AfterRun.state(targetContext,run)}"
                 }
             }
             awaitStage("waiting-drive")
