@@ -66,6 +66,8 @@ internal object TeachingDeviceSmoke {
         var profile: CalibrationProfile? = null
         val diagnostics = File(service.filesDir, "smoke").apply { mkdirs() }
         val checks = mutableListOf<String>()
+        val windowLog = File(diagnostics, "calibration-device-windows.txt").apply { writeText("") }
+        var editorSequence = 0
 
         fun events(): JSONArray = JSONArray(shell(automation, "run-as ${CollectorService.GAME} cat files/gesture-events.json"))
 
@@ -134,10 +136,35 @@ internal object TeachingDeviceSmoke {
                 main(test) { service.calibrationView?.let { it.isShown && it.width > 0 && it.height > 0 } == true }
             }
             test.waitForIdleSync()
-            check(foreground() == CollectorService.GAME) { "Own editor overlay hid the real underlying fixture" }
-            check(automation.windows.any { it.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY }) {
-                "Foreground assertion did not exercise an actual accessibility overlay window"
+            // A laid-out View does not prove that UiAutomation has received the window metadata.
+            // Observe the actual editor window, not an arbitrary earlier collector overlay.
+            editorSequence++
+            val publicationStarted = SystemClock.uptimeMillis()
+            waitFor("Foreground assertion did not exercise the actual own accessibility editor overlay window") {
+                val expected = main(test) { service.calibrationView?.takeIf { it.isShown }?.let(::viewBounds) }
+                val inventory = StringBuilder(
+                    "editor=$editorSequence elapsedMs=${SystemClock.uptimeMillis() - publicationStarted} expected=$expected\n"
+                )
+                var published = false
+                for (window in automation.windows) {
+                    val bounds = Rect().also(window::getBoundsInScreen)
+                    val owner = window.root?.packageName?.toString()
+                    inventory.appendLine(
+                        "type=${window.type} owner=$owner bounds=$bounds focused=${window.isFocused} active=${window.isActive}"
+                    )
+                    if (window.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY &&
+                        owner == service.packageName &&
+                        expected != null &&
+                        !expected.isEmpty &&
+                        bounds == expected
+                    ) {
+                        published = true
+                    }
+                }
+                windowLog.appendText(inventory.appendLine("published=$published").toString())
+                published
             }
+            check(foreground() == CollectorService.GAME) { "Own editor overlay hid the real underlying fixture" }
             assertPanel(hidden = true)
             assertControlsWithinEditor()
         }
