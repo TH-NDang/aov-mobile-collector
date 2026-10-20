@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit
 
 /** Synthetic editor only; tests never inject a gesture into a game or sign in. */
 internal object GestureCalibrationSmoke {
-    fun run(test: Instrumentation, service: CollectorService) {
+    fun run(test: Instrumentation, service: CollectorService, automation: android.app.UiAutomation) {
         val action = CalibrationAction("smoke.tap", "Điểm thử", listOf(CalibrationPoint(.4, .3)))
         val step = CalibrationStep("Thao tác mặc định", "Kéo để chỉnh", action)
         var tests = 0
@@ -129,7 +129,8 @@ internal object GestureCalibrationSmoke {
                 check(service.calibrationView != null) { "Editor changed the underlying screen orientation" }
                 check(service.getSystemService(WindowManager::class.java).currentWindowMetrics.bounds == displayBounds)
             }
-            test.uiAutomation.takeScreenshot()?.let { bitmap ->
+            test.runOnMainSync { check(CollectorService.current === service) { "Capture service replaced before preview" } }
+            automation.takeScreenshot()?.let { bitmap ->
                 val file = java.io.File(service.filesDir, "smoke/calibration-defaults.png")
                 file.parentFile?.mkdirs()
                 file.outputStream().use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
@@ -138,6 +139,8 @@ internal object GestureCalibrationSmoke {
             val captured = CountDownLatch(1)
             val hasBitmap = java.util.concurrent.atomic.AtomicBoolean(false)
             test.runOnMainSync {
+                check(CollectorService.current === service) { "Preview disconnected the capture service" }
+                check(service.calibrationView != null) { "Preview closed the teaching editor" }
                 service.grab(anyApp = true) { bitmap ->
                     hasBitmap.set(bitmap != null)
                     bitmap?.recycle()
