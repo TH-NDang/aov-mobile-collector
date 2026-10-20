@@ -86,6 +86,7 @@ internal object GestureCalibrationSmoke {
                 editor.shield(true)
                 val params = root.layoutParams as WindowManager.LayoutParams
                 check(root.visibility == View.INVISIBLE)
+                check(params.screenOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_BEHIND)
                 check(params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0)
                 check(params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE != 0)
                 editor.shield(false)
@@ -114,6 +115,7 @@ internal object GestureCalibrationSmoke {
             }
         }
         val before = oldHistory()
+        val displayBounds = android.graphics.Rect(service.getSystemService(WindowManager::class.java).currentWindowMetrics.bounds)
         try {
             test.runOnMainSync {
                 macroFile.writeText(BuiltInMacros.create("", 1, false))
@@ -122,6 +124,11 @@ internal object GestureCalibrationSmoke {
                 check(!service.prepareEdit()) { "Data operations allowed while editor is active" }
             }
             test.waitForIdleSync()
+            SystemClock.sleep(500)
+            test.runOnMainSync {
+                check(service.calibrationView != null) { "Editor changed the underlying screen orientation" }
+                check(service.getSystemService(WindowManager::class.java).currentWindowMetrics.bounds == displayBounds)
+            }
             test.uiAutomation.takeScreenshot()?.let { bitmap ->
                 val file = java.io.File(service.filesDir, "smoke/calibration-defaults.png")
                 file.parentFile?.mkdirs()
@@ -142,6 +149,7 @@ internal object GestureCalibrationSmoke {
             check(captured.await(8, TimeUnit.SECONDS) && hasBitmap.get()) { "Editor screenshot failed or did not complete" }
             test.runOnMainSync {
                 check(service.calibrationView?.visibility == View.VISIBLE)
+                check(service.getSystemService(WindowManager::class.java).currentWindowMetrics.bounds == displayBounds)
                 service.onInterrupt()
                 check(service.calibrationView == null) { "Interrupted editor survived" }
                 service.showCalibration()

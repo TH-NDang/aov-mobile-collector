@@ -149,6 +149,7 @@ internal class GestureCalibrationEditor(
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.LEFT
+            screenOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_BEHIND
             layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
             setFitInsetsTypes(0)
         }
