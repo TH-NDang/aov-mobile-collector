@@ -85,6 +85,12 @@ class CollectorService : AccessibilityService() {
     private var gesturesInFlight = 0
     internal val calibrationView: View? get() = calibrationEditor?.view
 
+    // Metadata-only snapshots for synthetic device tests. Never persisted in real collection history.
+    internal var calibrationAttemptDiagnostic: String = "not-attempted"
+        private set
+    internal var calibrationSafetyDiagnostic: String = "not-checked"
+        private set
+
     private fun calibrationProfile(): CalibrationProfile {
         val metrics = wm.currentWindowMetrics
         val b = metrics.bounds
@@ -261,14 +267,19 @@ class CollectorService : AccessibilityService() {
             },
             reset = { teaching && token == generation && profile == calibrationProfile() && calibrationStore.reset(profile, action.id) },
             test = { base, points, done ->
-                if (!teaching ||
-                    token != generation ||
-                    session != calibrationSession ||
-                    profile != calibrationProfile() ||
-                    (fixtureDispatch == null && !calibrationGameAllowed()) ||
-                    gesturesInFlight > 0 ||
-                    !CalibrationCodec.validPoints(points)
-                ) {
+                val currentProfile = calibrationProfile()
+                val refusal = when {
+                    !teaching -> "teaching-ended"
+                    token != generation -> "generation-changed"
+                    session != calibrationSession -> "session-changed"
+                    profile != currentProfile -> "display-profile-changed"
+                    gesturesInFlight > 0 -> "gesture-in-flight"
+                    !CalibrationCodec.validPoints(points) -> "invalid-points"
+                    fixtureDispatch == null && !calibrationGameAllowed() -> "window-safety-denied"
+                    else -> null
+                }
+                calibrationAttemptDiagnostic = "result=${refusal ?: "accepted"}; expectedProfile=$profile; actualProfile=$currentProfile"
+                if (refusal != null) {
                     done(false)
                 } else {
                     calibrationEditor?.close(notify = false)
@@ -587,8 +598,10 @@ class CollectorService : AccessibilityService() {
         val b = metrics.bounds
         val i = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
         val usable = WindowArea(b.left + i.left, b.top + i.top, b.right - i.right, b.bottom - i.bottom)
-        val target = WindowForegroundSafety.gameWindow(foregroundWindows(), packageName, GAME, usable)
-        target != null &&
+        val reported = foregroundWindows()
+        val check = WindowForegroundSafety.inspectGameWindow(reported, packageName, GAME, usable)
+        val target = check.target
+        val pathsAllowed = target != null &&
             gestures.all { gesture ->
                 (0 until gesture.strokeCount).all { stroke ->
                     val pathBounds = android.graphics.RectF()
@@ -599,7 +612,20 @@ class CollectorService : AccessibilityService() {
                         pathBounds.bottom < target.bounds.bottom
                 }
             }
-    } catch (_: Exception) {
+        val reason = if (target != null && !pathsAllowed) "gesture-path-outside-game" else check.reason
+        calibrationSafetyDiagnostic = "reason=$reason; usable=$usable; windows=" + reported.joinToString { window ->
+            val owner = when (window.packageName) {
+                GAME -> "GAME"
+                packageName -> "COLLECTOR"
+                null -> "UNKNOWN"
+                else -> "OTHER"
+            }
+            "[$owner app=${window.application} overlay=${window.accessibilityOverlay} " +
+                "focused=${window.focused} active=${window.active} bounds=${window.bounds}]"
+        }
+        pathsAllowed
+    } catch (error: Exception) {
+        calibrationSafetyDiagnostic = "window-query-exception=${error.javaClass.simpleName}"
         false
     }
 

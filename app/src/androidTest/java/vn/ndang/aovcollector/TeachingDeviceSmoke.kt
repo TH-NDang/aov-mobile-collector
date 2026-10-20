@@ -107,6 +107,22 @@ internal object TeachingDeviceSmoke {
             }
         }
 
+        fun assertControlsWithinEditor() {
+            waitFor("Teaching controls extend outside the editor after layout/status change") {
+                main(test) {
+                    val root = service.calibrationView as? ViewGroup ?: return@main false
+                    val controls = root.getChildAt(1)
+                    val frame = viewBounds(root)
+                    !root.isLayoutRequested &&
+                        !controls.isLayoutRequested &&
+                        controls.width > 0 &&
+                        controls.height > 0 &&
+                        frame.contains(viewBounds(controls)) &&
+                        buttons(controls).all { it.width > 0 && it.height > 0 && frame.contains(viewBounds(it)) }
+                }
+            }
+        }
+
         fun begin(actions: List<CalibrationAction>) {
             main(test) { service.beginTeachingDeviceFixture(actions) }
             waitFor("Real-dispatch fixture did not present its pending editor") {
@@ -118,6 +134,7 @@ internal object TeachingDeviceSmoke {
                 "Foreground assertion did not exercise an actual accessibility overlay window"
             }
             assertPanel(hidden = true)
+            assertControlsWithinEditor()
         }
 
         fun navigationBounds(id: String): Rect {
@@ -188,6 +205,8 @@ internal object TeachingDeviceSmoke {
                 service.showPanel()
             }
             begin(listOf(tap, swipe))
+            click("Đổi góc bảng")
+            assertControlsWithinEditor()
             assertNavigationOutsideEditor(navigationBounds("home"))
             assertNavigationOutsideEditor(navigationBounds("recent_apps"))
             snapshot("calibration-device-overlay")
@@ -203,6 +222,11 @@ internal object TeachingDeviceSmoke {
             }
             inject(automation, path(pixel(tap.points.single()), pixel(editedTap)))
             click("Lưu")
+            assertControlsWithinEditor()
+            val persistedTap = main(test) { store.resolve(checkNotNull(profile), tap).single() }
+            check(abs(persistedTap.x - editedTap.x) < .002 && abs(persistedTap.y - editedTap.y) < .002) {
+                "Save did not persist the actual edited tap before Run: $persistedTap"
+            }
             check(events().length() == 0) { "Editing or saving a point touched the underlying app" }
             click("Chạy bước / Tiếp")
             waitFor("Edited tap did not reach the actual synthetic receiver") {
@@ -217,6 +241,7 @@ internal object TeachingDeviceSmoke {
 
             inject(automation, path(pixel(swipe.points.last()), pixel(editedEnd)))
             click("Lưu")
+            assertControlsWithinEditor()
             check(events().length() == 1) { "Editing or saving a swipe dispatched another gesture" }
             click("Chạy bước / Tiếp")
             waitFor("Edited swipe did not reach the actual synthetic receiver") {
@@ -283,6 +308,9 @@ internal object TeachingDeviceSmoke {
                 runCatching { events().toString(2) }.getOrElse { it.stackTraceToString() }
             )
             File(diagnostics, "calibration-device-checks.txt").writeText(checks.joinToString("\n"))
+            File(diagnostics, "calibration-device-safety.txt").writeText(
+                main(test) { service.calibrationAttemptDiagnostic + "\n" + service.calibrationSafetyDiagnostic }
+            )
             snapshot("calibration-device-final")
             main(test) {
                 service.onInterrupt()

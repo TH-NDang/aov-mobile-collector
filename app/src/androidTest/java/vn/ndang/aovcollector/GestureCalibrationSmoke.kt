@@ -29,6 +29,28 @@ internal object GestureCalibrationSmoke {
         }
 
         fun click(text: String) = buttons(checkNotNull(editor.view)).single { it.text.toString() == text }.performClick()
+
+        fun awaitControls() {
+            val deadline = SystemClock.uptimeMillis() + 5000
+            do {
+                var fits = false
+                test.runOnMainSync {
+                    val root = checkNotNull(editor.view) as ViewGroup
+                    val controls = root.getChildAt(1)
+                    fits = !root.isLayoutRequested &&
+                        !controls.isLayoutRequested &&
+                        controls.width > 0 &&
+                        controls.height > 0 &&
+                        controls.left >= 0 &&
+                        controls.top >= 0 &&
+                        controls.right <= root.width &&
+                        controls.bottom <= root.height
+                }
+                if (fits) return
+                SystemClock.sleep(50)
+            } while (SystemClock.uptimeMillis() < deadline)
+            error("Teaching controls did not settle within the editor after status/corner change")
+        }
         test.runOnMainSync {
             editor = GestureCalibrationEditor(
                 service, step, 0, 0, action.points,
@@ -44,6 +66,7 @@ internal object GestureCalibrationSmoke {
                     true
                 },
                 test = { _, _, done ->
+                    check(editor.view?.visibility == View.VISIBLE) { "Runtime editor hid before service preflight" }
                     tests++
                     done(true)
                 }, closed = { closed++ }
@@ -101,6 +124,16 @@ internal object GestureCalibrationSmoke {
                 check(saved == action.points && tests == 0 && defaults == 1)
                 click("Chạy bước / Tiếp")
                 check(tests == 1 && editor.view != null)
+            }
+            test.waitForIdleSync()
+            awaitControls()
+            test.runOnMainSync {
+                click("Đổi góc bảng")
+            }
+            test.waitForIdleSync()
+            awaitControls()
+            test.runOnMainSync {
+                val root = checkNotNull(editor.view) as ViewGroup
                 editor.shield(true)
                 val params = root.layoutParams as WindowManager.LayoutParams
                 check(root.visibility == View.INVISIBLE)

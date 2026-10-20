@@ -36,14 +36,31 @@ internal object WindowForegroundSafety {
     fun packageInFront(windows: List<ForegroundWindow>, ownPackage: String): String? =
         selected(underlying(windows, ownPackage))?.packageName
 
-    fun gameWindow(windows: List<ForegroundWindow>, ownPackage: String, gamePackage: String, usableDisplay: WindowArea): ForegroundWindow? {
+    internal data class GameWindowCheck(val target: ForegroundWindow?, val reason: String)
+
+    fun inspectGameWindow(
+        windows: List<ForegroundWindow>,
+        ownPackage: String,
+        gamePackage: String,
+        usableDisplay: WindowArea
+    ): GameWindowCheck {
         val visible = underlying(windows, ownPackage)
+        val target = selected(visible)
         // Full-display calibration deliberately does not support split screen, floating apps or PiP.
-        if (visible.count { it.application } != 1) return null
-        if (visible.any { it.application && it.packageName != gamePackage }) return null
-        if (visible.any { it.accessibilityOverlay }) return null
-        if (visible.any { !it.application && (it.active || it.focused) && it.packageName != gamePackage }) return null
-        val target = selected(visible) ?: return null
-        return target.takeIf { it.focused && it.application && it.packageName == gamePackage && it.bounds.covers(usableDisplay) }
+        val reason = when {
+            visible.count { it.application } != 1 -> "application-window-count=${visible.count { it.application }}"
+            visible.any { it.application && it.packageName != gamePackage } -> "foreign-or-unknown-application"
+            visible.any { it.accessibilityOverlay } -> "foreign-or-unknown-accessibility-overlay"
+            visible.any { !it.application && (it.active || it.focused) && it.packageName != gamePackage } -> "foreign-system-window-active"
+            target == null -> "missing-or-ambiguous-foreground"
+            !target.focused -> "game-not-focused"
+            !target.application || target.packageName != gamePackage -> "focused-window-not-game-application"
+            !target.bounds.covers(usableDisplay) -> "game-does-not-cover-usable-display"
+            else -> "allowed"
+        }
+        return GameWindowCheck(target.takeIf { reason == "allowed" }, reason)
     }
+
+    fun gameWindow(windows: List<ForegroundWindow>, ownPackage: String, gamePackage: String, usableDisplay: WindowArea): ForegroundWindow? =
+        inspectGameWindow(windows, ownPackage, gamePackage, usableDisplay).target
 }

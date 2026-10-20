@@ -130,7 +130,9 @@ internal class GestureCalibrationEditor(
                 }
             } else {
                 testing = true
-                applyVisibility()
+                // Runtime preflight must inspect a stable, identifiable overlay. The service removes
+                // this editor only after approval, then shields and checks the target again before input.
+                if (!runtime) applyVisibility()
                 test(action, drawing.points.toList()) { ok ->
                     testing = false
                     if (root === frame) {
@@ -206,13 +208,23 @@ internal class GestureCalibrationEditor(
         val safeWidth = (metrics.bounds.width() - insets.left - insets.right).coerceAtLeast(1)
         val panelWidth = Ui.dp(context, 320).coerceAtMost(safeWidth)
         frame.addView(controls, android.widget.FrameLayout.LayoutParams(panelWidth, -2, Gravity.TOP or Gravity.LEFT))
-        frame.post {
-            if (root === frame) {
-                placePanel(
-                    panelX * (frame.width - controls.width).coerceAtLeast(0),
-                    panelY * (frame.height - controls.height).coerceAtLeast(0)
-                )
+
+        fun placeAfterLayout() {
+            frame.post {
+                if (root === frame && frame.width > 0 && frame.height > 0 && controls.height > 0) {
+                    placePanel(
+                        panelX * (frame.width - controls.width).coerceAtLeast(0),
+                        panelY * (frame.height - controls.height).coerceAtLeast(0)
+                    )
+                }
             }
+        }
+        // Wait for measured bounds, and re-clamp if status/error text changes the panel height.
+        controls.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) placeAfterLayout()
+        }
+        frame.addOnLayoutChangeListener { _, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom ->
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) placeAfterLayout()
         }
         val params = WindowManager.LayoutParams(
             -1,
