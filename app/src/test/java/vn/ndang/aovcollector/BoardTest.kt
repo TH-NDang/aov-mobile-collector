@@ -366,6 +366,13 @@ class BoardTest {
             })
         }
 
+        val calibrationActions = ArrayList<CalibrationAction>()
+
+        override fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) {
+            calibrationActions.add(action)
+            super.calibrated(action, then)
+        }
+
         override fun tap(x: Double, y: Double, then: (Boolean) -> Unit) {
             taps += x to y
             val hit = words().firstOrNull { abs(it.x - x) < .01 && abs(it.y - y) < .01 }
@@ -497,6 +504,12 @@ class BoardTest {
         // Top five: two screens a tab.
         val game = Game(seasons = true, regionSet = false, heroes = 10).run(wanted = Tab.values().map { BoardScreens.Want(it, 5) })
         assertEquals(10, (game.outcome as BoardReader.Outcome.Done).heroes)
+        val cards = game.calibrationActions.filter { it.id == "board.v1.picker.card" }
+        assertEquals(10, cards.size)
+        assertTrue(cards.all { it.relative })
+        assertTrue(cards.map { it.points }.distinct().size > 1)
+        assertTrue(game.calibrationActions.any { it.id == "board.v1.region.option.2" && it.relative })
+        assertTrue(game.calibrationActions.any { it.id == "board.v1.ranking.scroll" && it.points.size == 2 && it.holdMs == 400L })
         assertEquals((0 until 10).toList(), game.chosen)
         assertEquals((0 until 10).toList(), game.finished)
         // Every tab of every hero, two screens each, and its "Số 1 máy chủ".

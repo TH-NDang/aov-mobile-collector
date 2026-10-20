@@ -357,6 +357,10 @@ class RankingReader(
 
         fun tap(x: Double, y: Double, then: (Boolean) -> Unit)
 
+        fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = tap(action.points[0].x, action.points[0].y, then)
+
+        fun calibratedDrag(action: CalibrationAction, d: Double, fling: Boolean, then: (Boolean) -> Unit) = drag(d, fling, then)
+
         fun tap(word: GameScreens.Word, label: String, then: (Boolean) -> Unit) = tap(word.x, word.y, then)
 
         fun calibrated(action: CalibrationAction, word: GameScreens.Word, then: (Boolean) -> Unit) = tap(word, action.label, then)
@@ -426,9 +430,9 @@ class RankingReader(
         }
     }
 
-    private fun tap(x: Double, y: Double, wait: Long, then: () -> Unit) {
+    private fun tap(x: Double, y: Double, wait: Long, id: String, then: () -> Unit) {
         if (!screen.alive) return
-        screen.tap(x, y) { ok ->
+        screen.calibrated(CalibrationAction("ranking.v1.$id", "Thống kê: $id", listOf(CalibrationPoint(x, y)), relative = true)) { ok ->
             if (screen.alive && !ended) {
                 if (ok) screen.later(wait, then) else fail("Không chạm được màn hình")
             }
@@ -449,7 +453,16 @@ class RankingReader(
 
     private fun drag(d: Double, fling: Boolean, wait: Long, then: () -> Unit) {
         if (!screen.alive) return
-        screen.drag(d, fling) { ok ->
+        val from = if (d > 0) .88 else .22
+        val action = CalibrationAction(
+            "ranking.v1.scroll.${if (d > 0) "down" else "up"}.${if (fling) "fling" else "held"}",
+            "Thống kê: cuộn bảng",
+            listOf(CalibrationPoint(.55, from), CalibrationPoint(.55, (from - d).coerceIn(.05, .95))),
+            relative = true,
+            durationMs = if (fling) 160 else 700,
+            holdMs = if (fling) 0 else 400
+        )
+        screen.calibratedDrag(action, d, fling) { ok ->
             if (screen.alive &&
                 !ended
             ) {
@@ -458,11 +471,11 @@ class RankingReader(
         }
     }
 
-    private fun go(l: Look, what: String, x: Double, y: Double, wait: Long, steps: Int) {
+    private fun go(l: Look, what: String, x: Double, y: Double, wait: Long, steps: Int, id: String) {
         l.done(null)
         screen.note(what)
         screen.say("$what…")
-        tap(x, y, wait) { navigate(steps + 1, 0) }
+        tap(x, y, wait, id) { navigate(steps + 1, 0) }
     }
 
     /** One tap at a time towards the table, reading where it is after each. */
@@ -488,7 +501,7 @@ class RankingReader(
                     }
                     else -> {
                         fullLinkTaps++
-                        go(l, "Bấm Bảng xếp hạng đầy đủ", link.x, link.y, 3000, steps)
+                        go(l, "Bấm Bảng xếp hạng đầy đủ", link.x, link.y, 3000, steps, "navigation.full-ranking")
                     }
                 }
             }
@@ -502,7 +515,8 @@ class RankingReader(
                     RankScreens.logo(words)?.x ?: RankScreens.SIDE_X,
                     RankScreens.SIDE_Y,
                     2500,
-                    steps
+                    steps,
+                    "navigation.heroes"
                 )
             }
             RankScreens.Page.PANEL -> {
@@ -513,10 +527,18 @@ class RankingReader(
                     l.done("ranking-panel")
                     fail("Không thấy mục Cộng đồng trong Tính năng khác.")
                 } else {
-                    go(l, "Bấm Cộng đồng", w.x, w.y, 3500, steps)
+                    go(l, "Bấm Cộng đồng", w.x, w.y, 3500, steps, "navigation.community")
                 }
             }
-            RankScreens.Page.LOBBY -> go(l, "Sảnh: bấm nút bên trái Túi đồ", RankScreens.MORE_X, RankScreens.MORE_Y, 1500, steps)
+            RankScreens.Page.LOBBY -> go(
+                l,
+                "Sảnh: bấm nút bên trái Túi đồ",
+                RankScreens.MORE_X,
+                RankScreens.MORE_Y,
+                1500,
+                steps,
+                "navigation.more"
+            )
             // Web pages take a moment to show their words.
             RankScreens.Page.OTHER -> if (waits < MAX_WAITS) {
                 waitForNavigation(l, steps, waits)

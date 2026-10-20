@@ -786,12 +786,16 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                     return@look fail("Không qua màn chọn kinh nghiệm Cờ Liên Quân. Chọn Kỳ cựu bằng tay rồi bấm Tiếp tục.")
                 }
                 screen.note("Tài khoản mới: chọn Kỳ cựu")
-                onboarding.tap!!.let { at -> tap(at.first, at.second, 2000) { navigate() } }
+                onboarding.tap!!.let { at ->
+                    tap(at.first, at.second, 2000, id = "onboarding.veteran", label = "Cờ: chọn Kỳ cựu", relative = true) { navigate() }
+                }
             }
             onboarding.kind == GameScreens.Kind.CHESS_TIP -> {
                 if (++tipAttempts > 2) return@look fail("Không qua thông báo Đấu luyện. Bấm Đã rõ bằng tay rồi Tiếp tục.")
                 screen.note("Tài khoản mới: bấm Đã rõ")
-                onboarding.tap!!.let { at -> tap(at.first, at.second, 2000) { navigate() } }
+                onboarding.tap!!.let { at ->
+                    tap(at.first, at.second, 2000, id = "onboarding.tip", label = "Cờ: Đã rõ", relative = true) { navigate() }
+                }
             }
             (all.contains("trangchu") && all.contains("colienquan")) -> {
                 val home = words.firstOrNull { it.plain.contains("trangchu") && it.x < .24 }
@@ -813,7 +817,10 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                 tap(
                     words.firstOrNull { it.plain == "batdau" && it.x > .6 }?.x ?: .862,
                     words.firstOrNull { it.plain == "batdau" && it.x > .6 }?.y ?: .688,
-                    3700
+                    3700,
+                    id = "mode.enter",
+                    label = "Cờ: vào sảnh Cờ",
+                    relative = true
                 ) { navigate() }
             entertainment && all.contains("colienquan") ->
                 tap(.50, .824, 1000, id = "mode.select", label = "Cờ: chọn chế độ") { navigate() }

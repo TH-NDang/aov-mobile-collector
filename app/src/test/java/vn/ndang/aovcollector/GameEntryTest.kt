@@ -266,6 +266,13 @@ class GameEntryTest {
             )
         }
 
+        val calibrationActions = ArrayList<CalibrationAction>()
+
+        override fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) {
+            calibrationActions.add(action)
+            super.calibrated(action, then)
+        }
+
         override fun tap(x: Double, y: Double, then: (Boolean) -> Unit) {
             taps.add(x to y)
             then(true)
@@ -404,6 +411,15 @@ class GameEntryTest {
         val anyway = Script(listOf(at(GameScreens.Kind.LIST)), quitting = GameCloser.Result.NO_BUTTON)
         assertTrue(anyway.run() is GameEntry.Outcome.Ready)
         assertEquals(1, anyway.launches)
+    }
+
+    @Test fun lobbyToListHasStableCalibrationIdentityButLobbyEntryDoesNotTapIt() {
+        val game = Script(listOf(at(GameScreens.Kind.LOBBY), at(GameScreens.Kind.LOBBY), at(GameScreens.Kind.LIST)))
+        assertTrue(game.run() is GameEntry.Outcome.Ready)
+        assertEquals(listOf("entry.v1.lobby.heroes"), game.calibrationActions.map { it.id })
+        val lobby = Script(listOf(at(GameScreens.Kind.LOBBY), at(GameScreens.Kind.LOBBY)))
+        assertTrue(lobby.run(toLobby = true) is GameEntry.Outcome.Ready)
+        assertTrue(lobby.calibrationActions.isEmpty())
     }
 
     @Test fun stopsAtTheLobbyForTheHeroStatistics() {

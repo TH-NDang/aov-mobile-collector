@@ -294,6 +294,18 @@ class RankingTest {
             })
         }
 
+        val calibrationActions = ArrayList<CalibrationAction>()
+
+        override fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) {
+            calibrationActions.add(action)
+            super.calibrated(action, then)
+        }
+
+        override fun calibratedDrag(action: CalibrationAction, d: Double, fling: Boolean, then: (Boolean) -> Unit) {
+            calibrationActions.add(action)
+            drag(d, fling, then)
+        }
+
         override fun tap(x: Double, y: Double, then: (Boolean) -> Unit) {
             tapPoints += x to y
             val hit = words().firstOrNull { abs(it.x - x) < .001 && abs(it.y - y) < .001 }
@@ -710,6 +722,12 @@ class RankingTest {
     @Test fun goesFromTheLobbyToTheTableAndPhotographsBothTablesForEachKindOfMatch() {
         val web = Web(Page.LOBBY).run()
         assertEquals(24, (web.outcome as RankingReader.Outcome.Done).pages)
+        assertEquals(
+            listOf("navigation.more", "navigation.community", "navigation.heroes", "navigation.full-ranking"),
+            web.calibrationActions.take(4).map { it.id.removePrefix("ranking.v1.") }
+        )
+        assertTrue(web.calibrationActions.any { it.id == "ranking.v1.scroll.down.held" && it.relative && it.holdMs == 400L })
+        assertTrue(web.calibrationActions.any { it.id == "ranking.v1.scroll.up.fling" && it.relative && it.holdMs == 0L })
         assertEquals(listOf("0.084,0.890", "Cộng đồng", "0.083,0.348", "Bảng xếp hạng đầy đủ >"), web.tapped.take(4))
         // Four photos per table: scrolled .4 of a screen at a time down a list one screen longer than the screen.
         val order =

@@ -387,6 +387,15 @@ class BoardReader(
 
         fun tap(x: Double, y: Double, then: (Boolean) -> Unit)
 
+        fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) {
+            val first = action.points.first()
+            if (action.points.size == 1) {
+                tap(first.x, first.y, then)
+            } else {
+                drag(first.x, first.y, action.points.last().y, action.holdMs == 0L, then)
+            }
+        }
+
         /** Drags at [x] from [from] to [to] (screen heights), slowly and resting before lifting unless [fling]. */
         fun drag(x: Double, from: Double, to: Double, fling: Boolean, then: (Boolean) -> Unit)
 
@@ -449,23 +458,36 @@ class BoardReader(
         }
     }
 
-    private fun tap(x: Double, y: Double, wait: Long, then: () -> Unit) {
+    private fun tap(x: Double, y: Double, wait: Long, id: String, relative: Boolean = false, then: () -> Unit) {
         if (!screen.alive) return
-        screen.tap(x, y) { ok -> if (ok) screen.later(wait, then) else fail("Không chạm được màn hình") }
+        screen.calibrated(CalibrationAction("board.v1.$id", "Chiến khu: $id", listOf(CalibrationPoint(x, y)), relative)) { ok ->
+            if (ok) screen.later(wait, then) else fail("Không chạm được màn hình")
+        }
     }
 
-    private fun drag(x: Double, from: Double, to: Double, fling: Boolean, wait: Long, then: () -> Unit) {
+    private fun drag(x: Double, from: Double, to: Double, fling: Boolean, wait: Long, id: String, then: () -> Unit) {
         if (!screen.alive) return
-        screen.drag(x, from, to, fling) { ok -> if (ok) screen.later(wait, then) else fail("Không kéo được màn hình") }
+        screen.calibrated(
+            CalibrationAction(
+                "board.v1.$id",
+                "Chiến khu: $id",
+                listOf(CalibrationPoint(x, from), CalibrationPoint(x, to)),
+                relative = true,
+                durationMs = if (fling) 160 else 700,
+                holdMs = if (fling) 0 else 400
+            )
+        ) { ok ->
+            if (ok) screen.later(wait, then) else fail("Không kéo được màn hình")
+        }
     }
 
-    private fun go(l: Look, what: String, x: Double, y: Double, wait: Long) {
+    private fun go(l: Look, what: String, x: Double, y: Double, wait: Long, id: String, relative: Boolean = false) {
         l.done(null)
         screen.note(what)
         screen.say("$what…")
         steps++
         waits = 0
-        tap(x, y, wait) { navigate() }
+        tap(x, y, wait, id, relative) { navigate() }
     }
 
     /** One tap at a time towards "Chiến khu", reading where it is after each. */
@@ -483,16 +505,34 @@ class BoardReader(
                 steps = 0
                 nextHero()
             }
-            BoardScreens.Page.RANKED -> BoardScreens.chienKhu(words)!!.let { go(l, "Đấu hạng: bấm Chiến khu", it.x, it.y, 2500) }
-            BoardScreens.Page.SEASON -> BoardScreens.season(words)!!.let { go(l, "Mùa giải mới: bấm \"${it.text}\"", it.x, it.y, 2000) }
+            BoardScreens.Page.RANKED -> BoardScreens.chienKhu(words)!!.let {
+                go(l, "Đấu hạng: bấm Chiến khu", it.x, it.y, 2500, "navigation.warzone", true)
+            }
+            BoardScreens.Page.SEASON -> BoardScreens.season(words)!!.let {
+                go(l, "Mùa giải mới: bấm \"${it.text}\"", it.x, it.y, 2000, "navigation.season", true)
+            }
             BoardScreens.Page.REGION -> region(l)
             BoardScreens.Page.LOBBY -> {
                 val b = BoardScreens.rankedButton(words)
-                go(l, "Sảnh: bấm Đấu hạng", b?.x ?: BoardScreens.RANKED_X, b?.y ?: BoardScreens.RANKED_Y, 3000)
+                go(l, "Sảnh: bấm Đấu hạng", b?.x ?: BoardScreens.RANKED_X, b?.y ?: BoardScreens.RANKED_Y, 3000, "navigation.ranked", true)
             }
             // Left open by an earlier try: close it and start again from the ranking.
-            BoardScreens.Page.PICKER -> go(l, "Đóng bảng Chọn tướng còn mở", BoardScreens.PICKER_CLOSE_X, BoardScreens.PICKER_CLOSE_Y, 1200)
-            BoardScreens.Page.TOP -> go(l, "Số 1 máy chủ: quay lại Chiến khu", BoardScreens.TOP_BACK_X, BoardScreens.TOP_BACK_Y, 1500)
+            BoardScreens.Page.PICKER -> go(
+                l,
+                "Đóng bảng Chọn tướng còn mở",
+                BoardScreens.PICKER_CLOSE_X,
+                BoardScreens.PICKER_CLOSE_Y,
+                1200,
+                "picker.close"
+            )
+            BoardScreens.Page.TOP -> go(
+                l,
+                "Số 1 máy chủ: quay lại Chiến khu",
+                BoardScreens.TOP_BACK_X,
+                BoardScreens.TOP_BACK_Y,
+                1500,
+                "top.back"
+            )
             // Loading, or the season's trailer: wait for it.
             BoardScreens.Page.OTHER -> if (++waits <=
                 MAX_WAITS
@@ -523,26 +563,26 @@ class BoardReader(
             if (wanted == null && open == 2 && regionScrolls < 3) {
                 regionScrolls++
                 l.done(null)
-                return drag(BoardScreens.REGION_X[2], .85, .62, false, 1000) { navigate() }
+                return drag(BoardScreens.REGION_X[2], .85, .62, false, 1000, "region.scroll") { navigate() }
             }
             val pick = wanted ?: r.options.first()
-            return go(l, "Vào chiến khu: chọn ${pick.text}", pick.x, pick.y, 1200)
+            return go(l, "Vào chiến khu: chọn ${pick.text}", pick.x, pick.y, 1200, "region.option.$open", true)
         }
         val boxes = r.boxes
         when {
             boxes[0] == null ||
                 boxes[0]!!.contains(
                     "quocgia"
-                ) -> go(l, "Vào chiến khu: mở ô Quốc gia", BoardScreens.REGION_X[0], BoardScreens.REGION_Y, 1000)
+                ) -> go(l, "Vào chiến khu: mở ô Quốc gia", BoardScreens.REGION_X[0], BoardScreens.REGION_Y, 1000, "region.country.open")
             boxes[1] == null ||
                 boxes[1]!!.contains(
                     "khuvuc"
-                ) -> go(l, "Vào chiến khu: mở ô Khu vực", BoardScreens.REGION_X[1], BoardScreens.REGION_Y, 1000)
+                ) -> go(l, "Vào chiến khu: mở ô Khu vực", BoardScreens.REGION_X[1], BoardScreens.REGION_Y, 1000, "region.area.open")
             boxes[2] == null ||
                 boxes[2]!!.contains(
                     "khuvuc"
-                ) -> go(l, "Vào chiến khu: mở ô Tỉnh", BoardScreens.REGION_X[2], BoardScreens.REGION_Y, 1000)
-            r.confirm != null -> go(l, "Vào chiến khu: bấm Xác nhận", r.confirm.x, r.confirm.y, 2500)
+                ) -> go(l, "Vào chiến khu: mở ô Tỉnh", BoardScreens.REGION_X[2], BoardScreens.REGION_Y, 1000, "region.province.open")
+            r.confirm != null -> go(l, "Vào chiến khu: bấm Xác nhận", r.confirm.x, r.confirm.y, 2500, "region.confirm", true)
             else -> {
                 l.done(null)
                 screen.later(1000) { navigate() }
@@ -553,7 +593,7 @@ class BoardReader(
     private fun nextHero() {
         if (index >= heroes) return end(Outcome.Done(index - first))
         screen.say("Tướng ${index + 1}: mở Chọn tướng")
-        tap(BoardScreens.SWAP_X, BoardScreens.SWAP_Y, 1500) { openPicker(0) }
+        tap(BoardScreens.SWAP_X, BoardScreens.SWAP_Y, 1500, "picker.open") { openPicker(0) }
     }
 
     /** "Chọn tướng" is open: back to its top, measured, then on to the hero's row. */
@@ -565,7 +605,7 @@ class BoardReader(
             return@look if (BoardScreens.page(l.words, l.lobby) ==
                 BoardScreens.Page.BOARD
             ) {
-                tap(BoardScreens.SWAP_X, BoardScreens.SWAP_Y, 1500) { openPicker(tries + 1) }
+                tap(BoardScreens.SWAP_X, BoardScreens.SWAP_Y, 1500, "picker.open") { openPicker(tries + 1) }
             } else {
                 steps = 0
                 navigate()
@@ -606,11 +646,11 @@ class BoardReader(
         }
         l.done(null)
         screen.note("Chọn tướng: tắt Đã nhận để lấy cả tướng chưa sở hữu")
-        tap(filter.x, filter.y, 1200) { look(true, true) { allHeroes(it, 0, taps + 1) } }
+        tap(filter.x, filter.y, 1200, "picker.owned-filter", true) { look(true, true) { allHeroes(it, 0, taps + 1) } }
     }
 
     private fun toTop(flings: Int, last: List<Pair<Double, Double>>?) {
-        drag(.5, .40, .85, true, 800) {
+        drag(.5, .40, .85, true, 800, "picker.scroll.reset") {
             look(false, true) { l ->
                 l.done(null)
                 val rows = l.rows
@@ -647,7 +687,7 @@ class BoardReader(
                 }
                 l.done(null)
                 screen.say("Tướng ${index + 1}: chọn")
-                tap(BoardScreens.COLUMNS[col], (band.first + band.second) / 2, 2500) { picked(0) }
+                tap(BoardScreens.COLUMNS[col], (band.first + band.second) / 2, 2500, "picker.card", true) { picked(0) }
             }
             moves > 40 -> {
                 l.done("board-grid")
@@ -658,7 +698,7 @@ class BoardReader(
                 val want = minOf(2 * BoardScreens.ROW_PITCH, bottom - (BoardScreens.VIEW_BOTTOM - .02))
                 val before = l.rows
                 l.done(null)
-                drag(.5, .80, .80 - want, false, 900) {
+                drag(.5, .80, .80 - want, false, 900, "picker.scroll.next") {
                     look(false, true) { after ->
                         after.done(null)
                         val moved = shift(before, after.rows, want)
@@ -693,7 +733,13 @@ class BoardReader(
         return if (gap < .06) best else 0.0
     }
 
-    private fun closeAndEnd() = tap(BoardScreens.PICKER_CLOSE_X, BoardScreens.PICKER_CLOSE_Y, 1200) { end(Outcome.Done(index - first)) }
+    private fun closeAndEnd() = tap(BoardScreens.PICKER_CLOSE_X, BoardScreens.PICKER_CLOSE_Y, 1200, "picker.close") {
+        end(
+            Outcome.Done(
+                index - first
+            )
+        )
+    }
 
     /** A hero was tapped: "Chọn tướng" closes and the ranking shows it. */
     private fun picked(tries: Int): Unit = look(true) { l ->
@@ -712,7 +758,7 @@ class BoardReader(
                 ) {
                     screen.later(1500) { picked(tries + 1) }
                 } else {
-                    tap(BoardScreens.PICKER_CLOSE_X, BoardScreens.PICKER_CLOSE_Y, 1500) {
+                    tap(BoardScreens.PICKER_CLOSE_X, BoardScreens.PICKER_CLOSE_Y, 1500, "picker.close") {
                         picked(
                             tries + 1
                         )
@@ -741,11 +787,11 @@ class BoardReader(
         val tab = tabs[t]
         screen.say("Tướng ${index + 1} ${name ?: ""} · ${tab.label}")
         if (tab == BoardScreens.Tab.TOP) {
-            tap(tab.x, tab.y, 2500) {
+            tap(tab.x, tab.y, 2500, "tab.${tab.name.lowercase(java.util.Locale.ROOT)}") {
                 top(t, name, 0)
             }
         } else {
-            tap(tab.x, tab.y, 2200) { scan(t, name, 1, null, 0) }
+            tap(tab.x, tab.y, 2200, "tab.${tab.name.lowercase(java.util.Locale.ROOT)}") { scan(t, name, 1, null, 0) }
         }
     }
 
@@ -763,7 +809,7 @@ class BoardReader(
                     screen.note("Số 1 máy chủ hiện $shown, khác tướng đang chọn $name")
                 }
                 l.done("hero-%03d-%s-01".format(index + 1, BoardScreens.Tab.TOP.slug))
-                tap(BoardScreens.TOP_BACK_X, BoardScreens.TOP_BACK_Y, 1800) { back(t, name, 0) }
+                tap(BoardScreens.TOP_BACK_X, BoardScreens.TOP_BACK_Y, 1800, "top.back") { back(t, name, 0) }
             }
             else -> {
                 l.done(null)
@@ -791,7 +837,7 @@ class BoardReader(
                 if (tries <
                     3
                 ) {
-                    tap(BoardScreens.TOP_BACK_X, BoardScreens.TOP_BACK_Y, 1800) { back(t, name, tries + 1) }
+                    tap(BoardScreens.TOP_BACK_X, BoardScreens.TOP_BACK_Y, 1800, "top.back") { back(t, name, tries + 1) }
                 } else {
                     fail("Không quay lại được Chiến khu từ Số 1 máy chủ.")
                 }
@@ -822,7 +868,7 @@ class BoardReader(
                     ) {
                         scan(t, name, page, last, 1)
                     } else {
-                        drag(LIST_X, LIST_FROM, LIST_TO, false, 1200) { scan(t, name, page, last, still + 1) }
+                        drag(LIST_X, LIST_FROM, LIST_TO, false, 1200, "ranking.scroll") { scan(t, name, page, last, still + 1) }
                     }
                 }
             }
@@ -830,6 +876,6 @@ class BoardReader(
         }
         l.done("hero-%03d-%s-%02d".format(index + 1, tab.slug, page))
         if (page >= wanted[t].pages) return@look tab(t + 1, name)
-        drag(LIST_X, LIST_FROM, LIST_TO, false, 1200) { scan(t, name, page + 1, l.signature, 0) }
+        drag(LIST_X, LIST_FROM, LIST_TO, false, 1200, "ranking.scroll") { scan(t, name, page + 1, l.signature, 0) }
     }
 }

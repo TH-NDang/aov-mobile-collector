@@ -13,7 +13,7 @@ import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.TextView
 
-/** Paused-only editor. Moving a handle never dispatches a gesture. */
+/** Upcoming-gesture editor. Moving a handle or the floating panel never dispatches a gesture. */
 internal class GestureCalibrationEditor(
     private val context: Context,
     private val step: CalibrationStep,
@@ -30,6 +30,13 @@ internal class GestureCalibrationEditor(
     private val test: (CalibrationAction, List<CalibrationPoint>, (Boolean) -> Unit) -> Unit,
     private val closed: () -> Unit
 ) {
+    companion object {
+        // Keep the user's panel position when the runner presents its next actual gesture.
+        private var panelX = 0f
+        private var panelY = 1f
+    }
+
+    private val runtime = count == 0
     private val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager
     private var root: android.widget.FrameLayout? = null
     private var testing = false
@@ -45,15 +52,29 @@ internal class GestureCalibrationEditor(
             setPadding(12, 6, 12, 6)
             setBackgroundColor(Color.argb(240, 26, 28, 40))
         }
+        val dragHandle = TextView(context).apply {
+            text = "↔ Kéo bảng để di chuyển"
+            contentDescription = "Kéo bảng điều khiển đến vị trí khác"
+            setTextColor(Color.CYAN)
+            textSize = 12f
+            setPadding(8, 8, 8, 8)
+        }
+        controls.addView(dragHandle)
         val title = TextView(context).apply {
-            text = "${position + 1}/$count · ${step.title} · Tạm dừng\n${step.hint}"
+            text = (if (runtime) "Bước ${position + 1}" else "${position + 1}/$count") +
+                " · ${step.title} · Tạm dừng\n${step.hint}"
             setTextColor(Color.WHITE)
             textSize = 13f
         }
         controls.addView(title)
         controls.addView(
             TextView(context).apply {
-                text = "Trước/Tiếp chỉ chọn bước. Kéo rồi Lưu trước khi đổi bước. Thử bước mới chạm game."
+                text = if (runtime) {
+                    "Kéo điểm Chạm hoặc Đầu/Cuối để chỉnh. Chạy bước / Tiếp chỉ chạy thao tác đang xem, " +
+                        "rồi dừng trước thao tác kế. Lưu để dùng lại."
+                } else {
+                    "Trước/Tiếp chỉ chọn bước. Kéo rồi Lưu trước khi đổi bước. Thử bước mới chạm game."
+                }
                 setTextColor(Color.YELLOW)
                 textSize = 11f
             }
@@ -64,11 +85,13 @@ internal class GestureCalibrationEditor(
         fun button(row: LinearLayout, label: String, run: () -> Unit) {
             row.addView(Ui.button(context, label) { if (!testing) run() }, LinearLayout.LayoutParams(0, -2, 1f))
         }
-        val navigation = row()
-        button(navigation, "Trước") { if (position > 0) navigate(position - 1) }
-        button(navigation, "Các bước") { choose() }
-        button(navigation, "Tiếp") { if (position + 1 < count) navigate(position + 1) }
-        button(navigation, "Vào sảnh") { enterLobby() }
+        if (!runtime) {
+            val navigation = row()
+            button(navigation, "Trước") { if (position > 0) navigate(position - 1) }
+            button(navigation, "Các bước") { choose() }
+            button(navigation, "Tiếp") { if (position + 1 < count) navigate(position + 1) }
+            button(navigation, "Vào sảnh") { enterLobby() }
+        }
         val buttons = row()
         button(buttons, "Hủy") { close() }
         button(buttons, "Mặc định") {
@@ -87,9 +110,14 @@ internal class GestureCalibrationEditor(
                 title.text = "Chưa lưu được. Đọc lại vị trí nếu chưa có điểm chạm."
             }
         }
-        button(buttons, "Thử bước") {
+        val execution = if (runtime) row() else buttons
+        button(execution, if (runtime) "Chạy bước / Tiếp" else "Thử bước") {
             if (drawing.points.isEmpty()) {
-                title.text = step.title + " · Mở đúng màn hình rồi bấm Đọc vị trí"
+                title.text = step.title + if (runtime) {
+                    " · Chưa có điểm chạm hợp lệ; hãy hủy và mở lại chế độ chỉnh"
+                } else {
+                    " · Mở đúng màn hình rồi bấm Đọc vị trí"
+                }
             } else {
                 testing = true
                 applyVisibility()
@@ -98,13 +126,17 @@ internal class GestureCalibrationEditor(
                     if (root === frame) {
                         applyVisibility()
                         title.text =
-                            step.title + if (ok) " · Đã thử 1 lần; vẫn tạm dừng" else " · Không thử được; mở đúng màn hình rồi đọc lại"
+                            step.title + if (ok) {
+                                if (runtime) " · Đã chạy; đang chuẩn bị thao tác kế" else " · Đã thử 1 lần; vẫn tạm dừng"
+                            } else {
+                                " · Không chạy được; kiểm tra màn hình game"
+                            }
                     }
                 }
             }
         }
         val options = row()
-        if (step.recognition != null) {
+        if (!runtime && step.recognition != null) {
             button(options, "Đọc vị trí") {
                 testing = true
                 applyVisibility()
@@ -125,13 +157,49 @@ internal class GestureCalibrationEditor(
                 }
             }
         }
-        button(options, "Đổi góc bảng") {
+
+        fun placePanel(x: Float, y: Float) {
+            val maxX = (frame.width - controls.width).coerceAtLeast(0)
+            val maxY = (frame.height - controls.height).coerceAtLeast(0)
             val lp = controls.layoutParams as android.widget.FrameLayout.LayoutParams
-            lp.gravity = if (lp.gravity == Gravity.BOTTOM) Gravity.TOP else Gravity.BOTTOM
+            lp.leftMargin = x.toInt().coerceIn(0, maxX)
+            lp.topMargin = y.toInt().coerceIn(0, maxY)
             controls.layoutParams = lp
+            panelX = if (maxX > 0) lp.leftMargin.toFloat() / maxX else 0f
+            panelY = if (maxY > 0) lp.topMargin.toFloat() / maxY else 0f
+        }
+        button(options, "Đổi góc bảng") {
+            placePanel(controls.left.toFloat(), if (controls.top > 0) 0f else frame.height.toFloat())
+        }
+        var dragX = 0f
+        var dragY = 0f
+        var startX = 0f
+        var startY = 0f
+        dragHandle.setOnTouchListener { _, event ->
+            if (testing) return@setOnTouchListener true
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    dragX = event.rawX
+                    dragY = event.rawY
+                    startX = controls.left.toFloat()
+                    startY = controls.top.toFloat()
+                }
+                MotionEvent.ACTION_MOVE -> placePanel(startX + event.rawX - dragX, startY + event.rawY - dragY)
+                MotionEvent.ACTION_UP -> dragHandle.performClick()
+            }
+            true
         }
         frame.addView(drawing, android.widget.FrameLayout.LayoutParams(-1, -1))
-        frame.addView(controls, android.widget.FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM))
+        val panelWidth = (440 * context.resources.displayMetrics.density).toInt().coerceAtMost(wm.currentWindowMetrics.bounds.width())
+        frame.addView(controls, android.widget.FrameLayout.LayoutParams(panelWidth, -2, Gravity.TOP or Gravity.LEFT))
+        frame.post {
+            if (root === frame) {
+                placePanel(
+                    panelX * (frame.width - controls.width).coerceAtLeast(0),
+                    panelY * (frame.height - controls.height).coerceAtLeast(0)
+                )
+            }
+        }
         frame.isFocusableInTouchMode = true
         frame.setOnKeyListener { _, key, event ->
             if (key == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
@@ -186,14 +254,14 @@ internal class GestureCalibrationEditor(
         applyVisibility()
     }
 
-    fun close() {
+    fun close(notify: Boolean = true) {
         val old = root ?: return
         root = null
         old.visibility = View.INVISIBLE
         try {
             wm.removeViewImmediate(old)
         } catch (_: IllegalArgumentException) { }
-        closed()
+        if (notify) closed()
     }
 
     private class Handles(context: Context, initial: List<CalibrationPoint>) : View(context) {

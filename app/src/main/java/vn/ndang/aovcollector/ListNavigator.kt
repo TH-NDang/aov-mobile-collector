@@ -75,6 +75,12 @@ class ListNavigator(
 
         fun tap(x: Double, y: Double, then: (Boolean) -> Unit)
 
+        fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = tap(action.points[0].x, action.points[0].y, then)
+
+        fun calibratedBack(action: CalibrationAction, then: (Boolean) -> Unit) = back(then)
+
+        fun calibratedDrag(action: CalibrationAction, d: Double, fling: Boolean, then: (Boolean) -> Unit) = drag(d, fling, then)
+
         /** Taps the game's back arrow at the top left. */
         fun back(then: (Boolean) -> Unit)
 
@@ -148,7 +154,15 @@ class ListNavigator(
                     backs++
                     s.done("not-list-$backs")
                     screen.note("Không thấy danh sách tướng; bấm nút quay lại của game (lần $backs)")
-                    screen.back { ok -> if (ok) screen.later(1500) { look(then) } else fail("Không chạm được nút quay lại của game") }
+                    screen.calibratedBack(
+                        CalibrationAction(
+                            "hero.list.v1.back",
+                            "Danh sách: quay lại",
+                            listOf(CalibrationPoint(HeroGrid.BACK_X, HeroGrid.BACK_Y))
+                        )
+                    ) { ok ->
+                        if (ok) screen.later(1500) { look(then) } else fail("Không chạm được nút quay lại của game")
+                    }
                 }
                 else -> {
                     s.done(null)
@@ -209,7 +223,27 @@ class ListNavigator(
     }
 
     private fun tap(x: Double, y: Double) {
-        if (screen.alive) screen.tap(x, y) { ok -> if (ok) finish(Outcome.Tapped) else fail("Không chạm được thẻ tướng") }
+        if (screen.alive) {
+            screen.calibrated(
+                CalibrationAction("hero.list.v1.card", "Danh sách: chọn thẻ tướng", listOf(CalibrationPoint(x, y)), relative = true)
+            ) { ok ->
+                if (ok) finish(Outcome.Tapped) else fail("Không chạm được thẻ tướng")
+            }
+        }
+    }
+
+    private fun drag(d: Double, fling: Boolean, then: (Boolean) -> Unit) {
+        val from = if (d > 0) .88 else .22
+        val to = (from - d - (if (d > 0) .02 else -.02)).coerceIn(.02, .98)
+        val action = CalibrationAction(
+            "hero.list.v1.scroll.${if (d > 0) "down" else "up"}.${if (fling) "fling" else "held"}",
+            "Danh sách: cuộn tướng",
+            listOf(CalibrationPoint(.70, from), CalibrationPoint(.70, to)),
+            relative = true,
+            durationMs = if (fling) 160 else 700,
+            holdMs = if (fling) 0 else 450
+        )
+        screen.calibratedDrag(action, d, fling, then)
     }
 
     private fun move(d: Double) {
@@ -218,7 +252,7 @@ class ListNavigator(
         val before = state.ref ?: return resync()
         val offsetBefore = state.offset
         val backsBefore = backs
-        screen.drag(d, false) { ok ->
+        drag(d, false) { ok ->
             if (!ok) return@drag fail("Không vuốt được danh sách")
             screen.later(800) {
                 look { s ->
@@ -254,7 +288,7 @@ class ListNavigator(
     /** The list slid further than one screenshot can follow: drag back, measure against [before], and use smaller steps from now on. */
     private fun undo(d: Double, before: FloatArray, offsetBefore: Double) {
         state.step = maxOf(.25, state.step / 2)
-        screen.drag(-d, false) { ok ->
+        drag(-d, false) { ok ->
             if (!ok) return@drag fail("Không vuốt được danh sách")
             screen.later(800) {
                 look { s ->
@@ -286,7 +320,7 @@ class ListNavigator(
         fun flick(times: Int, then: () -> Unit) {
             if (!screen.alive) return
             if (times == 0) return then()
-            screen.drag(-.70, true) { ok -> if (!ok) fail("Không vuốt được danh sách") else screen.later(350) { flick(times - 1, then) } }
+            drag(-.70, true) { ok -> if (!ok) fail("Không vuốt được danh sách") else screen.later(350) { flick(times - 1, then) } }
         }
         // Check it is the hero list before flicking: on another screen a swipe can change skins.
         look { first ->

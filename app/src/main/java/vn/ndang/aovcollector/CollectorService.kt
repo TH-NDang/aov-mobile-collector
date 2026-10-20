@@ -72,10 +72,11 @@ class CollectorService : AccessibilityService() {
     }
 
     private val calibrationStore by lazy { CalibrationStore(getSharedPreferences("gesture-calibration", MODE_PRIVATE)) }
-    private var calibratedMacroHash: String? = null
-    private var calibratedActionIds = emptySet<String>()
-    private var calibrationSteps = emptyList<CalibrationStep>()
-    private var calibrationPosition = 0
+    private var teaching = false
+    private var teachingGesture = 0
+    private var teachingDispatch = false
+    private var teachingWaitStarted = 0L
+    private var teachingWaitMs = 0L
     private var calibrationSession = 0
     private var teachingEntry = false
     private var teachingEntryGeneration = 0
@@ -117,277 +118,215 @@ class CollectorService : AccessibilityService() {
 
     private fun calibratedTouch(action: CalibrationAction, target: GameScreens.Word?, then: (Boolean) -> Unit) {
         if (calibrationEditor != null || !running) return then(false)
-        val currentMacro = macro
-        if (calibratedMacroHash != currentMacro?.hash) {
-            calibratedMacroHash = currentMacro?.hash
-            calibratedActionIds = currentMacro?.let { CalibrationCatalog.steps(it.json).map { step -> step.action.id }.toSet() }.orEmpty()
-        }
-        val points = if (action.id in calibratedActionIds) calibrationStore.resolve(calibrationProfile(), action) else action.points
+        val points = calibrationStore.resolve(calibrationProfile(), action)
         if (points.isEmpty()) return then(false)
-        touchGameTarget(calibrationGestures(action, points), points.size == 1, target, action.label, then)
+        touchGameTarget(calibrationGestures(action, points), points.size == 1, target, action.label, then, action = action)
     }
 
+    private var restoreTeachingState: (() -> Unit)? = null
+
+    /** Isolate the dry-run cursor, including the readers' in-memory resume caches. */
+    private fun isolateTeachingState() {
+        val oldMacro = macro
+        val oldIndex = index
+        val oldRun = runId
+        val oldAccount = runAccountId
+        val oldUid = runAccountUid
+        val oldListRef = listRef
+        val oldListTotal = listTotal
+        val oldRanking = rankingDone
+        val oldBoard = boardNext
+        val oldNames = boardNames.toMap()
+        val oldSkill = skillForm
+        val oldActive = activeMs
+        val oldEntry = entryMs
+        val oldStopped = stopped
+        val oldFailure = failure
+        val oldRetries = unsavedRetries
+        restoreTeachingState = {
+            macro = oldMacro
+            index = oldIndex
+            runId = oldRun
+            runAccountId = oldAccount
+            runAccountUid = oldUid
+            listRef = oldListRef
+            listTotal = oldListTotal
+            rankingDone = oldRanking
+            boardNext = oldBoard
+            boardNames.clear()
+            boardNames.putAll(oldNames)
+            skillForm = oldSkill
+            activeMs = oldActive
+            entryMs = oldEntry
+            stopped = oldStopped
+            failure = oldFailure
+            unsavedRetries = oldRetries
+        }
+        listRef = null
+        listTotal = null
+        rankingDone = null
+        boardNext = null
+        boardNames.clear()
+        skillForm = null
+        activeMs = 0L
+        entryMs = 0L
+        stopped = false
+        failure = null
+        unsavedRetries = 0
+    }
+
+    /** Teaching runs the real callback chain, but keeps its cursor and captures out of run history. */
     internal fun showCalibration() {
         pause("Tạm dừng để chỉnh từng bước")
-        if (busy || manualBusy || pendingSaves > 0 || afterRunChat != null || gesturesInFlight > 0) {
+        if (busy || manualBusy || pendingSaves > 0 || afterRunChat != null || gesturesInFlight > 0 || libraryBusy) {
             status("Đợi thao tác hiện tại kết thúc rồi mở Chỉnh từng bước lại")
             return
         }
-        captureShield.reset()
-        calibrationEditor?.close()
         val selected = selected() ?: return status("Chọn macro trước khi chỉnh từng bước")
-        calibrationSteps = CalibrationCatalog.steps(selected.json)
-        if (calibrationSteps.isEmpty()) {
-            status("Macro này chưa có bảng chỉnh từng bước. Không hỗ trợ bước đăng nhập, xác nhận lưu ảnh và macro nhập riêng.")
-            return
-        }
-        calibrationPosition = 0
-        editCalibration(0)
-    }
-
-    private fun chooseCalibrationStep() {
-        calibrationEditor?.close()
-        display(
-            AlertDialog.Builder(themed())
-                .setTitle("Các bước mặc định · chọn để chỉnh")
-                .setItems(
-                    calibrationSteps.mapIndexed { i, step ->
-                        "${i + 1}. ${step.title}"
-                    }.toTypedArray()
-                ) { _, which -> editCalibration(which) }
-                .setNegativeButton("Hủy", null).create()
-        )
-    }
-
-    private fun editCalibration(position: Int) {
-        if (running || busy || teachingEntry || gesturesInFlight > 0 || position !in calibrationSteps.indices) return
-        calibrationEditor?.close()
-        calibrationPosition = position
-        val step = calibrationSteps[position]
-        val action = step.action
-        val profile = calibrationProfile()
-        val session = ++calibrationSession
-        val initial = if (step.recognition == null) calibrationStore.resolve(profile, action) else emptyList()
-        val editor = GestureCalibrationEditor(
-            this, step, position, calibrationSteps.size, initial,
-            navigate = { editCalibration(it) }, choose = { chooseCalibrationStep() }, enterLobby = { enterCalibrationLobby() },
-            scan = { done ->
-                handler.postDelayed({
-                    readCalibrationTarget(step) { fresh ->
-                        done(fresh.takeIf { session == calibrationSession && profile == calibrationProfile() })
-                    }
-                }, SHIELD_MS)
-            },
-            resolved = { calibrationStore.resolve(profile, it) },
-            save = { base, points -> !running && profile == calibrationProfile() && calibrationStore.save(profile, base, points) },
-            reset = { !running && profile == calibrationProfile() && calibrationStore.reset(profile, action.id) },
-            test = { base, points, done ->
-                fun perform(fresh: CalibrationAction?) {
-                    if (fresh == null ||
-                        session != calibrationSession ||
-                        running ||
-                        busy ||
-                        gesturesInFlight > 0 ||
-                        profile != calibrationProfile() ||
-                        foreground() != GAME
-                    ) {
-                        done(false)
-                    } else {
-                        val target = if (base.relative && fresh.points.size == points.size && base.points.size == points.size) {
-                            points.mapIndexed { i, point ->
-                                CalibrationPoint(
-                                    fresh.points[i].x + point.x - base.points[i].x,
-                                    fresh.points[i].y + point.y - base.points[i].y
-                                )
-                            }
-                        } else {
-                            points
-                        }
-                        if (!CalibrationCodec.validPoints(target)) {
-                            done(false)
-                            return
-                        }
-                        calibrationTesting = true
-                        var completed = false
-                        var testLease: Long? = null
-                        val finish = { ok: Boolean ->
-                            if (!completed) {
-                                completed = true
-                                testLease?.let { captureShield.release(it) }
-                                calibrationTesting = false
-                                done(ok)
-                            }
-                        }
-                        touchGameTarget(calibrationGestures(fresh, target), target.size == 1, null, fresh.label, finish, onSession = {
-                            testLease =
-                                it
-                        })
-                        handler.postDelayed({ finish(false) }, fresh.durationMs + fresh.holdMs + 5000)
-                    }
-                }
-                handler.postDelayed({
-                    if (step.recognition != null) readCalibrationTarget(step) { perform(it) } else perform(base)
-                }, SHIELD_MS)
-            },
-            closed = {
-                calibrationSession++
-                calibrationEditor = null
-                calibrationTesting = false
-                captureShield.reset()
-                refreshPanel()
-            }
-        )
-        calibrationEditor = editor
-        editor.shield(debugCaptureHidden)
-        if (!editor.show()) {
-            calibrationEditor = null
-            status("Không mở được Chỉnh từng bước")
-        }
-    }
-
-    private fun readCalibrationTarget(step: CalibrationStep, result: (CalibrationAction?) -> Unit) {
-        var completed = false
-
-        fun done(action: CalibrationAction?) {
-            if (!completed) {
-                completed = true
-                result(action)
-            }
-        }
-        handler.postDelayed({ done(null) }, 10000)
-        if (running || foreground() != GAME) return done(null)
-        val profile = calibrationProfile()
-        grab(anyApp = true) { image ->
-            if (image == null) return@grab done(null)
-            val observedAt = SystemClock.elapsedRealtime()
-            try {
-                io.execute {
-                    val point = try {
-                        val words = GameText.words(image)
-                        val id = step.action.id
-                        when {
-                            id.startsWith("ranking.v1.") -> {
-                                val button = RankScreens.modeButton(words)
-                                if (RankScreens.page(words, false) != RankScreens.Page.RANKING || button == null) {
-                                    null
-                                } else {
-                                    val word = when {
-                                        id.endsWith("table.switch") -> RankScreens.switchButton(words)
-                                        id.endsWith("mode.open") -> button
-                                        id.contains("mode.option.") && RankScreens.menuModes(words, button).size >= 2 ->
-                                            RankScreens.Mode.values().firstOrNull { id.endsWith("." + it.name.lowercase(Locale.ROOT)) }
-                                                ?.let { RankScreens.option(words, button, it) }
-                                        else -> null
-                                    }
-                                    word?.let { CalibrationPoint(it.x, it.y) }
-                                }
-                            }
-                            id.startsWith("skills.v1.row.") -> {
-                                val parts = id.split('.')
-                                val count = parts.getOrNull(3)?.toIntOrNull()
-                                val slot = parts.getOrNull(5)?.toIntOrNull()
-                                val row = SkillRow.read(image.width, image.height) { y, pixels ->
-                                    image.getPixels(pixels, 0, image.width, 0, y, image.width, 1)
-                                }
-                                if (row.centres?.size == count && slot != null) {
-                                    row.centres?.getOrNull(slot)?.let {
-                                        CalibrationPoint(it, SkillRow.Y)
-                                    }
-                                } else {
-                                    null
-                                }
-                            }
-                            id == "chess.v1.lobby.home.detected" -> {
-                                if (words.any { it.plain.contains("colienquan") }) {
-                                    words.firstOrNull { it.plain.contains("trangchu") && it.x < .24 }?.let { CalibrationPoint(it.x, it.y) }
-                                } else {
-                                    null
-                                }
-                            }
-                            id == "chess.v1.lobby.mode" -> {
-                                val reading = GameScreens.read(image.width, image.height) { y, row ->
-                                    image.getPixels(row, 0, image.width, 0, y, image.width, 1)
-                                }
-                                if (reading.kind ==
-                                    GameScreens.Kind.LOBBY
-                                ) {
-                                    ChessWiki.modeEntryPoint(words)?.let { CalibrationPoint(it.first, it.second) }
-                                } else {
-                                    null
-                                }
-                            }
-                            id.startsWith("chess.v1.topic.") && id.endsWith(".card") && !ChessWiki.modal(image) -> {
-                                val key = id.removePrefix("chess.v1.topic.").removeSuffix(".card")
-                                val topic = ChessWiki.TOPICS.firstOrNull { it.key == key }
-                                val correct = if (key == "tat-ca-quan-co") {
-                                    ChessWiki.heroListVisible(words)
-                                } else {
-                                    topic != null && words.any { it.plain == GameScreens.plain(topic.label) }
-                                }
-                                if (topic != null &&
-                                    correct
-                                ) {
-                                    ChessWiki.tiles(topic, image, words).firstOrNull()?.let { CalibrationPoint(it.x, it.y) }
-                                } else {
-                                    null
-                                }
-                            }
-                            else -> null
-                        }
-                    } catch (_: Exception) {
-                        null
-                    }
-                    image.recycle()
-                    handler.post {
-                        done(
-                            if (point != null &&
-                                CalibrationFreshness.valid(observedAt, SystemClock.elapsedRealtime()) &&
-                                !running &&
-                                profile == calibrationProfile() &&
-                                foreground() == GAME
-                            ) {
-                                step.action.copy(points = listOf(point))
-                            } else {
-                                null
-                            }
-                        )
-                    }
-                }
-            } catch (_: Exception) {
-                image.recycle()
-                done(null)
-            }
-        }
-    }
-
-    private fun enterCalibrationLobby() {
-        calibrationEditor?.close()
-        if (isWorking || libraryBusy) return
-        val token = ++teachingEntryGeneration
+        if (selected.steps.length() == 0) return
+        isolateTeachingState()
+        macro = selected
+        index = 0
+        runId = ""
+        runAccountId = null
+        runAccountUid = null
+        listRef = null
+        listTotal = null
+        teaching = true
+        teachingGesture = 0
+        teachingWaitStarted = 0L
+        teachingWaitMs = 0L
         teachingEntry = true
-        var completed = false
-
-        fun finish(outcome: GameEntry.Outcome) {
-            if (completed || token != teachingEntryGeneration || current !== this) return
-            completed = true
+        val token = ++generation
+        val entryToken = ++teachingEntryGeneration
+        status("Đang vào sảnh; đến sảnh sẽ dừng trước thao tác tiếp theo. Bấm Dừng để hủy.")
+        enterGame(true, { teaching && teachingEntry && token == generation }, calibrationOnly = true) { outcome ->
+            if (!teaching || token != generation || entryToken != teachingEntryGeneration) return@enterGame
             teachingEntry = false
             captureShield.reset()
             when (outcome) {
                 is GameEntry.Outcome.Ready -> {
-                    status("Đã vào sảnh · dừng tại đây để chỉnh từng bước")
-                    editCalibration(0)
+                    setRunning(true)
+                    next(token)
                 }
-                is GameEntry.Outcome.Failed -> status(outcome.reason)
+                is GameEntry.Outcome.Failed -> endTeaching(outcome.reason)
             }
         }
-        status("Đang vào sảnh; sẽ dừng tại sảnh. Bấm Dừng để hủy.")
-        enterGame(true, {
-            teachingEntry && token == teachingEntryGeneration && current === this
-        }, calibrationOnly = true, finish = ::finish)
-        handler.postDelayed(
-            { finish(GameEntry.Outcome.Failed("Vào sảnh quá lâu. Mở game bằng tay rồi chỉnh từng bước.")) },
-            GameEntry.LIMIT_MS + 5000
+        handler.postDelayed({
+            if (teachingEntry && token == generation) endTeaching("Vào sảnh quá lâu. Mở game bằng tay rồi chỉnh từng bước.")
+        }, GameEntry.LIMIT_MS + 5000)
+    }
+
+    private fun endTeaching(message: String) {
+        if (!teaching) return
+        generation++
+        teachingEntryGeneration++
+        calibrationSession++
+        calibrationEditor?.close(notify = false)
+        calibrationEditor = null
+        cancelStep?.invoke()
+        cancelStep = null
+        setRunning(false)
+        busy = false
+        entering = false
+        teachingEntry = false
+        calibrationTesting = false
+        teachingDispatch = false
+        captureShield.reset()
+        teaching = false
+        restoreTeachingState?.invoke()
+        restoreTeachingState = null
+        status(message)
+    }
+
+    /** Hold the *actual* pending continuation, not a catalogue entry or a guessed next step. */
+    private fun previewTeaching(
+        action: CalibrationAction,
+        result: (Boolean) -> Unit,
+        fixtureDispatch: ((CalibrationAction, List<CalibrationPoint>, (Boolean) -> Unit) -> Unit)? = null
+    ) {
+        if (!teaching || !running || calibrationEditor != null) return result(false)
+        val token = generation
+        val session = ++calibrationSession
+        val profile = calibrationProfile()
+        teachingWaitStarted = SystemClock.elapsedRealtime()
+        val step = CalibrationStep(action.label, "Kéo điểm chạm hoặc hai đầu đường vuốt. Lưu để ưu tiên ở những lần chạy sau.", action)
+        val editor = GestureCalibrationEditor(
+            this, step, teachingGesture++, 0, calibrationStore.resolve(profile, action),
+            navigate = {}, choose = {}, enterLobby = {}, scan = { it(null) },
+            resolved = { calibrationStore.resolve(profile, it) },
+            save = { base, points ->
+                teaching && token == generation && profile == calibrationProfile() && calibrationStore.save(profile, base, points)
+            },
+            reset = { teaching && token == generation && profile == calibrationProfile() && calibrationStore.reset(profile, action.id) },
+            test = { base, points, done ->
+                if (!teaching ||
+                    token != generation ||
+                    session != calibrationSession ||
+                    profile != calibrationProfile() ||
+                    (fixtureDispatch == null && foreground() != GAME) ||
+                    gesturesInFlight > 0 ||
+                    !CalibrationCodec.validPoints(points)
+                ) {
+                    done(false)
+                } else {
+                    calibrationEditor?.close(notify = false)
+                    calibrationEditor = null
+                    teachingWaitMs += SystemClock.elapsedRealtime() - teachingWaitStarted
+                    teachingWaitStarted = 0L
+                    calibrationTesting = true
+                    teachingDispatch = true
+                    val completed: (Boolean) -> Unit = { ok ->
+                        calibrationTesting = false
+                        done(ok)
+                        if (teaching && token == generation) result(ok)
+                    }
+                    if (fixtureDispatch != null) {
+                        fixtureDispatch(base, points, completed)
+                    } else {
+                        touchGameTarget(calibrationGestures(base, points), points.size == 1, null, base.label, completed)
+                    }
+                    teachingDispatch = false
+                    handler.postDelayed({
+                        if (teaching &&
+                            token == generation &&
+                            session == calibrationSession &&
+                            calibrationTesting
+                        ) {
+                            endTeaching("Android chưa hoàn tất thao tác; đã dừng chỉnh an toàn")
+                        }
+                    }, base.durationMs + base.holdMs + 5000)
+                }
+            },
+            closed = { endTeaching("Đã dừng chỉnh từng bước; các điểm đã lưu được giữ lại") }
         )
+        calibrationEditor = editor
+        editor.shield(debugCaptureHidden)
+        if (!editor.show()) endTeaching("Không mở được bảng chỉnh từng bước")
+    }
+
+    /** Instrumentation drives the identical pending editor with a non-device dispatcher. Never injects input. */
+    internal fun beginTeachingFixture(actions: List<CalibrationAction>, onDispatch: (CalibrationAction, List<CalibrationPoint>) -> Unit) {
+        if (isWorking || libraryBusy) return
+        isolateTeachingState()
+        teaching = true
+        teachingGesture = 0
+        teachingWaitMs = 0L
+        teachingWaitStarted = 0L
+        val token = ++generation
+        setRunning(true)
+
+        fun step(at: Int) {
+            if (!teaching || token != generation) return
+            if (at >= actions.size) return endTeaching("Đã đi hết thao tác thử")
+            previewTeaching(actions[at], { ok ->
+                if (ok) handler.post { step(at + 1) } else endTeaching("Đã dừng thao tác thử")
+            }, { action, points, done ->
+                onDispatch(action, points)
+                done(true)
+            })
+        }
+        step(0)
     }
 
     private var panel: LinearLayout? = null
@@ -439,6 +378,9 @@ class CollectorService : AccessibilityService() {
     // Collection time of the current run, pauses excluded.
     private var activeMs = 0L
     private var segmentStart = 0L
+
+    private fun teachingWaitTotal() = teachingWaitMs +
+        if (teachingWaitStarted > 0) SystemClock.elapsedRealtime() - teachingWaitStarted else 0L
 
     private fun elapsed() = activeMs + (if (segmentStart > 0) android.os.SystemClock.elapsedRealtime() - segmentStart else 0L)
 
@@ -600,7 +542,7 @@ class CollectorService : AccessibilityService() {
 
     /** Appends to the run's events.txt, so pauses and failures can be explained after the run. */
     private fun note(text: String) {
-        if (runId.isEmpty()) return
+        if (teaching || runId.isEmpty()) return
         try {
             File(filesDir, "captures/$runId").apply { mkdirs() }.resolve("events.txt").appendText(
                 SimpleDateFormat("dd/MM HH:mm:ss", Locale.US).format(Date()) + " · bước ${index + 1} · $text\n"
@@ -722,6 +664,7 @@ class CollectorService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        if (teaching) endTeaching("Đã đóng chế độ chỉnh")
         teachingEntry = false
         teachingEntryGeneration++
         calibrationEditor?.close()
@@ -788,6 +731,7 @@ class CollectorService : AccessibilityService() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (teaching && !teachingEntry) endTeaching("Màn hình đã thay đổi; mở lại Chỉnh từng bước để dùng đúng cấu hình màn hình")
         calibrationEditor?.close()
         clearGestureDebug()
         if (panel != null) {
@@ -1030,6 +974,7 @@ class CollectorService : AccessibilityService() {
             val actions = LinearLayout(this)
             primary = Ui.button(this, "Chạy", true) {
                 when {
+                    teaching -> status("Đang chỉnh theo macro; dùng Chạy bước / Tiếp hoặc Dừng")
                     running -> pause("Đã tạm dừng")
                     busy || manualBusy -> status("Đang hoàn tất thao tác hiện tại…")
                     ended() -> {
@@ -1144,7 +1089,7 @@ class CollectorService : AccessibilityService() {
             else -> R.drawable.ic_panel_play
         }
         primary?.let { panelButtonIcon(it, glyph, caption) }
-        primary?.isEnabled = running || (!busy && !manualBusy && m != null)
+        primary?.isEnabled = !teaching && (running || (!busy && !manualBusy && m != null))
         stopView?.let { panelButtonIcon(it, R.drawable.ic_panel_stop, "Dừng", Color.rgb(255, 213, 220)) }
         // Dừng ends a run: nothing to end before one starts or after it ended.
         val stoppable = canStop()
@@ -2164,10 +2109,12 @@ class CollectorService : AccessibilityService() {
      * The progress ledger lets a paused/restarted step revisit the encyclopedia without resaving finished topics.
      */
     private fun chess(alive: () -> Boolean, finish: (ChessWikiReader.Outcome) -> Unit) {
+        val dryRun = teaching
+        val adapterRun = runId
         val stamp = "%04d".format(index + 1)
         val ledger = File(filesDir, "captures/" + runId + "/chess-progress.json")
         val progressState = try {
-            JSONObject(ledger.readText())
+            if (dryRun) JSONObject() else JSONObject(ledger.readText())
         } catch (_: Exception) {
             JSONObject()
         }
@@ -2176,18 +2123,22 @@ class CollectorService : AccessibilityService() {
         }
         val detailPages = progressState.optJSONObject("detailPages") ?: JSONObject()
 
-        fun persistProgress(): Boolean = try {
-            ledger.parentFile?.mkdirs()
-            val part = File(ledger.parentFile, ledger.name + ".part")
-            part.writeText(
-                progressState.put("finished", org.json.JSONArray(doneIds.sorted()))
-                    .put("detailPages", detailPages).toString()
-            )
-            require(part.renameTo(ledger)) { "Không thay được file tiến độ" }
+        fun persistProgress(): Boolean = if (dryRun) {
             true
-        } catch (e: Exception) {
-            CrashLog.record(this@CollectorService, "Không ghi được tiến độ Bách khoa", e)
-            false
+        } else {
+            try {
+                ledger.parentFile?.mkdirs()
+                val part = File(ledger.parentFile, ledger.name + ".part")
+                part.writeText(
+                    progressState.put("finished", org.json.JSONArray(doneIds.sorted()))
+                        .put("detailPages", detailPages).toString()
+                )
+                require(part.renameTo(ledger)) { "Không thay được file tiến độ" }
+                true
+            } catch (e: Exception) {
+                CrashLog.record(this@CollectorService, "Không ghi được tiến độ Bách khoa", e)
+                false
+            }
         }
         val options = BuiltInMacros.chessOptions(readMacro().json)
         val timing = ChessWiki.Timing(options.fast)
@@ -2255,7 +2206,7 @@ class CollectorService : AccessibilityService() {
                                         override fun skillIcons() = ChessWiki.skillTiles(b)
 
                                         override fun keep(name: String, then: (Boolean) -> Unit) {
-                                            store(b, runId, stamp + "-" + name, then)
+                                            readerStore(b, adapterRun, dryRun, alive, stamp + "-" + name, then)
                                         }
 
                                         override fun discard() {
@@ -2303,21 +2254,17 @@ class CollectorService : AccessibilityService() {
                 val start = if (d > 0) .92 else .24
                 val distance = kotlin.math.abs(d).coerceAtMost(.70)
                 val end = if (d > 0) start - distance else start + distance
-                if (fling) {
-                    touchGame(drag(.76, start, end, 160, 0), false, then)
-                } else {
-                    calibratedTouch(
-                        CalibrationAction(
-                            "chess.v1.herolist." + if (d > 0) "down" else "up",
-                            "Cờ: kéo danh sách quân cờ",
-                            listOf(CalibrationPoint(.76, start), CalibrationPoint(.76, end)),
-                            relative = true,
-                            durationMs = 700,
-                            holdMs = 450
-                        ),
-                        then
-                    )
-                }
+                calibratedTouch(
+                    CalibrationAction(
+                        "chess.v1.herolist." + (if (d > 0) "down" else "up") + (if (fling) ".fling" else ""),
+                        "Cờ: kéo danh sách quân cờ",
+                        listOf(CalibrationPoint(.76, start), CalibrationPoint(.76, end)),
+                        relative = true,
+                        durationMs = if (fling) 160 else 700,
+                        holdMs = if (fling) 0 else 450
+                    ),
+                    then
+                )
             }
 
             override fun swipe(x: Double, y: Double, toX: Double, toY: Double, then: (Boolean) -> Unit) {
@@ -2348,6 +2295,7 @@ class CollectorService : AccessibilityService() {
                 then: (NativeResult) -> Unit
             ) {
                 if (!alive()) return
+                if (dryRun) return then(NativeResult.SAVED) // No native Save Photo or gallery writes while teaching.
                 val saveRunId = runId
                 val earlyReady = NativeSaveReadiness.enabled(group, preserveDetail, options.fast)
 
@@ -2630,7 +2578,7 @@ class CollectorService : AccessibilityService() {
             }
 
             override fun note(message: String) {
-                this@CollectorService.note(message)
+                if (alive()) this@CollectorService.note(message)
             }
 
             override fun say(message: String) {
@@ -2640,7 +2588,7 @@ class CollectorService : AccessibilityService() {
                 }
             }
         }
-        if (options.nativeGroups.isEmpty()) {
+        if (dryRun || options.nativeGroups.isEmpty()) {
             ChessWikiReader(screen, options, finish).start()
         } else {
             try {
@@ -2819,6 +2767,7 @@ class CollectorService : AccessibilityService() {
     fun start() = startWithAccount(null)
 
     private fun startWithAccount(pickedAccount: String?) {
+        if (teaching) return status("Đang chỉnh theo macro; bấm Chạy bước / Tiếp hoặc Dừng")
         if (teachingEntry) return status("Đang vào sảnh để chỉnh từng bước; bấm Dừng nếu muốn hủy")
         if (calibrationTesting || gesturesInFlight > 0) return status("Đợi thao tác thử kết thúc trước khi chạy macro")
         calibrationEditor?.close()
@@ -2932,6 +2881,7 @@ class CollectorService : AccessibilityService() {
     }
 
     fun reset() {
+        if (teaching) return status("Đang chỉnh theo macro; bấm Dừng trước khi tạo lượt mới")
         if (busy ||
             manualBusy
         ) {
@@ -3089,6 +3039,7 @@ class CollectorService : AccessibilityService() {
     }
 
     private fun pause(s: String) {
+        if (teaching) return endTeaching(s)
         val was = running
         val hadWork = running || busy
         interrupt()
@@ -3111,6 +3062,7 @@ class CollectorService : AccessibilityService() {
     }
 
     private fun stop() {
+        if (teaching) return endTeaching("Đã dừng chỉnh từng bước; các điểm đã lưu được giữ lại")
         calibrationEditor?.close()
         if (teachingEntry) {
             interrupt()
@@ -3132,6 +3084,7 @@ class CollectorService : AccessibilityService() {
     }
 
     private fun save() {
+        if (teaching) return
         val m = macro ?: return
         prefs.edit().putString("hash", m.hash).putInt("step", index).putString("run", runId).putString("accountId", runAccountId)
             .putString(
@@ -3193,6 +3146,7 @@ class CollectorService : AccessibilityService() {
         if (index >=
             m.steps.length()
         ) {
+            if (teaching) return endTeaching("Đã đi hết macro; các thao tác đã lưu sẽ dùng cho lần chạy sau")
             afterSaves {
                 if (token == generation &&
                     running
@@ -3248,6 +3202,7 @@ class CollectorService : AccessibilityService() {
         }
 
         fun listEnded(collected: Int) {
+            if (teaching) return endTeaching("Đã đi hết danh sách; giữ các thao tác đã lưu")
             if (finished || token != generation) return
             finished = true
             busy = false
@@ -3280,13 +3235,20 @@ class CollectorService : AccessibilityService() {
                 "chess" -> 43_200_000L
                 else -> 10000L
             }
-            handler.postDelayed({
-                if (!finished &&
-                    token == generation
-                ) {
+            val beganAt = SystemClock.elapsedRealtime()
+            val beganWaiting = teachingWaitTotal()
+
+            fun checkTimeout() {
+                if (finished || token != generation) return
+                val paused = if (teaching) teachingWaitTotal() - beganWaiting else 0L
+                val remaining = limit - (SystemClock.elapsedRealtime() - beganAt - paused)
+                if (remaining <= 0) {
                     done(false, "Bước ${index + 1} ($type) quá ${limit / 1000} giây không xong. Kiểm tra màn hình rồi tiếp tục.")
+                } else {
+                    handler.postDelayed({ checkTimeout() }, remaining.coerceAtLeast(1000L))
                 }
-            }, limit)
+            }
+            handler.postDelayed({ checkTimeout() }, limit)
             // Its callbacks see the step finished and stop; a tap already sent still lands.
             if (type in
                 setOf("enter", "skills", "ranking", "board", "chess", "find")
@@ -3304,15 +3266,24 @@ class CollectorService : AccessibilityService() {
             }
             when (type) {
                 "wait" -> handler.postDelayed({ done(true) }, s.getLong("ms"))
-                "back" -> done(performGlobalAction(GLOBAL_ACTION_BACK))
+                "back" -> if (teaching) {
+                    done(false, "Bước Back hệ thống không có tọa độ để chỉnh; chế độ chỉnh đã dừng an toàn")
+                } else {
+                    done(performGlobalAction(GLOBAL_ACTION_BACK))
+                }
                 "enter" -> {
                     entering = true
-                    enterGame(s.optString("to") == "lobby", { !finished && token == generation }) { outcome ->
+                    enterGame(s.optString("to") == "lobby", { !finished && token == generation }, calibrationOnly = teaching) { outcome ->
+                        if (finished || token != generation) return@enterGame
                         when (outcome) {
                             is GameEntry.Outcome.Ready -> {
                                 entryMs = elapsed()
-                                prefs.edit().putLong("entryMs", entryMs).apply()
-                                if (prefs.getBoolean("clean", false)) RunTimes.record(uiPrefs, RunTimes.ENTRY, entryMs / 1000.0)
+                                if (!teaching) prefs.edit().putLong("entryMs", entryMs).apply()
+                                if (!teaching &&
+                                    prefs.getBoolean("clean", false)
+                                ) {
+                                    RunTimes.record(uiPrefs, RunTimes.ENTRY, entryMs / 1000.0)
+                                }
                                 done(true)
                             }
                             is GameEntry.Outcome.Failed -> done(false, outcome.reason)
@@ -3339,6 +3310,7 @@ class CollectorService : AccessibilityService() {
                 "board" -> {
                     entering = true
                     board(s, { !finished && token == generation }) { outcome ->
+                        if (finished || token != generation) return@board
                         when (outcome) {
                             is BoardReader.Outcome.Done -> {
                                 note("Chiến khu: ${outcome.heroes} tướng")
@@ -3351,6 +3323,7 @@ class CollectorService : AccessibilityService() {
                 "chess" -> {
                     entering = true
                     chess({ !finished && token == generation }) { outcome ->
+                        if (finished || token != generation) return@chess
                         when (outcome) {
                             is ChessWikiReader.Outcome.Done -> {
                                 note(
@@ -3366,6 +3339,7 @@ class CollectorService : AccessibilityService() {
                 "ranking" -> {
                     entering = true
                     ranking(s, { !finished && token == generation }) { outcome ->
+                        if (finished || token != generation) return@ranking
                         when (outcome) {
                             is RankingReader.Outcome.Done -> {
                                 note("Thống kê tướng: ${outcome.pages} ảnh")
@@ -3376,6 +3350,7 @@ class CollectorService : AccessibilityService() {
                     }
                 }
                 "skills" -> skills(s, { !finished && token == generation }) { outcome ->
+                    if (finished || token != generation) return@skills
                     when (outcome) {
                         is SkillReader.Outcome.Done -> {
                             note("Chiêu ${s.getString("prefix")}: ${outcome.summary}")
@@ -3387,6 +3362,7 @@ class CollectorService : AccessibilityService() {
                 "pick" -> {
                     val card = s.getInt("index")
                     pick(card, "%04d".format(index + 1), { !finished && token == generation }) { outcome ->
+                        if (finished || token != generation) return@pick
                         when (outcome) {
                             is ListNavigator.Outcome.Tapped -> done(true)
                             is ListNavigator.Outcome.End -> listEnded(card)
@@ -3397,6 +3373,7 @@ class CollectorService : AccessibilityService() {
                 }
                 // A hero by name: where it was last seen, its name on the card checked, else looked for down the list.
                 "find" -> find(s, { !finished && token == generation }) { outcome ->
+                    if (finished || token != generation) return@find
                     when (outcome) {
                         is ListNavigator.Outcome.Tapped -> done(true)
                         is ListNavigator.Outcome.Failed -> done(false, outcome.reason)
@@ -3430,7 +3407,21 @@ class CollectorService : AccessibilityService() {
                         val defaults = CalibrationCatalog.steps(m.json).firstOrNull { it.action.id == actionId }?.action
                         if (defaults != null) calibratedTouch(defaults) { done(it) } else touchGame(gesture, true) { done(it) }
                     } else {
-                        touchGame(gesture, !swipe) { done(it) }
+                        calibratedTouch(
+                            CalibrationAction(
+                                "macro.v1.${m.hash.take(64)}.$index",
+                                "Macro · thao tác ${index + 1}",
+                                if (swipe) {
+                                    listOf(
+                                        CalibrationPoint(s.getDouble("x"), s.getDouble("y")),
+                                        CalibrationPoint(s.getDouble("toX"), s.getDouble("toY"))
+                                    )
+                                } else {
+                                    listOf(CalibrationPoint(s.getDouble("x"), s.getDouble("y")))
+                                },
+                                durationMs = if (swipe) s.optLong("ms", 500) else TAP_MS
+                            )
+                        ) { done(it) }
                     }
                 }
             }
@@ -3462,11 +3453,20 @@ class CollectorService : AccessibilityService() {
         target: GameScreens.Word?,
         label: String?,
         result: (Boolean) -> Unit,
-        onSession: ((Long) -> Unit)? = null
+        onSession: ((Long) -> Unit)? = null,
+        action: CalibrationAction? = null
     ) {
+        if (teaching && !teachingEntry && !teachingDispatch) {
+            if (action == null) {
+                endTeaching("Thao tác chưa có định danh an toàn để chỉnh; đã dừng trước khi chạm game")
+                return
+            }
+            previewTeaching(action, result)
+            return
+        }
         if (calibrationEditor != null && !calibrationTesting) return result(false)
         val debugSession = debugGeneration
-        val allowRetries = !calibrationTesting
+        val allowRetries = !calibrationTesting && !teaching
         val session = captureShield.acquire()
         onSession?.invoke(session)
         var finished = false
@@ -3622,10 +3622,10 @@ class CollectorService : AccessibilityService() {
             name,
             hint,
             { card, approve, then -> pick(card, stamp, alive, approve, then) },
-            seen = { cards -> io.execute { HeroIndex.seen(filesDir, cards.map { it.first to it.second.text }) } },
+            seen = { cards -> if (!teaching) io.execute { HeroIndex.seen(filesDir, cards.map { it.first to it.second.text }) } },
             note = { note(it) }
         ) { outcome, card ->
-            if (outcome is ListNavigator.Outcome.Tapped && card != null) io.execute { HeroIndex.record(filesDir, card, name) }
+            if (!teaching && outcome is ListNavigator.Outcome.Tapped && card != null) io.execute { HeroIndex.record(filesDir, card, name) }
             finish(outcome)
         }.start()
     }
@@ -3638,9 +3638,11 @@ class CollectorService : AccessibilityService() {
         approve: ListNavigator.Approve? = null,
         finish: (ListNavigator.Outcome) -> Unit
     ) {
+        val dryRun = teaching
+        val adapterRun = runId
         val file = File(filesDir, "captures/$runId/list.json")
         val saved = try {
-            JSONObject(file.readText())
+            if (teaching) JSONObject() else JSONObject(file.readText())
         } catch (_: Exception) {
             JSONObject()
         }
@@ -3653,6 +3655,13 @@ class CollectorService : AccessibilityService() {
         )
         if (listTotal == null) listTotal = saved.optInt("total", 0).takeIf { it > 0 }
         val screen = object : ListNavigator.Screen {
+            override fun calibratedBack(action: CalibrationAction, then: (Boolean) -> Unit) = calibratedTouch(action, then)
+
+            override fun calibratedDrag(action: CalibrationAction, d: Double, fling: Boolean, then: (Boolean) -> Unit) =
+                calibratedTouch(action, then)
+
+            override fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = calibratedTouch(action, then)
+
             override val alive get() = alive()
 
             override fun look(then: (ListNavigator.Shot?) -> Unit) {
@@ -3673,11 +3682,15 @@ class CollectorService : AccessibilityService() {
                                 }
                             val total = if (listTotal == null && p?.isNotEmpty() == true) HeroNames.readListTotal(b) else null
                             handler.post {
+                                if (!alive()) {
+                                    b.recycle()
+                                    return@post
+                                }
                                 if (total !=
                                     null
                                 ) {
                                     listTotal = total
-                                    uiPrefs.edit().putInt("heroTotal", total).apply()
+                                    if (!dryRun && alive()) uiPrefs.edit().putInt("heroTotal", total).apply()
                                 }
                                 if (p ==
                                     null
@@ -3693,7 +3706,7 @@ class CollectorService : AccessibilityService() {
                                         override fun hasCard(x: Double, y: Double) = HeroGrid.hasCard(b, x, y)
 
                                         override fun done(keep: String?) {
-                                            if (keep != null) store(b, runId, "$stamp-$keep") {} else b.recycle()
+                                            if (keep != null) readerStore(b, adapterRun, dryRun, alive, "$stamp-$keep") {} else b.recycle()
                                         }
 
                                         override fun words(then: (List<GameScreens.Word>) -> Unit) {
@@ -3742,22 +3755,25 @@ class CollectorService : AccessibilityService() {
             }
 
             override fun note(text: String) {
-                this@CollectorService.note(text)
+                if (alive()) this@CollectorService.note(text)
             }
         }
         ListNavigator(card, state, screen, approve) { outcome ->
+            if (!alive()) return@ListNavigator
             listRef = state.ref
             try {
-                file.parentFile?.mkdirs()
-                file.writeText(
-                    JSONObject().put(
-                        "offset",
-                        state.offset
-                    ).put("page", state.page).put("synced", state.synced).put("step", state.step).put(
-                        "total",
-                        listTotal ?: 0
-                    ).toString()
-                )
+                if (!dryRun) {
+                    file.parentFile?.mkdirs()
+                    file.writeText(
+                        JSONObject().put(
+                            "offset",
+                            state.offset
+                        ).put("page", state.page).put("synced", state.synced).put("step", state.step).put(
+                            "total",
+                            listTotal ?: 0
+                        ).toString()
+                    )
+                }
             } catch (e: Exception) {
                 CrashLog.record(this, "Không ghi được list.json", e)
             }
@@ -3770,6 +3786,8 @@ class CollectorService : AccessibilityService() {
      * order, as 0012-03-hero-001-skill-2-detail, so a hero's folder lists them as they were taken.
      */
     private fun skills(s: JSONObject, alive: () -> Boolean, finish: (SkillReader.Outcome) -> Unit) {
+        val dryRun = teaching
+        val adapterRun = runId
         val stamp = "%04d".format(index + 1)
         var order = 0
         val key = "$runId/$stamp"
@@ -3803,7 +3821,7 @@ class CollectorService : AccessibilityService() {
                                             if (keep !=
                                                 null
                                             ) {
-                                                store(b, runId, photo("${s.getString("prefix")}-$keep")) {}
+                                                readerStore(b, adapterRun, dryRun, alive, photo("${s.getString("prefix")}-$keep")) {}
                                             } else {
                                                 b.recycle()
                                             }
@@ -3834,11 +3852,11 @@ class CollectorService : AccessibilityService() {
             }
 
             override fun note(text: String) {
-                this@CollectorService.note(text)
+                if (alive()) this@CollectorService.note(text)
             }
 
             override fun firstForm(row: SkillRow.Row) {
-                skillForm = key to row
+                if (alive()) skillForm = key to row
             }
         }
         val known = skillForm?.takeIf { it.first == key }?.second
@@ -3856,12 +3874,19 @@ class CollectorService : AccessibilityService() {
      * match. The words of each screen come from its accessibility tree (the web pages have one) and from ML Kit.
      */
     private fun ranking(s: JSONObject, alive: () -> Boolean, finish: (RankingReader.Outcome) -> Unit) {
+        val dryRun = teaching
+        val adapterRun = runId
         val stamp = "%04d".format(index + 1)
         val rankingSteps =
             macro?.steps?.let { steps -> (0 until steps.length()).count { steps.getJSONObject(it).optString("type") == "ranking" } } ?: 0
         val key = "$runId/$stamp"
         val done = rankingDone?.takeIf { it.first == key }?.second ?: HashSet<String>().also { rankingDone = key to it }
         val screen = object : RankingReader.Screen {
+            override fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = calibratedTouch(action, then)
+
+            override fun calibratedDrag(action: CalibrationAction, d: Double, fling: Boolean, then: (Boolean) -> Unit) =
+                calibratedTouch(action, then)
+
             override val alive get() = alive()
 
             override fun look(words: Boolean, then: (RankingReader.Look?) -> Unit) {
@@ -3905,13 +3930,19 @@ class CollectorService : AccessibilityService() {
                                         override fun done(keep: String?) {
                                             if (consumed) return
                                             consumed = true
-                                            if (keep != null) store(b, runId, "$stamp-$keep") {} else b.recycle()
+                                            if (keep != null) readerStore(b, adapterRun, dryRun, alive, "$stamp-$keep") {} else b.recycle()
                                         }
 
                                         override fun keep(name: String, then: (Boolean) -> Unit) {
                                             if (consumed) return then(false)
                                             consumed = true
-                                            store(b, runId, RankingCaptureFiles.screenshotBase("$stamp-$name", rankingSteps)) { ok ->
+                                            readerStore(
+                                                b,
+                                                adapterRun,
+                                                dryRun,
+                                                alive,
+                                                RankingCaptureFiles.screenshotBase("$stamp-$name", rankingSteps)
+                                            ) { ok ->
                                                 if (!ok) note("Không lưu được ảnh thống kê: $name")
                                                 refreshPanel()
                                                 then(ok)
@@ -3950,7 +3981,7 @@ class CollectorService : AccessibilityService() {
             }
 
             override fun note(text: String) {
-                this@CollectorService.note(text)
+                if (alive()) this@CollectorService.note(text)
             }
 
             override fun say(text: String) {
@@ -3972,10 +4003,14 @@ class CollectorService : AccessibilityService() {
      * from ML Kit; the "Chọn tướng" grid is measured from its pixels while the screenshot is held.
      */
     private fun board(s: JSONObject, alive: () -> Boolean, finish: (BoardReader.Outcome) -> Unit) {
+        val dryRun = teaching
+        val adapterRun = runId
         val stamp = "%04d".format(index + 1)
         val key = "$runId/$stamp"
         val first = boardNext?.takeIf { it.first == key }?.second ?: 0
         val screen = object : BoardReader.Screen {
+            override fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = calibratedTouch(action, then)
+
             override val alive get() = alive()
 
             override fun look(words: Boolean, grid: Boolean, then: (BoardReader.Look?) -> Unit) {
@@ -4016,7 +4051,7 @@ class CollectorService : AccessibilityService() {
                                             BoardScreens.card(b.width, b.height, col, top, bottom, rows)
 
                                         override fun done(keep: String?) {
-                                            if (keep != null) store(b, runId, "$stamp-$keep") {} else b.recycle()
+                                            if (keep != null) readerStore(b, adapterRun, dryRun, alive, "$stamp-$keep") {} else b.recycle()
                                         }
                                     })
                                 }
@@ -4042,7 +4077,7 @@ class CollectorService : AccessibilityService() {
             }
 
             override fun note(text: String) {
-                this@CollectorService.note(text)
+                if (alive()) this@CollectorService.note(text)
             }
 
             override fun say(text: String) {
@@ -4053,11 +4088,11 @@ class CollectorService : AccessibilityService() {
             }
 
             override fun hero(index: Int, name: String?) {
-                boardNames["hero-%03d".format(index + 1)] = name
+                if (alive()) boardNames["hero-%03d".format(index + 1)] = name
             }
 
             override fun finished(index: Int) {
-                boardNext = key to index + 1
+                if (alive()) boardNext = key to index + 1
             }
         }
         BoardReader(screen, s.getInt("heroes"), BuiltInMacros.boardWants(s), first, finish).start()
@@ -4148,6 +4183,8 @@ class CollectorService : AccessibilityService() {
             }
         }
         val screen = object : GameEntry.Screen {
+            override fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = calibratedTouch(action, then)
+
             override val alive get() = alive()
 
             override fun quit(then: (GameCloser.Result) -> Unit) {
@@ -4257,7 +4294,7 @@ class CollectorService : AccessibilityService() {
                 handler.postDelayed(then, ms)
             }
 
-            override fun now() = SystemClock.elapsedRealtime()
+            override fun now() = SystemClock.elapsedRealtime() - if (teaching) teachingWaitTotal() else 0L
 
             override fun note(text: String) {
                 if (!calibrationOnly) this@CollectorService.note(text)
@@ -4657,6 +4694,10 @@ class CollectorService : AccessibilityService() {
      * macro does not wait for PNG compression, unless [wait] is set or too many saves are already queued.
      */
     private fun capture(name: String, folder: String, wait: Boolean = false, done: (Boolean) -> Unit) {
+        if (teaching) {
+            done(true)
+            return
+        }
         if (filesDir.usableSpace < 30L * 1024 * 1024) {
             failure = "Không đủ dung lượng trống để chụp"
             done(false)
@@ -4682,8 +4723,28 @@ class CollectorService : AccessibilityService() {
         if (pendingSaves == 0) then() else saveWaiters.addLast { afterSaves(then) }
     }
 
+    /** A late OCR callback from a cancelled teaching session must never save into the restored real run. */
+    private fun readerStore(bitmap: Bitmap, folder: String, dryRun: Boolean, alive: () -> Boolean, name: String, done: (Boolean) -> Unit) {
+        if (dryRun || !alive()) {
+            bitmap.recycle()
+            done(dryRun && alive())
+        } else {
+            store(bitmap, folder, name, done)
+        }
+    }
+
     /** Writes [bitmap] as PNG off the main thread and recycles it. */
     internal fun store(bitmap: Bitmap, folder: String, name: String, done: (Boolean) -> Unit) {
+        if (folder.isBlank() && !teaching) {
+            bitmap.recycle()
+            done(false)
+            return
+        }
+        if (teaching) {
+            bitmap.recycle()
+            done(true)
+            return
+        }
         try {
             io.execute {
                 var record: Long? = null

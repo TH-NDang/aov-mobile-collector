@@ -56,6 +56,32 @@ class CalibrationStoreTest {
         assertEquals(action.points, store.resolve(profile, action))
     }
 
+    @Test fun unsavedEditsNeverOverrideSavedPointsAndResetSurvivesRestart() {
+        val memory = MemoryPreferences()
+        val store = CalibrationStore(memory.prefs)
+        assertTrue(store.save(profile, action, target))
+        val unsaved = listOf(CalibrationPoint(.8, .9))
+        assertFalse(unsaved == store.resolve(profile, action))
+        assertEquals(target, CalibrationStore(memory.prefs).resolve(profile, action))
+        assertTrue(store.reset(profile, action.id))
+        assertEquals(action.points, CalibrationStore(memory.prefs).resolve(profile, action))
+        assertEquals(2, memory.commits)
+    }
+
+    @Test fun relativeSwipeKeepsIndependentEndpointOffsetsOnFreshRuntimeGeometry() {
+        val memory = MemoryPreferences()
+        val swipe = CalibrationAction("runtime.swipe", "Swipe", listOf(CalibrationPoint(.7, .8), CalibrationPoint(.7, .2)), relative = true)
+        val adjusted = listOf(CalibrationPoint(.75, .85), CalibrationPoint(.65, .3))
+        assertTrue(CalibrationStore(memory.prefs).save(profile, swipe, adjusted))
+        val fresh = swipe.copy(points = listOf(CalibrationPoint(.6, .7), CalibrationPoint(.6, .1)))
+        val actual = CalibrationStore(memory.prefs).resolve(profile, fresh)
+        assertEquals(.65, actual[0].x, .000001)
+        assertEquals(.75, actual[0].y, .000001)
+        assertEquals(.55, actual[1].x, .000001)
+        assertEquals(.2, actual[1].y, .000001)
+        assertEquals(swipe.points, CalibrationStore(memory.prefs).resolve(profile, swipe.copy(id = "runtime.other")))
+    }
+
     @Test fun eachProfileDimensionRotationAndInsetIsIsolated() {
         val store = CalibrationStore(MemoryPreferences().prefs)
         assertTrue(store.save(profile, action, target))

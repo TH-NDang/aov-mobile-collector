@@ -570,6 +570,8 @@ class GameEntry(
 
         fun tap(x: Double, y: Double, then: (Boolean) -> Unit)
 
+        fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = tap(action.points[0].x, action.points[0].y, then)
+
         /** Taps the game's own back arrow at the top left. */
         fun back(then: (Boolean) -> Unit)
 
@@ -893,7 +895,19 @@ class GameEntry(
             )
         }
         lobbySince = -1
-        tap(s, "Sảnh: bấm Tướng", GameScreens.HEROES_X to GameScreens.HEROES_Y, 2500)
+        s.record("Sảnh: bấm Tướng", GameScreens.HEROES_X to GameScreens.HEROES_Y)
+        s.done(null)
+        screen.note("Sảnh: bấm Tướng")
+        screen.say("Sảnh: bấm Tướng…")
+        screen.calibrated(
+            CalibrationAction(
+                "entry.v1.lobby.heroes",
+                "Sảnh: bấm Tướng",
+                listOf(CalibrationPoint(GameScreens.HEROES_X, GameScreens.HEROES_Y))
+            )
+        ) { ok ->
+            if (ok) again(2500) else fail("Không chạm được: Sảnh: bấm Tướng")
+        }
     }
 
     /** The account in play is not the test account: log it out from the lobby's settings, once per entry. */
