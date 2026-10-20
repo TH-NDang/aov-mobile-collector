@@ -67,6 +67,16 @@ jobs:
             adb shell cmd overlay enable --user 0 com.android.internal.systemui.navbar.threebutton
             # UiSmoke enables the service itself once its process is up; enabling it here races the
             # process restart of am instrument and can leave the binding stuck.
+            # Fail quickly on teaching regressions; retain its diagnostics before resetting this CI-only app.
+            adb shell am instrument -w -e teaching_only true vn.ndang.aovcollector.test/vn.ndang.aovcollector.UiSmoke > teaching-smoke-result.txt
+            cat teaching-smoke-result.txt
+            mkdir -p teaching-smoke
+            adb logcat -d -s AndroidRuntime > teaching-smoke/crash-log.txt
+            adb exec-out run-as vn.ndang.aovcollector tar -C files/smoke -cf - . > teaching-smoke.tar
+            tar -xf teaching-smoke.tar -C teaching-smoke
+            grep -q TEACHING_SMOKE_OK teaching-smoke-result.txt
+            # Disposable emulator only: clear focused-test state, then require the original full suite too.
+            adb shell pm clear vn.ndang.aovcollector | grep -q Success
             adb shell am instrument -w vn.ndang.aovcollector.test/vn.ndang.aovcollector.UiSmoke > smoke-result.txt
             cat smoke-result.txt
             mkdir -p ui-smoke
@@ -80,6 +90,8 @@ jobs:
         with:
           name: ui-smoke
           path: |
+            teaching-smoke
+            teaching-smoke-result.txt
             ui-smoke
             smoke-result.txt
 

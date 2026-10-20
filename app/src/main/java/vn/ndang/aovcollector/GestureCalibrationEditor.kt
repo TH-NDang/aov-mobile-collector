@@ -173,15 +173,15 @@ internal class GestureCalibrationEditor(
         fun placePanel(x: Float, y: Float) {
             val maxX = (frame.width - controls.width).coerceAtLeast(0)
             val maxY = (frame.height - controls.height).coerceAtLeast(0)
-            val lp = controls.layoutParams as android.widget.FrameLayout.LayoutParams
-            lp.leftMargin = x.toInt().coerceIn(0, maxX)
-            lp.topMargin = y.toInt().coerceIn(0, maxY)
-            controls.layoutParams = lp
-            panelX = if (maxX > 0) lp.leftMargin.toFloat() / maxX else 0f
-            panelY = if (maxY > 0) lp.topMargin.toFloat() / maxY else 0f
+            // Position must not reduce WRAP_CONTENT's measurement space. A bottom topMargin
+            // constrains the panel to its old height when text grows, leaving its children clipped.
+            controls.translationX = x.toInt().coerceIn(0, maxX).toFloat()
+            controls.translationY = y.toInt().coerceIn(0, maxY).toFloat()
+            panelX = if (maxX > 0) controls.translationX / maxX else 0f
+            panelY = if (maxY > 0) controls.translationY / maxY else 0f
         }
         button(options, "Đổi góc bảng") {
-            placePanel(controls.left.toFloat(), if (controls.top > 0) 0f else frame.height.toFloat())
+            placePanel(controls.x, if (controls.y > 0) 0f else frame.height.toFloat())
         }
         var dragX = 0f
         var dragY = 0f
@@ -193,8 +193,8 @@ internal class GestureCalibrationEditor(
                 MotionEvent.ACTION_DOWN -> {
                     dragX = event.rawX
                     dragY = event.rawY
-                    startX = controls.left.toFloat()
-                    startY = controls.top.toFloat()
+                    startX = controls.x
+                    startY = controls.y
                 }
                 MotionEvent.ACTION_MOVE -> placePanel(startX + event.rawX - dragX, startY + event.rawY - dragY)
                 MotionEvent.ACTION_UP -> dragHandle.performClick()

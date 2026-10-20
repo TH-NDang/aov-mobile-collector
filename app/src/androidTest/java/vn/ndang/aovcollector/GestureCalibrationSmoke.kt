@@ -30,6 +30,12 @@ internal object GestureCalibrationSmoke {
 
         fun click(text: String) = buttons(checkNotNull(editor.view)).single { it.text.toString() == text }.performClick()
 
+        fun screenBounds(view: View): android.graphics.Rect {
+            val origin = IntArray(2)
+            view.getLocationOnScreen(origin)
+            return android.graphics.Rect(origin[0], origin[1], origin[0] + view.width, origin[1] + view.height)
+        }
+
         fun awaitControls() {
             val deadline = SystemClock.uptimeMillis() + 5000
             do {
@@ -37,14 +43,13 @@ internal object GestureCalibrationSmoke {
                 test.runOnMainSync {
                     val root = checkNotNull(editor.view) as ViewGroup
                     val controls = root.getChildAt(1)
+                    val frame = screenBounds(root)
                     fits = !root.isLayoutRequested &&
                         !controls.isLayoutRequested &&
                         controls.width > 0 &&
                         controls.height > 0 &&
-                        controls.left >= 0 &&
-                        controls.top >= 0 &&
-                        controls.right <= root.width &&
-                        controls.bottom <= root.height
+                        frame.contains(screenBounds(controls)) &&
+                        buttons(controls).all { it.width > 0 && it.height > 0 && frame.contains(screenBounds(it)) }
                 }
                 if (fits) return
                 SystemClock.sleep(50)
@@ -87,8 +92,7 @@ internal object GestureCalibrationSmoke {
                 check(tests == 0)
                 val controls = root.getChildAt(1) as ViewGroup
                 val grip = controls.getChildAt(0)
-                val panelBefore = controls.layoutParams as android.widget.FrameLayout.LayoutParams
-                val startTop = panelBefore.topMargin
+                val startTop = controls.y
                 val dragNow = SystemClock.uptimeMillis()
                 for ((kind, py) in listOf(
                     MotionEvent.ACTION_DOWN to 10f,
@@ -99,8 +103,7 @@ internal object GestureCalibrationSmoke {
                     grip.dispatchTouchEvent(event)
                     event.recycle()
                 }
-                val panelAfter = controls.layoutParams as android.widget.FrameLayout.LayoutParams
-                check(panelAfter.topMargin != startTop) { "Floating panel did not move when dragged" }
+                check(controls.y != startTop) { "Floating panel did not move when dragged" }
                 check(tests == 0 && saves == 0) { "Moving panel ran or saved a gesture" }
                 val drawing = root.getChildAt(0)
                 val bounds = service.getSystemService(WindowManager::class.java).currentWindowMetrics.bounds

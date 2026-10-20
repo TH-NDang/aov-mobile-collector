@@ -113,6 +113,11 @@ internal object TeachingDeviceSmoke {
                     val root = service.calibrationView as? ViewGroup ?: return@main false
                     val controls = root.getChildAt(1)
                     val frame = viewBounds(root)
+                    val geometry = "root=$frame layoutRequested=${root.isLayoutRequested}\n" +
+                        "controls=${viewBounds(controls)} layoutRequested=${controls.isLayoutRequested} " +
+                        "translation=(${controls.translationX},${controls.translationY})\n" +
+                        buttons(controls).joinToString("\n") { "${it.text}: ${viewBounds(it)}" }
+                    File(diagnostics, "calibration-device-geometry.txt").writeText(geometry)
                     !root.isLayoutRequested &&
                         !controls.isLayoutRequested &&
                         controls.width > 0 &&
@@ -205,8 +210,18 @@ internal object TeachingDeviceSmoke {
                 service.showPanel()
             }
             begin(listOf(tap, swipe))
+            // Force the bottom edge, regardless of the previous editor's remembered position.
+            if (main(test) { (checkNotNull(service.calibrationView) as ViewGroup).getChildAt(1).y > 0f }) {
+                click("Đổi góc bảng")
+            }
             click("Đổi góc bảng")
             assertControlsWithinEditor()
+            main(test) {
+                val root = checkNotNull(service.calibrationView) as ViewGroup
+                check(abs(viewBounds(root).bottom - viewBounds(root.getChildAt(1)).bottom) <= 1) {
+                    "Title-growth regression did not start with controls at the bottom edge"
+                }
+            }
             assertNavigationOutsideEditor(navigationBounds("home"))
             assertNavigationOutsideEditor(navigationBounds("recent_apps"))
             snapshot("calibration-device-overlay")
@@ -223,6 +238,12 @@ internal object TeachingDeviceSmoke {
             inject(automation, path(pixel(tap.points.single()), pixel(editedTap)))
             click("Lưu")
             assertControlsWithinEditor()
+            main(test) {
+                val root = checkNotNull(service.calibrationView) as ViewGroup
+                check(abs(viewBounds(root).bottom - viewBounds(root.getChildAt(1)).bottom) <= 1) {
+                    "Two-line saved status did not keep bottom controls inside the editor"
+                }
+            }
             val persistedTap = main(test) { store.resolve(checkNotNull(profile), tap).single() }
             check(abs(persistedTap.x - editedTap.x) < .002 && abs(persistedTap.y - editedTap.y) < .002) {
                 "Save did not persist the actual edited tap before Run: $persistedTap"

@@ -23,8 +23,11 @@ import org.json.JSONObject
 
 /** Runs the actual UI and bundled OCR without a game, account or network. */
 class UiSmoke : Instrumentation() {
+    private var teachingOnly = false
+
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
+        teachingOnly = arguments?.getString("teaching_only") == "true"
         start()
     }
 
@@ -41,10 +44,38 @@ class UiSmoke : Instrumentation() {
             fun shell(command: String) {
                 android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).use { it.readBytes() }
             }
+            if (teachingOnly) {
+                // The dedicated CI smoke starts from a fresh disposable app installation.
+                MacroStore.current(targetContext).let { file ->
+                    if (!file.exists()) file.writeText(BuiltInMacros.create("", 1, false))
+                }
+            }
             shell("settings put secure enabled_accessibility_services null")
             SystemClock.sleep(500)
             shell("settings put secure enabled_accessibility_services vn.ndang.aovcollector/vn.ndang.aovcollector.CollectorService")
             shell("settings put secure accessibility_enabled 1")
+            if (teachingOnly) {
+                val activity = startActivitySync(Intent(targetContext, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                runOnMainSync { activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
+                val deadline = SystemClock.uptimeMillis() + 10_000
+                var service: CollectorService? = null
+                while (SystemClock.uptimeMillis() < deadline) {
+                    runOnMainSync { service = CollectorService.current }
+                    if (service != null &&
+                        targetContext.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                    ) {
+                        break
+                    }
+                    SystemClock.sleep(80)
+                }
+                check(service != null) { "Teaching smoke accessibility service did not connect" }
+                check(targetContext.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE)
+                waitForIdleSync()
+                GestureCalibrationSmoke.run(this, service!!, automation)
+                result.putString("stream", "TEACHING_SMOKE_OK: synthetic editor, real input, navigation and safety checks passed\n")
+                finish(Activity.RESULT_OK, result)
+                return
+            }
             val image = Bitmap.createBitmap(2400, 1080, Bitmap.Config.ARGB_8888)
             val canvas = Canvas(image)
             canvas.drawColor(Color.rgb(29, 32, 60))
