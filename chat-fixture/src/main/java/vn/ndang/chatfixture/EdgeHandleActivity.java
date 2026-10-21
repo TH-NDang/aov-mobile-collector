@@ -3,11 +3,16 @@ package vn.ndang.chatfixture;
 import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.Rect;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
 import android.view.MotionEvent;
+import android.view.View;
+import android.view.ViewTreeObserver;
 import android.view.WindowManager;
+import android.view.accessibility.AccessibilityEvent;
+import android.view.accessibility.AccessibilityManager;
 import android.widget.TextView;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -30,6 +35,27 @@ public class EdgeHandleActivity extends Activity {
         handle.setTextColor(Color.WHITE);
         handle.setBackgroundColor(Color.rgb(130, 65, 20));
         handle.setContentDescription("Synthetic foreign edge input receiver");
+        handle.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_YES);
+        handle.setAccessibilityPaneTitle("Synthetic foreign edge input receiver");
+        handle.getViewTreeObserver().addOnGlobalLayoutListener(new ViewTreeObserver.OnGlobalLayoutListener() {
+            @Override public void onGlobalLayout() {
+                if (!handle.isShown() || handle.getWidth() == 0 || handle.getHeight() == 0) return;
+                handle.getViewTreeObserver().removeOnGlobalLayoutListener(this);
+                // Announce this real, visible pane without requesting input or accessibility focus.
+                handle.sendAccessibilityEvent(AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED);
+                Rect bounds = new Rect();
+                handle.getGlobalVisibleRect(bounds);
+                String stateText = "enabled=" + getSystemService(AccessibilityManager.class).isEnabled() +
+                        ",attached=" + handle.isAttachedToWindow() + ",shown=" + handle.isShown() +
+                        ",windowFocus=" + handle.hasWindowFocus() + ",bounds=" + bounds +
+                        ",flags=" + getWindow().getAttributes().flags;
+                try {
+                    Files.write(new File(getFilesDir(), "edge-state.txt").toPath(), stateText.getBytes(StandardCharsets.UTF_8));
+                } catch (Exception exception) {
+                    throw new IllegalStateException(exception);
+                }
+            }
+        });
         handle.setOnTouchListener((view, event) -> {
             if (event.getActionMasked() == MotionEvent.ACTION_UP || event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
                 touches++;

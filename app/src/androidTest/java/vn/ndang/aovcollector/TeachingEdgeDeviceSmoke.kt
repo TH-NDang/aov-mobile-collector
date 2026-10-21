@@ -13,6 +13,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Button
 import java.io.File
@@ -30,8 +31,13 @@ internal object TeachingEdgeDeviceSmoke {
         val component = ComponentName(EDGE_PACKAGE, EDGE_ACTIVITY)
         val fixture = service.packageManager.getActivityInfo(component, PackageManager.GET_META_DATA)
         check(fixture.metaData?.getBoolean(EDGE_MARKER) == true) { "Refusing real input without the identified synthetic edge fixture" }
+        check(service.serviceInfo.eventTypes and AccessibilityEvent.TYPE_WINDOWS_CHANGED != 0) {
+            "Production service must subscribe to passive window changes"
+        }
         val diagnostics = File(service.filesDir, "smoke").apply { mkdirs() }
         val log = File(diagnostics, "calibration-edge-windows.txt").apply { writeText("") }
+        val automationLog = File(diagnostics, "calibration-edge-automation-windows.txt").apply { writeText("") }
+        val commands = File(diagnostics, "calibration-edge-commands.txt").apply { writeText("") }
         val checks = mutableListOf<String>()
         val display = Rect(service.getSystemService(WindowManager::class.java).currentWindowMetrics.bounds)
         var originalFailure: Throwable? = null
@@ -42,21 +48,26 @@ internal object TeachingEdgeDeviceSmoke {
 
         fun edgeCommand(close: Boolean) {
             val result = shell(automation, "am start -W -n $EDGE_PACKAGE/$EDGE_ACTIVITY --ez close $close")
+            commands.appendText("close=$close\n$result\n")
             check("Error" !in result && "Exception" !in result) { "Synthetic edge fixture command failed: $result" }
         }
 
+        fun describe(windows: List<AccessibilityWindowInfo>): List<ForegroundWindow> = windows.map { window ->
+            val bounds = Rect().also(window::getBoundsInScreen)
+            ForegroundWindow(
+                window.root?.packageName?.toString(),
+                window.type == AccessibilityWindowInfo.TYPE_APPLICATION,
+                window.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY,
+                window.isFocused,
+                window.isActive,
+                WindowArea(bounds.left, bounds.top, bounds.right, bounds.bottom)
+            )
+        }
+
         fun windowSnapshot(): List<ForegroundWindow> = main(test) {
-            service.windows.map { window ->
-                val bounds = Rect().also(window::getBoundsInScreen)
-                ForegroundWindow(
-                    window.root?.packageName?.toString(),
-                    window.type == AccessibilityWindowInfo.TYPE_APPLICATION,
-                    window.type == AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY,
-                    window.isFocused,
-                    window.isActive,
-                    WindowArea(bounds.left, bounds.top, bounds.right, bounds.bottom)
-                )
-            }
+            val actual = describe(service.windows)
+            automationLog.appendText(describe(automation.windows).joinToString("\n") + "\n\n")
+            actual
         }
 
         fun begin(action: CalibrationAction) {
@@ -193,6 +204,12 @@ internal object TeachingEdgeDeviceSmoke {
             throw error
         } finally {
             val reportingFailure = runCatching {
+                for (kind in listOf("accessibility", "window windows", "activity activities")) {
+                    File(diagnostics, "calibration-edge-${kind.substringBefore(' ')}.txt")
+                        .writeText(shell(automation, "dumpsys $kind"))
+                }
+                File(diagnostics, "calibration-edge-fixture-state.txt")
+                    .writeText(shell(automation, "run-as $EDGE_PACKAGE cat files/edge-state.txt"))
                 File(diagnostics, "calibration-edge-checks.txt").writeText(checks.joinToString("\n"))
                 File(diagnostics, "calibration-edge-safety.txt").writeText(main(test) { service.calibrationSafetyDiagnostic })
                 File(diagnostics, "calibration-edge-game-events.json").writeText(
@@ -223,8 +240,9 @@ internal object TeachingEdgeDeviceSmoke {
                 }
                 TeachingDeviceSmoke.openFixture(test, service, automation, immersive = false)
                 waitFor("Synthetic game did not restore visible system bars after edge smoke") {
-                    shell(automation, "run-as ${CollectorService.GAME} cat files/immersive-state.txt") ==
-                        "requested=false,statusVisible=true,navigationVisible=true"
+                    val state = shell(automation, "run-as ${CollectorService.GAME} cat files/immersive-state.txt")
+                    File(diagnostics, "calibration-edge-restored-bars.txt").writeText(state)
+                    state == "requested=false,statusVisible=true,navigationVisible=true"
                 }
                 service.startActivity(
                     Intent.makeMainActivity(ComponentName(service, MainActivity::class.java))

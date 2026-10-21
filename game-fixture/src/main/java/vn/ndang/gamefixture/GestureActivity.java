@@ -56,16 +56,18 @@ public class GestureActivity extends Activity {
         });
         setContentView(surface);
         surface.setOnApplyWindowInsetsListener((view, insets) -> {
-            try {
-                String stateText = "requested=" + immersive + ",statusVisible=" + insets.isVisible(WindowInsets.Type.statusBars()) +
-                        ",navigationVisible=" + insets.isVisible(WindowInsets.Type.navigationBars());
-                Files.write(new File(getFilesDir(), "immersive-state.txt").toPath(), stateText.getBytes(StandardCharsets.UTF_8));
-            } catch (Exception exception) {
-                throw new IllegalStateException(exception);
-            }
+            // Content receives consumed insets when the decor fits visible bars. Observe the
+            // actual root state after dispatch instead of treating consumed content as hidden bars.
+            surface.post(this::persistInsets);
             return insets;
         });
+        surface.getViewTreeObserver().addOnGlobalLayoutListener(this::persistInsets);
         load(getIntent());
+    }
+
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (surface != null) surface.post(this::persistInsets);
     }
 
     @Override protected void onNewIntent(Intent intent) {
@@ -98,5 +100,17 @@ public class GestureActivity extends Activity {
         Files.move(temporary.toPath(), new File(getFilesDir(), "gesture-events.json").toPath(),
                 StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
         surface.setText("Synthetic gesture fixture\nNo game, account, or network\nCompleted inputs: " + events.length());
+    }
+
+    private void persistInsets() {
+        WindowInsets insets = getWindow().getDecorView().getRootWindowInsets();
+        if (insets == null) return;
+        try {
+            String stateText = "requested=" + immersive + ",statusVisible=" + insets.isVisible(WindowInsets.Type.statusBars()) +
+                    ",navigationVisible=" + insets.isVisible(WindowInsets.Type.navigationBars());
+            Files.write(new File(getFilesDir(), "immersive-state.txt").toPath(), stateText.getBytes(StandardCharsets.UTF_8));
+        } catch (Exception exception) {
+            throw new IllegalStateException(exception);
+        }
     }
 }
