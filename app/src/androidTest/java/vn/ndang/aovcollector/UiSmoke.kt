@@ -434,6 +434,7 @@ class UiSmoke : Instrumentation() {
             check(GamePhotoSession.hasMark(targetContext, reuseRun, "chuc-phuc-thuong", "Giây phút huy hoàng", setOf(blessingKey)))
             check(reuseDir.walkTopDown().count { GamePhotoImport.isImage(it) } == 1)
             check(GamePhotoImport.scan(targetContext, photoTree).size == 4)
+            NativePhotoReceiptSmoke.run(targetContext, photoTree)
             // Full post-run pipeline: real SAF ZIP/read-back, no ChatGPT before Drive proof,
             // then navigate a separate fixture app's drawer -> dot -> composer -> Send.
             targetContext.contentResolver.takePersistableUriPermission(
@@ -1257,6 +1258,7 @@ class UiSmoke : Instrumentation() {
                 File(dest, "accessibility.txt").writeBytes(it.readBytes())
             }
             check(service != null) { "Accessibility service not connected" }
+            QuickSettingsSmoke.run(this, service!!, automation)
             rankingCaptureSmoke(service!!)
             rankingSelectionSmoke(service!!)
             runOnMainSync {
@@ -2062,7 +2064,7 @@ class UiSmoke : Instrumentation() {
             snap("10-dark-form")
             check(darkForm < 90) { "The dark task form is not dark: mean brightness $darkForm" }
             click("Hủy")
-            // No saved accounts: UID verification remains selectable and turns on game entry.
+            // No saved accounts: mandatory shared UID verification still exposes the existing setup path.
             targetContext.getSharedPreferences("ui", 0).edit().putBoolean("chessOpenGame", false)
                 .putBoolean("chessCheckAccount", false).commit()
             chooserClick()
@@ -2075,18 +2077,16 @@ class UiSmoke : Instrumentation() {
             waitForIdleSync()
             SystemClock.sleep(400)
             click("Cờ Liên Quân · Bách khoa")
-            val verifyText = "Kiểm tra UID · chọn tài khoản khi bấm Chạy"
-            val verify = nodes().flatMap { it.findAccessibilityNodeInfosByText(verifyText) }
-                .firstOrNull { it.text?.toString() == verifyText } ?: error("Missing account verification option")
-            check(verify.isEnabled) { "No saved account still disables verification without a setup path" }
-            verify.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
+            val accountSetup = nodes().flatMap { it.findAccessibilityNodeInfosByText("Quản lý tài khoản") }
+                .firstOrNull { it.text?.toString() == "Quản lý tài khoản" } ?: error("Missing mandatory-account setup path")
+            check(accountSetup.isEnabled) { "Missing saved account hides the setup path" }
+            accountSetup.performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_SHOW_ON_SCREEN.id)
             waitForIdleSync()
             SystemClock.sleep(400)
-            click(verifyText)
             check(
-                nodes().flatMap { it.findAccessibilityNodeInfosByText("Tự mở game tới sảnh trước khi vào Cờ Liên Quân") }
-                    .any { it.isChecked }
-            ) { "Enabling account verification did not enable game entry" }
+                nodes().flatMap { it.findAccessibilityNodeInfosByText("Kiểm tra UID · chọn tài khoản khi bấm Chạy") }
+                    .none { it.isVisibleToUser && it.isEnabled }
+            ) { "Legacy per-task checkbox can still bypass mandatory shared UID verification" }
             snap("11-account-setup-enabled")
             click("Hủy")
             click("Ảnh gốc theo lượt · Chọn Pictures một lần ›")

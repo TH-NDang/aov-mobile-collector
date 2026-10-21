@@ -217,7 +217,8 @@ class GameEntryTest {
         val canLaunch: Boolean = true,
         val uid: String? = null,
         val signs: Boolean = true,
-        val quitting: GameCloser.Result = GameCloser.Result.NOT_RUNNING
+        val quitting: GameCloser.Result = GameCloser.Result.NOT_RUNNING,
+        override val gameInFront: Boolean = false
     ) : GameEntry.Screen {
         var time = 0L
         var next = 0
@@ -301,8 +302,8 @@ class GameEntryTest {
 
         override fun say(text: String) {}
 
-        fun run(toLobby: Boolean = false): GameEntry.Outcome {
-            GameEntry(this, uid, toLobby) { outcome = it }.start()
+        fun run(toLobby: Boolean = false, smartLobby: Boolean = true, preserveScreen: Boolean = false): GameEntry.Outcome {
+            GameEntry(this, uid, toLobby, smartLobby, preserveScreen) { outcome = it }.start()
             var guard = 0
             while (outcome == null) {
                 pending.removeFirstOrNull()?.invoke() ?: error("stuck")
@@ -400,17 +401,92 @@ class GameEntryTest {
         assertEquals(0, game.backs)
     }
 
-    @Test fun endsTheGameLeftRunningBeforeOpeningIt() {
-        // Still in the recent apps, the game would come back wherever it was left: it is ended first, then opened.
+    @Test fun bringsTheGameForwardWithoutForceStoppingIt() {
         val game = Script(listOf(at(GameScreens.Kind.LIST)), quitting = GameCloser.Result.CLOSED)
         assertTrue(game.run() is GameEntry.Outcome.Ready)
-        assertEquals(1, game.quits)
+        assertEquals(0, game.quits)
         assertEquals(1, game.launches)
-        assertTrue(game.notes.first().startsWith("Đã buộc dừng"))
-        // Settings may not show the button: the game is opened as before.
-        val anyway = Script(listOf(at(GameScreens.Kind.LIST)), quitting = GameCloser.Result.NO_BUTTON)
-        assertTrue(anyway.run() is GameEntry.Outcome.Ready)
-        assertEquals(1, anyway.launches)
+    }
+
+    @Test fun verifiedForegroundLobbySkipsLaunchAndPopupWaitButChecksUid() {
+        val game = Script(listOf(at(lobby, uid = "123456789")), uid = "123456789", gameInFront = true)
+        assertTrue(game.run(toLobby = true) is GameEntry.Outcome.Ready)
+        assertEquals(1, game.next)
+        assertEquals(0, game.launches)
+        assertEquals(0, game.quits)
+        assertTrue(game.taps.isEmpty())
+    }
+
+    @Test fun cancelledInitialLookCannotFinishOrTap() {
+        val game = Script(listOf(at(lobby, uid = "123456789")), uid = "123456789", gameInFront = true)
+        var live = true
+        var pending: (() -> Unit)? = null
+        val screen = object : GameEntry.Screen by game {
+            override val alive get() = live
+
+            override fun look(words: Boolean, uid: Boolean, then: (GameEntry.Shot?) -> Unit) {
+                game.look(words, uid) { shot -> pending = { then(shot) } }
+            }
+        }
+        var completed = false
+        GameEntry(screen, "123456789", true) { completed = true }.start()
+        live = false
+        pending!!.invoke()
+        assertTrue(!completed)
+        assertTrue(game.taps.isEmpty())
+        assertEquals(0, game.quits)
+        assertEquals(0, game.launches)
+    }
+
+    @Test fun teachingOnlyReadsConfiguredUidAndNeverSwitchesOrLooksUp() {
+        for (uid in listOf(null, "987654321", "123456789")) {
+            val game = Script(listOf(at(lobby, uid = uid)), uid = "123456789", gameInFront = true)
+            var result: GameEntry.Outcome? = null
+            GameEntry(game, "123456789", true, readOnlyAccount = true) { result = it }.start()
+            assertTrue(if (uid == "123456789") result is GameEntry.Outcome.Ready else result is GameEntry.Outcome.Failed)
+            assertTrue(game.taps.isEmpty())
+            assertEquals(0, game.signIns)
+            assertEquals(0, game.backs)
+        }
+    }
+
+    @Test fun disablingSmartLobbyOnlyRestoresSettlingNotForceStop() {
+        val game = Script(listOf(at(lobby, uid = "123456789")), uid = "123456789", gameInFront = true)
+        assertTrue(game.run(toLobby = true, smartLobby = false) is GameEntry.Outcome.Ready)
+        assertTrue(game.next > 1)
+        assertEquals(0, game.launches)
+        assertEquals(0, game.quits)
+    }
+
+    @Test fun foregroundLobbyCannotPassWithUnreadableOrDifferentUid() {
+        for (uid in listOf(null, "987654321")) {
+            val game = Script(listOf(at(lobby, uid = uid)), uid = "123456789", gameInFront = true)
+            assertTrue(game.run(toLobby = true) is GameEntry.Outcome.Failed)
+            assertEquals(0, game.quits)
+        }
+    }
+
+    @Test fun coordinateResumeNeverNavigatesToProveUid() {
+        for (uid in listOf(null, "987654321")) {
+            val game = Script(listOf(at(GameScreens.Kind.HERO_PAGE, uid = uid)), uid = "123456789", gameInFront = true)
+            assertTrue(game.run(preserveScreen = true) is GameEntry.Outcome.Failed)
+            assertTrue(game.taps.isEmpty())
+            assertEquals(0, game.backs)
+            assertEquals(0, game.launches)
+            assertEquals(0, game.quits)
+        }
+        val good = Script(listOf(at(GameScreens.Kind.HERO_PAGE, uid = "123456789")), uid = "123456789", gameInFront = true)
+        assertTrue(good.run(preserveScreen = true) is GameEntry.Outcome.Ready)
+        assertTrue(good.taps.isEmpty())
+    }
+
+    @Test fun coordinateResumeRejectsUnknownOrBackgroundScreen() {
+        val unknown = Script(listOf(at(other, uid = "123456789")), uid = "123456789", gameInFront = true)
+        assertTrue(unknown.run(preserveScreen = true) is GameEntry.Outcome.Failed)
+        val background = Script(listOf(at(lobby, uid = "123456789")), uid = "123456789")
+        assertTrue(background.run(preserveScreen = true) is GameEntry.Outcome.Failed)
+        assertEquals(0, background.next)
+        assertEquals(0, background.launches)
     }
 
     @Test fun lobbyToListHasStableCalibrationIdentityButLobbyEntryDoesNotTapIt() {
@@ -570,11 +646,14 @@ class GameEntryTest {
                 ),
                 form, at(GameScreens.Kind.OTHER, look = 60), at(lobby, uid = test), at(lobby, uid = test), at(listed)
             ),
-            uid = test
+            uid = test,
+            gameInFront = true
         )
         assertTrue(game.run() is GameEntry.Outcome.Ready)
         assertEquals(listOf(GameScreens.SETTINGS_X to GameScreens.SETTINGS_Y, .12 to .86, .6 to .7, garena, heroes), game.taps)
         assertEquals(1, game.signIns)
+        assertEquals(0, game.launches)
+        assertEquals(0, game.quits)
         // The Garena page is recorded without its screenshot: it shows the account typed in.
         assertTrue(game.recorded.toString(), game.recorded.any { !it.startsWith("+") && it.contains("Garena") })
     }

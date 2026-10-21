@@ -833,6 +833,7 @@ class CollectorService : AccessibilityService() {
     }
 
     private var compact = false
+    private var quickSettingsOpen = false
     private var panelParams: WindowManager.LayoutParams? = null
     private var taskLabel: TextView? = null
     private var taskDetail: TextView? = null
@@ -865,6 +866,7 @@ class CollectorService : AccessibilityService() {
     }
 
     fun showPanel() {
+        quickSettingsOpen = false
         if (panel != null) {
             compact = false
             rebuildPanel()
@@ -982,7 +984,8 @@ class CollectorService : AccessibilityService() {
             }
         }.apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(12), dp(10), dp(12), dp(10))
+            val padding = if (compact && !quickSettingsOpen) dp(8) else dp(12)
+            setPadding(padding, dp(10), padding, dp(10))
             background =
                 Ui.shape(Color.argb(232, 20, 24, 42), dp(20), Color.argb(70, 230, 230, 255))
         }
@@ -994,15 +997,26 @@ class CollectorService : AccessibilityService() {
             x = dp(8)
             y = dp(60)
         }
-        params.width = dp(if (compact) 64 else 278)
+        // Both toolbar and quick settings leave Android Home/Recents and outside touches available.
+        params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+        val metrics = wm.currentWindowMetrics
+        val bounds = metrics.bounds
+        val insets = metrics.windowInsets.getInsetsIgnoringVisibility(
+            WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
+        )
+        val availableWidth = maxOf(1, bounds.width() - insets.left - insets.right)
+        val availableHeight = maxOf(1, bounds.height() - insets.top - insets.bottom)
+        params.width = minOf(dp(if (compact && !quickSettingsOpen) 152 else 278), availableWidth)
         params.height = WindowManager.LayoutParams.WRAP_CONTENT
-        val bounds = wm.currentWindowMetrics.bounds
-        params.x = params.x.coerceIn(0, maxOf(0, bounds.width() - params.width))
+        params.x = params.x.coerceIn(0, maxOf(0, availableWidth - params.width))
         params.y =
             params.y.coerceIn(0, maxOf(0, bounds.height() - dp(if (compact) 60 else 260)))
         panelParams = params
 
         fun drag(v: View, onTap: (() -> Unit)? = null) {
+            // Accessibility clicks take the same path as a non-drag touch.
+            if (onTap != null) v.setOnClickListener { onTap() }
             var x = 0f
             var y = 0f
             var sx = 0
@@ -1020,15 +1034,14 @@ class CollectorService : AccessibilityService() {
                     }
                     MotionEvent.ACTION_MOVE -> {
                         if (kotlin.math.abs(e.rawX - x) + kotlin.math.abs(e.rawY - y) > dp(6)) moved = true
-                        params.x = (sx + (e.rawX - x).toInt()).coerceIn(0, maxOf(0, bounds.width() - params.width))
-                        params.y = (sy + (e.rawY - y).toInt()).coerceIn(0, maxOf(0, bounds.height() - layout.height))
+                        params.x = (sx + (e.rawX - x).toInt()).coerceIn(0, maxOf(0, availableWidth - params.width))
+                        params.y = (sy + (e.rawY - y).toInt()).coerceIn(0, maxOf(0, availableHeight - layout.height))
                         if (layout.isAttachedToWindow) wm.updateViewLayout(layout, params)
                         true
                     }
                     MotionEvent.ACTION_UP -> {
                         if (!moved) {
                             v.performClick()
-                            onTap?.invoke()
                         }
                         true
                     }
@@ -1036,7 +1049,68 @@ class CollectorService : AccessibilityService() {
                 }
             }
         }
-        if (compact) {
+
+        fun settingsButton(): Button = Ui.button(this, "Cài đặt") {
+            if (panel !== layout || !layout.isAttachedToWindow) return@button
+            quickSettingsOpen = !quickSettingsOpen
+            rebuildPanel()
+        }.apply {
+            panelButtonIcon(this, R.drawable.ic_panel_settings, "Cài đặt")
+            contentDescription = "Mở cài đặt nhanh"
+            setTextColor(Color.WHITE)
+            background = Ui.shape(Color.rgb(47, 52, 74), dp(10))
+        }
+        if (quickSettingsOpen) {
+            val title = Ui.text(this, "CÀI ĐẶT · KÉO ĐỂ DI CHUYỂN", 10f, Color.WHITE, true).apply {
+                gravity = Gravity.CENTER_VERTICAL
+                contentDescription = "Kéo để di chuyển cài đặt nhanh"
+            }
+            layout.addView(title, LinearLayout.LayoutParams(-1, dp(36)))
+            drag(title)
+            val editable = FloatingQuickSettings.entryEditable(isWorking, canStop(), teaching, libraryBusy)
+            val settings = FloatingQuickSettings.create(
+                themed(),
+                uiPrefs.getBoolean("smartGameEntry", true),
+                uiPrefs.getBoolean(GestureDebugOverlay.PREFERENCE, false),
+                editable,
+                "UID luôn được kiểm tra theo tài khoản đã cấu hình; không thể tắt tại đây.",
+                onSmartLobby = smart@{ enabled ->
+                    if (panel !== layout || !layout.isAttachedToWindow) return@smart
+                    if (FloatingQuickSettings.entryEditable(isWorking, canStop(), teaching, libraryBusy)) {
+                        uiPrefs.edit().putBoolean("smartGameEntry", enabled).apply()
+                    } else {
+                        status("Dừng hoặc hoàn tất lượt trước khi đổi cách vào game")
+                        rebuildPanel()
+                    }
+                },
+                onGestureDebug = debug@{ enabled ->
+                    if (panel !== layout || !layout.isAttachedToWindow) return@debug
+                    uiPrefs.edit().putBoolean(GestureDebugOverlay.PREFERENCE, enabled).apply()
+                    updateGestureDebug()
+                },
+                onManageAccounts = accounts@{
+                    if (panel !== layout || !layout.isAttachedToWindow) return@accounts
+                    if (FloatingQuickSettings.entryEditable(isWorking, canStop(), teaching, libraryBusy)) {
+                        pause("Tạm dừng để quản lý tài khoản")
+                        quickSettingsOpen = false
+                        manageAccounts()
+                    } else {
+                        status("Dừng hoặc hoàn tất lượt trước khi quản lý tài khoản")
+                        rebuildPanel()
+                    }
+                },
+                onClose = close@{
+                    if (panel !== layout || !layout.isAttachedToWindow) return@close
+                    quickSettingsOpen = false
+                    rebuildPanel()
+                }
+            )
+            // A scrollable card inside this existing window, not a full-display dialog/scrim.
+            val settingsHeight = minOf(dp(330), maxOf(1, availableHeight - dp(76)))
+            layout.addView(settings, LinearLayout.LayoutParams(-1, settingsHeight))
+            params.y = params.y.coerceIn(0, maxOf(0, availableHeight - settingsHeight - dp(56)))
+        } else if (compact) {
+            val toolbar = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
             bubble =
                 Ui.text(this, "AOV", 12f, Color.WHITE, true).apply {
                     gravity = Gravity.CENTER
@@ -1044,7 +1118,9 @@ class CollectorService : AccessibilityService() {
                     contentDescription =
                         "Mở bảng điều khiển thu thập"
                 }
-            layout.addView(bubble)
+            toolbar.addView(bubble, LinearLayout.LayoutParams(0, dp(48), 1f))
+            toolbar.addView(settingsButton(), LinearLayout.LayoutParams(dp(76), dp(48)))
+            layout.addView(toolbar)
             drag(bubble!!) {
                 compact = false
                 rebuildPanel()
@@ -1173,7 +1249,14 @@ class CollectorService : AccessibilityService() {
                 hidePanel()
             }
             layout.addView(footer)
-            layout.addView(Ui.button(this, "Chỉnh từng bước") { showCalibration() })
+            // Share the existing teaching row instead of making landscape controls one row taller.
+            val tools = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+            tools.addView(settingsButton(), LinearLayout.LayoutParams(dp(80), dp(48)))
+            tools.addView(
+                Ui.button(this, "Chỉnh từng bước") { showCalibration() },
+                LinearLayout.LayoutParams(0, dp(48), 1f).apply { leftMargin = dp(6) }
+            )
+            layout.addView(tools)
         }
         if (shielded || calibrationEditor != null) layout.visibility = View.INVISIBLE
         try {
@@ -1189,7 +1272,7 @@ class CollectorService : AccessibilityService() {
             if (panel === layout &&
                 layout.isAttachedToWindow
             ) {
-                val maxY = maxOf(0, wm.currentWindowMetrics.bounds.height() - layout.height)
+                val maxY = maxOf(0, availableHeight - layout.height)
                 if (params.y >
                     maxY
                 ) {
@@ -1290,7 +1373,7 @@ class CollectorService : AccessibilityService() {
                 Accounts.problem(this) ?: if (all.isEmpty()) {
                     "Chưa có tài khoản. Thêm tài khoản bên dưới; khi bấm Chạy, app sẽ cho chọn tài khoản cần kiểm tra."
                 } else {
-                    "Đã lưu ${all.size} tài khoản. Kiểm tra UID sẽ bật Tự mở game và cho chọn tài khoản khi bắt đầu lượt."
+                    "Đã lưu ${all.size} tài khoản. Mọi tác vụ đều kiểm tra UID tài khoản đã chọn trước khi chạy hoặc tiếp tục; chỉnh vào game tại Cài đặt trên bảng nổi."
                 },
                 12f,
                 Ui.muted
@@ -1550,6 +1633,11 @@ class CollectorService : AccessibilityService() {
                 "openGame"
             )
         val checkAccount = option("Kiểm tra UID · chọn tài khoản khi bấm Chạy", "checkAccount")
+        // Entry and account verification are common policy, not per-task bypass switches.
+        openGame.isChecked = true
+        openGame.visibility = View.GONE
+        checkAccount.isChecked = true
+        checkAccount.visibility = View.GONE
         accountHelp(c, body)
         val traceEntry = CheckBox(c).apply {
             text = "Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)"
@@ -1854,10 +1942,15 @@ class CollectorService : AccessibilityService() {
         body.addView(Ui.section(c, "Vào game"))
         val openGame =
             option(
-                "Tự mở game và vào sảnh: đóng game còn chạy, đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện",
+                "Tự vào sảnh an toàn, kiểm tra UID và chỉ xử lý popup đang hiện",
                 "rankOpenGame"
             )
         val checkAccount = option("Kiểm tra UID · chọn tài khoản khi bấm Chạy", "checkAccount")
+        // Entry and account verification are common policy, not per-task bypass switches.
+        openGame.isChecked = true
+        openGame.visibility = View.GONE
+        checkAccount.isChecked = true
+        checkAccount.visibility = View.GONE
         accountHelp(c, body)
         val traceEntry = option("Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)", "traceEntry", true)
 
@@ -1982,10 +2075,15 @@ class CollectorService : AccessibilityService() {
         body.addView(Ui.section(c, "Vào game"))
         val openGame =
             check(
-                "Tự mở game và vào sảnh: đóng game còn chạy, đăng nhập Garena, bỏ qua màn quà và form đăng ký, đóng popup sự kiện",
+                "Tự vào sảnh an toàn, kiểm tra UID và chỉ xử lý popup đang hiện",
                 uiPrefs.getBoolean("boardOpenGame", false)
             )
         val checkAccount = check("Kiểm tra UID · chọn tài khoản khi bấm Chạy", uiPrefs.getBoolean("checkAccount", false))
+        // Entry and account verification are common policy, not per-task bypass switches.
+        openGame.isChecked = true
+        openGame.visibility = View.GONE
+        checkAccount.isChecked = true
+        checkAccount.visibility = View.GONE
         accountHelp(c, body)
         val traceEntry = check("Lưu ảnh từng bước vào game để xem lại (menu ⋮ của lượt)", uiPrefs.getBoolean("traceEntry", true))
 
@@ -2208,6 +2306,11 @@ class CollectorService : AccessibilityService() {
             uiPrefs.getBoolean("chessOpenGame", true)
         )
         val checkAccount = check("Kiểm tra UID · chọn tài khoản khi bấm Chạy", uiPrefs.getBoolean("chessCheckAccount", false))
+        // Entry and account verification are common policy, not per-task bypass switches.
+        openGame.isChecked = true
+        openGame.visibility = View.GONE
+        checkAccount.isChecked = true
+        checkAccount.visibility = View.GONE
         accountHelp(c, body)
         val trace = check("Lưu ảnh các bước đăng nhập / vào sảnh", uiPrefs.getBoolean("chessTraceEntry", true))
 
@@ -2221,7 +2324,7 @@ class CollectorService : AccessibilityService() {
         body.addView(
             Ui.text(
                 c,
-                "Nếu bỏ Tự mở game, hãy mở sẵn sảnh Cờ Liên Quân hoặc Bách khoa trước khi bấm Chạy. " +
+                "Luồng vào game chung xác minh UID rồi tự vào sảnh; không buộc dừng game đang mở. " +
                     "Lần đầu nên thử Quân cờ → Tất cả quân cờ với 1 mục trước khi chọn toàn bộ. " +
                     "Mọi ảnh nằm trong các thư mục mục bên trái / tab bên phải / từng đối tượng. Khi trang không cuộn thêm, app chuyển sang mục tiếp theo.",
                 12f,
@@ -2467,6 +2570,8 @@ class CollectorService : AccessibilityService() {
 
                                         override fun skillIcons() = ChessWiki.skillTiles(b)
 
+                                        override fun nativeIconSignature(x: Double, y: Double) = NativePhotoReceipt.signature(b, x, y)
+
                                         override fun keep(name: String, then: (Boolean) -> Unit) {
                                             readerStore(b, adapterRun, dryRun, alive, stamp + "-" + name, then)
                                         }
@@ -2554,16 +2659,20 @@ class CollectorService : AccessibilityService() {
                 y: Double,
                 preserveDetail: Boolean,
                 aliases: Set<String>,
+                reference: NativeSaveEvidence.Reference?,
                 then: (NativeResult) -> Unit
             ) {
                 if (!alive()) return
                 if (dryRun) return then(NativeResult.SAVED) // No native Save Photo or gallery writes while teaching.
                 val saveRunId = runId
                 val earlyReady = NativeSaveReadiness.enabled(group, preserveDetail, options.fast)
+                val receiptEnabled = group == "chieu-quan-co" && preserveDetail && reference != null
+                var nativeAttempt: GamePhotoSession.Attempt? = null
+                var recoveredAbsent = false
 
                 fun currentRun() = alive() && runId == saveRunId
 
-                fun startNativeSave() {
+                fun startNativeSave(recovered: Boolean = false) {
                     if (!currentRun()) return
                     val point = Path().apply {
                         val b = screen()
@@ -2575,8 +2684,11 @@ class CollectorService : AccessibilityService() {
                     val transaction = captureShield.acquire()
                     var ended = false
                     var timeout: Runnable? = null
+                    var resolving = false
+                    var lastScene = NativeSaveEvidence.Scene.UNKNOWN
+                    var lastReferenceUnchanged = false
 
-                    fun complete(result: NativeResult, reason: String? = null) {
+                    fun finishNative(result: NativeResult, reason: String? = null) {
                         if (ended) return
                         if (result == NativeResult.FAILED && reason != null) note("Native Save Photo failed: $reason")
                         ended = true
@@ -2590,7 +2702,7 @@ class CollectorService : AccessibilityService() {
                     fun active(): Boolean {
                         if (ended) return false
                         if (!currentRun() || !captureShield.contains(transaction)) {
-                            complete(NativeResult.FAILED)
+                            finishNative(NativeResult.FAILED)
                             return false
                         }
                         return true
@@ -2599,7 +2711,7 @@ class CollectorService : AccessibilityService() {
                     timeout = Runnable {
                         if (active()) {
                             pause("Lưu ảnh gốc quá 15 giây. Kiểm tra Save Photo rồi bấm Tiếp tục.")
-                            complete(NativeResult.FAILED, "transaction timed out after 15 seconds")
+                            finishNative(NativeResult.FAILED, "transaction timed out after 15 seconds")
                         }
                     }
                     handler.postDelayed(timeout!!, 15_000L)
@@ -2620,12 +2732,16 @@ class CollectorService : AccessibilityService() {
                                 return@grab
                             }
                             if (image == null) return@grab done(null)
+                            var referenceUnchanged = false
                             try {
                                 io.execute {
                                     val evidence = try {
                                         val words = GameText.words(image)
                                         val plain = GameScreens.plain(words.joinToString(" ") { it.text })
                                         val modal = ChessWiki.modal(image)
+                                        referenceUnchanged = reference?.let {
+                                            !ChessWiki.changed(it.detailSignature, ChessWiki.signature(image, true))
+                                        } ?: false
                                         var detailVerified = false
                                         if (modal && !NativeSaveEvidence.hasPromptText(plain)) {
                                             val expected = item.substringBefore("-skill-")
@@ -2637,8 +2753,13 @@ class CollectorService : AccessibilityService() {
                                                     )
                                             if (preserveDetail && !detailVerified) {
                                                 val precise = GameText.chessHeroTitle(image)
-                                                detailVerified = precise != null &&
-                                                    ChessWiki.safeName(precise) == ChessWiki.safeName(expected)
+                                                val visibleTitle = precise ?: title
+                                                detailVerified = NativeSaveEvidence.preservedDetail(
+                                                    expected,
+                                                    visibleTitle,
+                                                    reference?.detailSignature,
+                                                    ChessWiki.signature(image, true)
+                                                )
                                             }
                                         }
                                         words to NativeSaveEvidence.scene(plain, modal, detailVerified)
@@ -2649,7 +2770,11 @@ class CollectorService : AccessibilityService() {
                                         image.recycle()
                                     }
                                     handler.post {
-                                        if (active()) done(evidence)
+                                        if (active()) {
+                                            lastScene = evidence?.second ?: NativeSaveEvidence.Scene.UNKNOWN
+                                            lastReferenceUnchanged = referenceUnchanged
+                                            done(evidence)
+                                        }
                                     }
                                 }
                             } catch (e: Exception) {
@@ -2657,6 +2782,77 @@ class CollectorService : AccessibilityService() {
                                 done(null)
                             }
                         }
+                    }
+
+                    fun complete(result: NativeResult, reason: String? = null) {
+                        val attempt = nativeAttempt
+                        if (attempt == null) return finishNative(result, reason)
+                        if (!active() || resolving) return
+                        resolving = true
+
+                        // Storage evidence is independent of OCR. Never repeat a gesture to obtain it.
+                        fun reconcile(remaining: Int) {
+                            if (!active()) return
+                            try {
+                                io.execute {
+                                    val receipt = try {
+                                        GamePhotoSession.reconcileAttempt(this@CollectorService, saveRunId, attempt.id)
+                                    } catch (e: Exception) {
+                                        CrashLog.record(this@CollectorService, "Không đối chiếu được ảnh gốc", e)
+                                        null
+                                    }
+                                    handler.post {
+                                        if (!active()) return@post
+                                        if (receipt?.status == GamePhotoSession.ReceiptStatus.RECEIPT) {
+                                            GamePhotoSync.request(this@CollectorService)
+                                            note("Đã xác minh ảnh gốc trong Pictures: " + item + "; không tải lại.")
+                                            // A saved file does not authorize gestures on an unknown screen.
+                                            readPrompt { evidence ->
+                                                finishNative(
+                                                    if (evidence?.second ==
+                                                        NativeSaveEvidence.Scene.DETAIL
+                                                    ) {
+                                                        NativeResult.SAVED
+                                                    } else {
+                                                        NativeResult.FAILED
+                                                    },
+                                                    "image saved; current detail screen not verified"
+                                                )
+                                            }
+                                        } else if (remaining > 0) {
+                                            later(600L) { reconcile(remaining - 1) }
+                                        } else if (result == NativeResult.ABSENT &&
+                                            lastScene == NativeSaveEvidence.Scene.DETAIL &&
+                                            receipt?.absenceSafe == true
+                                        ) {
+                                            try {
+                                                io.execute {
+                                                    val closed = try {
+                                                        GamePhotoSession.finishAttempt(this@CollectorService, saveRunId, attempt.id, false)
+                                                        true
+                                                    } catch (_: Exception) {
+                                                        false
+                                                    }
+                                                    handler.post {
+                                                        if (active()) finishNative(if (closed) result else NativeResult.FAILED, reason)
+                                                    }
+                                                }
+                                            } catch (_: Exception) {
+                                                finishNative(NativeResult.FAILED, reason)
+                                            }
+                                        } else {
+                                            finishNative(
+                                                NativeResult.FAILED,
+                                                reason ?: "no verified Pictures receipt; will reconcile before retry"
+                                            )
+                                        }
+                                    }
+                                }
+                            } catch (_: Exception) {
+                                finishNative(NativeResult.FAILED, reason)
+                            }
+                        }
+                        reconcile(2)
                     }
 
                     fun settledPrompt(
@@ -2689,90 +2885,104 @@ class CollectorService : AccessibilityService() {
                             }
                         }
                     }
-                    touchGame(hold, false) { pushed ->
-                        if (!active()) return@touchGame
-                        if (!pushed) return@touchGame complete(NativeResult.FAILED, "long-press rejected")
-                        settledPrompt("after long-press", 1000, {
-                            ChessWiki.nativeConfirm(it.first) != null || preserveDetail && it.second == NativeSaveEvidence.Scene.DETAIL
-                        }) { words, scene ->
-                            val answer = ChessWiki.nativeConfirm(words)
-                            val cancel = ChessWiki.nativeCancel(words)
-                            if (answer == null) {
-                                when {
-                                    cancel != null -> {
-                                        note("Save Photo thiếu nút Sure: bấm CANCEL, không tải nhầm.")
-                                        tapNative(cancel.first, cancel.second) { complete(NativeResult.FAILED) }
-                                    }
-                                    scene == NativeSaveEvidence.Scene.DETAIL && preserveDetail ->
-                                        complete(NativeResult.ABSENT)
-                                    scene == NativeSaveEvidence.Scene.DETAIL -> {
-                                        // This portrait long-press opened a detail drawer instead of Save Photo.
-                                        // Do not call it absent until the close is verified on a fresh page scan.
-                                        tapNative(.902, .082) { closed ->
-                                            if (!closed) {
-                                                complete(NativeResult.FAILED)
-                                            } else {
-                                                later(timing.close) {
-                                                    readPrompt { evidence ->
-                                                        complete(
-                                                            if (evidence?.second == NativeSaveEvidence.Scene.PAGE) {
-                                                                NativeResult.ABSENT
-                                                            } else {
-                                                                NativeResult.FAILED
-                                                            }
-                                                        )
-                                                    }
-                                                }
-                                            }
+
+                    fun holdIcon() {
+                        touchGame(hold, false) { pushed ->
+                            if (!active()) return@touchGame
+                            if (!pushed) return@touchGame complete(NativeResult.FAILED, "long-press rejected")
+                            settledPrompt("after long-press", 1000, {
+                                ChessWiki.nativeConfirm(it.first) != null || preserveDetail && it.second == NativeSaveEvidence.Scene.DETAIL
+                            }) { words, scene ->
+                                val answer = ChessWiki.nativeConfirm(words)
+                                val cancel = ChessWiki.nativeCancel(words)
+                                if (answer == null) {
+                                    when {
+                                        cancel != null -> {
+                                            note("Save Photo thiếu nút Sure: bấm CANCEL, không tải nhầm.")
+                                            tapNative(cancel.first, cancel.second) { complete(NativeResult.FAILED) }
                                         }
-                                    }
-                                    scene == NativeSaveEvidence.Scene.PAGE && !preserveDetail ->
-                                        complete(NativeResult.ABSENT)
-                                    else -> complete(NativeResult.FAILED, "after long-press: scene=$scene, no verified Sure")
-                                }
-                            } else {
-                                tapNative(answer.first, answer.second) { pressed ->
-                                    if (!pressed) return@tapNative complete(NativeResult.FAILED, "Sure tap rejected")
-                                    settledPrompt("after Sure", 1150, {
-                                        it.second == if (preserveDetail) NativeSaveEvidence.Scene.DETAIL else NativeSaveEvidence.Scene.PAGE
-                                    }) { confirmWords, afterSave ->
-                                        if (afterSave == NativeSaveEvidence.Scene.PROMPT) {
-                                            val cancelPrompt = ChessWiki.nativeCancel(confirmWords)
-                                            if (cancelPrompt != null) {
-                                                note("Save Photo vẫn mở sau Sure; đóng CANCEL và bỏ qua.")
-                                                tapNative(cancelPrompt.first, cancelPrompt.second) { complete(NativeResult.FAILED) }
-                                            } else {
-                                                complete(NativeResult.FAILED)
-                                            }
-                                        } else if (afterSave == NativeSaveEvidence.Scene.UNKNOWN ||
-                                            (preserveDetail && afterSave != NativeSaveEvidence.Scene.DETAIL)
-                                        ) {
-                                            complete(
-                                                NativeResult.FAILED,
-                                                "after Sure: expected preserved detail=$preserveDetail, scene=$afterSave"
-                                            )
-                                        } else {
-                                            try {
-                                                io.execute {
-                                                    val marked = try {
-                                                        GamePhotoSession.mark(this@CollectorService, saveRunId, group, item, aliases)
-                                                        GamePhotoSync.request(this@CollectorService)
-                                                        true
-                                                    } catch (e: Throwable) {
-                                                        CrashLog.record(this@CollectorService, "Không ghi được ảnh gốc đã lưu", e)
-                                                        false
-                                                    }
-                                                    handler.post {
-                                                        if (active()) {
+                                        scene == NativeSaveEvidence.Scene.DETAIL && preserveDetail ->
+                                            complete(NativeResult.ABSENT)
+                                        scene == NativeSaveEvidence.Scene.DETAIL -> {
+                                            // This portrait long-press opened a detail drawer instead of Save Photo.
+                                            // Do not call it absent until the close is verified on a fresh page scan.
+                                            tapNative(.902, .082) { closed ->
+                                                if (!closed) {
+                                                    complete(NativeResult.FAILED)
+                                                } else {
+                                                    later(timing.close) {
+                                                        readPrompt { evidence ->
                                                             complete(
-                                                                if (marked) NativeResult.SAVED else NativeResult.FAILED,
-                                                                "save mark write failed"
+                                                                if (evidence?.second == NativeSaveEvidence.Scene.PAGE) {
+                                                                    NativeResult.ABSENT
+                                                                } else {
+                                                                    NativeResult.FAILED
+                                                                }
                                                             )
                                                         }
                                                     }
                                                 }
-                                            } catch (e: Exception) {
-                                                complete(NativeResult.FAILED)
+                                            }
+                                        }
+                                        scene == NativeSaveEvidence.Scene.PAGE && !preserveDetail ->
+                                            complete(NativeResult.ABSENT)
+                                        else -> complete(NativeResult.FAILED, "after long-press: scene=$scene, no verified Sure")
+                                    }
+                                } else {
+                                    tapNative(answer.first, answer.second) { pressed ->
+                                        if (!pressed) return@tapNative complete(NativeResult.FAILED, "Sure tap rejected")
+                                        settledPrompt("after Sure", 1150, {
+                                            it.second ==
+                                                if (preserveDetail) NativeSaveEvidence.Scene.DETAIL else NativeSaveEvidence.Scene.PAGE
+                                        }) { confirmWords, afterSave ->
+                                            if (afterSave == NativeSaveEvidence.Scene.PROMPT) {
+                                                val cancelPrompt = ChessWiki.nativeCancel(confirmWords)
+                                                if (cancelPrompt != null) {
+                                                    note("Save Photo vẫn mở sau Sure; đóng CANCEL và bỏ qua.")
+                                                    tapNative(cancelPrompt.first, cancelPrompt.second) { complete(NativeResult.FAILED) }
+                                                } else {
+                                                    complete(NativeResult.FAILED)
+                                                }
+                                            } else if (afterSave == NativeSaveEvidence.Scene.UNKNOWN ||
+                                                (preserveDetail && afterSave != NativeSaveEvidence.Scene.DETAIL)
+                                            ) {
+                                                complete(
+                                                    NativeResult.FAILED,
+                                                    "after Sure: expected preserved detail=$preserveDetail, scene=$afterSave"
+                                                )
+                                            } else {
+                                                try {
+                                                    io.execute {
+                                                        val marked = try {
+                                                            val attempt = nativeAttempt
+                                                            if (attempt == null) {
+                                                                GamePhotoSession.mark(
+                                                                    this@CollectorService,
+                                                                    saveRunId,
+                                                                    group,
+                                                                    item,
+                                                                    aliases
+                                                                )
+                                                                GamePhotoSync.request(this@CollectorService)
+                                                            }
+                                                            // Skill success is committed by exact receipt reconciliation below.
+                                                            true
+                                                        } catch (e: Throwable) {
+                                                            CrashLog.record(this@CollectorService, "Không ghi được ảnh gốc đã lưu", e)
+                                                            false
+                                                        }
+                                                        handler.post {
+                                                            if (active()) {
+                                                                complete(
+                                                                    if (marked) NativeResult.SAVED else NativeResult.FAILED,
+                                                                    "save mark write failed"
+                                                                )
+                                                            }
+                                                        }
+                                                    }
+                                                } catch (e: Exception) {
+                                                    complete(NativeResult.FAILED)
+                                                }
                                             }
                                         }
                                     }
@@ -2780,13 +2990,87 @@ class CollectorService : AccessibilityService() {
                             }
                         }
                     }
+                    if (receiptEnabled) {
+                        readPrompt { evidence ->
+                            if (evidence?.second == NativeSaveEvidence.Scene.DETAIL && (recovered || lastReferenceUnchanged)) {
+                                if (recovered) {
+                                    GamePhotoSync.request(this@CollectorService)
+                                    finishNative(if (recoveredAbsent) NativeResult.ABSENT else NativeResult.SAVED)
+                                } else {
+                                    val attempt = nativeAttempt
+                                    try {
+                                        io.execute {
+                                            val armed = try {
+                                                if (attempt !=
+                                                    null
+                                                ) {
+                                                    GamePhotoSession.startAttempt(this@CollectorService, saveRunId, attempt.id)
+                                                }
+                                                true
+                                            } catch (_: Exception) {
+                                                false
+                                            }
+                                            handler.post {
+                                                if (active()) {
+                                                    if (armed) {
+                                                        holdIcon()
+                                                    } else {
+                                                        finishNative(
+                                                            NativeResult.FAILED,
+                                                            "attempt journal write failed"
+                                                        )
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    } catch (_: Exception) {
+                                        finishNative(NativeResult.FAILED, "attempt dispatch unavailable")
+                                    }
+                                }
+                            } else {
+                                finishNative(NativeResult.FAILED, "before long-press: expected detail not verified")
+                            }
+                        }
+                    } else {
+                        holdIcon()
+                    }
                 }
                 // importNew can hold GamePhotoSession's lock while copying Pictures. Never wait
                 // for that lock on the UI thread, and keep Stop/Pause visible during this lookup.
                 try {
                     io.execute {
                         val saved = try {
-                            GamePhotoSession.hasMark(this@CollectorService, saveRunId, group, item, aliases)
+                            if (GamePhotoSession.hasMark(this@CollectorService, saveRunId, group, item, aliases)) {
+                                true
+                            } else if (receiptEnabled) {
+                                val attempt = GamePhotoSession.prepareAttempt(
+                                    this@CollectorService,
+                                    saveRunId,
+                                    group,
+                                    item,
+                                    aliases,
+                                    reference?.iconSignature
+                                )
+                                nativeAttempt = attempt
+                                when (attempt.status) {
+                                    GamePhotoSession.ReceiptStatus.NONE -> false
+                                    GamePhotoSession.ReceiptStatus.RECEIPT -> if (attempt.matchesRequested) true else null
+                                    GamePhotoSession.ReceiptStatus.UNCERTAIN, GamePhotoSession.ReceiptStatus.ABSENT -> {
+                                        val receipt = GamePhotoSession.reconcileAttempt(this@CollectorService, saveRunId, attempt.id)
+                                        when {
+                                            !attempt.matchesRequested -> null
+                                            receipt.status == GamePhotoSession.ReceiptStatus.RECEIPT -> true
+                                            receipt.status == GamePhotoSession.ReceiptStatus.ABSENT -> {
+                                                recoveredAbsent = true
+                                                true
+                                            }
+                                            else -> null
+                                        }
+                                    }
+                                }
+                            } else {
+                                false
+                            }
                         } catch (
                             e: Exception
                         ) {
@@ -2796,9 +3080,12 @@ class CollectorService : AccessibilityService() {
                         handler.post {
                             if (!currentRun()) return@post
                             when (saved) {
-                                true -> then(NativeResult.SAVED)
+                                true -> if (receiptEnabled) startNativeSave(recovered = true) else then(NativeResult.SAVED)
                                 false -> startNativeSave()
-                                null -> then(NativeResult.FAILED)
+                                null -> {
+                                    note("Lần lưu trước chưa xác minh được trong Pictures; không nhấn giữ lại để tránh ảnh trùng.")
+                                    then(NativeResult.FAILED)
+                                }
                             }
                         }
                     }
@@ -3026,6 +3313,11 @@ class CollectorService : AccessibilityService() {
 
     private fun readMacro() = Macro(File(filesDir, "macro.json").readText())
 
+    private var smartGameEntry = true
+
+    /** Legacy per-macro false flags no longer bypass the common configured-account gate. */
+    private fun gameEntryChecksAccount(m: Macro): Boolean = GameEntryPolicy.requiresAccount(m)
+
     fun start() = startWithAccount(null)
 
     private fun startWithAccount(pickedAccount: String?) {
@@ -3048,7 +3340,7 @@ class CollectorService : AccessibilityService() {
             val same = prefs.getString("hash", "") == m.hash
             val at = if (same) prefs.getInt("step", 0) else 0
             val existing = same && !prefs.getString("run", "").isNullOrBlank()
-            val checking = m.json.optBoolean("checkAccount")
+            val checking = gameEntryChecksAccount(m)
             if (same && prefs.getBoolean("stopped", false)) {
                 status("Lượt đã kết thúc. Bấm Tạo lượt mới.")
                 return
@@ -3060,10 +3352,6 @@ class CollectorService : AccessibilityService() {
             val pinned = if (existing) prefs.getString("accountId", null) ?: pickedAccount else pickedAccount
             var selectedUid: String? = null
             if (checking) {
-                if (!m.json.optBoolean("openGame")) {
-                    status("Bật Tự mở game để kiểm tra tài khoản trước khi thu thập.")
-                    return
-                }
                 if (existing && pinned == null && at > 0) {
                     display(
                         AlertDialog.Builder(themed()).setTitle("Chọn tài khoản cho lượt mới")
@@ -3097,7 +3385,6 @@ class CollectorService : AccessibilityService() {
                 }
                 selectedUid = account.uid
             }
-            if (!entryStep(m, at) && !ready(m)) return
             macro = m
             stopped = prefs.getString("hash", "") == m.hash && prefs.getBoolean("stopped", false)
             if (stopped) {
@@ -3136,9 +3423,55 @@ class CollectorService : AccessibilityService() {
             generation++
             save()
             note(if (index == 0) "Bắt đầu lượt" else "Tiếp tục")
-            next(generation)
+            smartGameEntry = uiPrefs.getBoolean("smartGameEntry", true)
+            preflight(generation)
         } catch (e: Exception) {
             pause("Lỗi macro: ${e.message}")
+        }
+    }
+
+    /** Shared start/resume lifecycle. No macro step runs until this gate succeeds. */
+    private fun preflight(token: Int) {
+        val m = macro ?: return
+        val destination = GameEntryPolicy.destination(m, index)
+        val beganAt = elapsed()
+        busy = true
+        entering = true
+        var finished = false
+        cancelStep = {
+            finished = true
+            busy = false
+            entering = false
+            captureShield.reset()
+        }
+        handler.postDelayed({
+            if (!finished && token == generation && running) pause("Kiểm tra vào game quá thời gian; giữ nguyên tiến trình để thử lại.")
+        }, GameEntry.LIMIT_MS + 30_000)
+        enterGame(
+            destination != GameEntryPolicy.Destination.LIST,
+            { !finished && running && token == generation },
+            preserveScreen = destination == GameEntryPolicy.Destination.CURRENT
+        ) { outcome ->
+            if (finished || !running || token != generation) return@enterGame
+            finished = true
+            busy = false
+            entering = false
+            cancelStep = null
+            captureShield.reset()
+            when (outcome) {
+                is GameEntry.Outcome.Failed -> pause(outcome.reason)
+                is GameEntry.Outcome.Ready -> {
+                    entryMs = if (index == 0) elapsed() else entryMs + (elapsed() - beganAt)
+                    prefs.edit().putLong("entryMs", entryMs).apply()
+                    if (index == 0 && prefs.getBoolean("clean", false)) {
+                        RunTimes.record(uiPrefs, RunTimes.ENTRY, entryMs / 1000.0)
+                    }
+                    // Existing explicit enter steps are fulfilled by the common gate, exactly once.
+                    if (index == 0 && m.steps.getJSONObject(0).optString("type") == "enter") index++
+                    save()
+                    handler.post { next(token) }
+                }
+            }
         }
     }
 
@@ -4406,14 +4739,36 @@ class CollectorService : AccessibilityService() {
 
     /**
      * Runs a [GameEntry] against the real screen: opens the game and goes through its login, reward screens and
-     * popups to the hero list, checking the account's UID when the run asks for it. With the run's trace on,
+     * popups to the hero list, always checking the configured account UID. With the run's trace on,
      * each screenshot it decided on is kept scaled down in [GameEntry.TRACE_DIR], with the decision.
      */
-    private fun enterGame(toLobby: Boolean, alive: () -> Boolean, calibrationOnly: Boolean = false, finish: (GameEntry.Outcome) -> Unit) {
+    private fun enterGame(
+        toLobby: Boolean,
+        alive: () -> Boolean,
+        calibrationOnly: Boolean = false,
+        preserveScreen: Boolean = false,
+        finish: (GameEntry.Outcome) -> Unit
+    ) {
         val stamp = "%04d".format(index + 1)
         val m = if (calibrationOnly) null else macro
-        val account = if (m?.json?.optBoolean("checkAccount") == true) Accounts.load(this, runAccountId) else null
-        if (m?.json?.optBoolean("checkAccount") == true && (account == null || account.uid != runAccountUid)) {
+        val account = if (calibrationOnly) {
+            Accounts.load(this)
+        } else if (m != null &&
+            gameEntryChecksAccount(m)
+        ) {
+            Accounts.load(this, runAccountId)
+        } else {
+            null
+        }
+        if (calibrationOnly && account == null) {
+            finish(
+                GameEntry.Outcome.Failed(
+                    "Chọn tài khoản có UID trong Quản lý tài khoản trước khi chỉnh từng bước; chế độ chỉnh không tự đăng nhập."
+                )
+            )
+            return
+        }
+        if (m != null && gameEntryChecksAccount(m) && (account == null || account.uid != runAccountUid)) {
             finish(GameEntry.Outcome.Failed("Không đọc được tài khoản đã chọn cho lượt. Hãy lưu lại tài khoản trước khi chạy."))
             return
         }
@@ -4463,6 +4818,8 @@ class CollectorService : AccessibilityService() {
 
             override val alive get() = alive()
 
+            override val gameInFront get() = foreground() == GAME
+
             override fun quit(then: (GameCloser.Result) -> Unit) {
                 if (calibrationOnly) return then(GameCloser.Result.NO_PAGE)
                 closeApp(GAME, alive = alive) { result ->
@@ -4486,8 +4843,15 @@ class CollectorService : AccessibilityService() {
 
             override fun look(words: Boolean, uid: Boolean, then: (GameEntry.Shot?) -> Unit) {
                 // The Garena page and the registration form may come from another app than the game.
+                val capturedPackage = foreground()
+                // A web login is handled only after game entry opened it; never classify arbitrary app pixels as lobby.
+                if (!alive() || capturedPackage == null) return then(null)
                 grab(anyApp = true) { b ->
                     if (b == null) return@grab then(null)
+                    if (!alive() || foreground() != capturedPackage) {
+                        b.recycle()
+                        return@grab then(null)
+                    }
                     val nodes = screenWords()
                     try {
                         io.execute {
@@ -4498,20 +4862,19 @@ class CollectorService : AccessibilityService() {
                                 val wanted = words || GameScreens.wordy(pixels.kind)
                                 // Logo screens are black: nothing to read.
                                 val text = if (wanted && pixels.signature.average() > 12) nodes + GameText.words(b) else nodes
-                                val number = if (uid &&
-                                    (pixels.kind == GameScreens.Kind.LOBBY || pixels.kind == GameScreens.Kind.LIST)
-                                ) {
+                                val number = if (uid && capturedPackage == GAME) {
                                     GameText.uid(b)
                                 } else {
                                     null
                                 }
-                                GameScreens.refine(pixels, text, number)
+                                val refined = GameScreens.refine(pixels, text, number)
+                                if (capturedPackage != GAME && refined.kind != GameScreens.Kind.FORM) null else refined
                             } catch (e: Throwable) {
                                 CrashLog.record(this@CollectorService, "Không đọc được màn hình game", e)
                                 null
                             }
                             handler.post {
-                                if (reading == null) {
+                                if (!alive() || foreground() != capturedPackage || reading == null) {
                                     b.recycle()
                                     then(null)
                                 } else if (calibrationOnly &&
@@ -4583,7 +4946,15 @@ class CollectorService : AccessibilityService() {
                 }
             }
         }
-        GameEntry(screen, expected, toLobby, finish).start()
+        GameEntry(
+            screen,
+            expected,
+            toLobby,
+            smartLobby = if (calibrationOnly) uiPrefs.getBoolean("smartGameEntry", true) else smartGameEntry,
+            preserveScreen = preserveScreen,
+            readOnlyAccount = calibrationOnly,
+            finish = finish
+        ).start()
     }
 
     /**

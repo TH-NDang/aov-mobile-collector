@@ -532,6 +532,9 @@ class GameEntry(
     private val screen: Screen,
     private val expectedUid: String? = null,
     private val toLobby: Boolean = false,
+    private val smartLobby: Boolean = true,
+    private val preserveScreen: Boolean = false,
+    private val readOnlyAccount: Boolean = false,
     private val finish: (Outcome) -> Unit
 ) {
     sealed class Outcome {
@@ -555,6 +558,9 @@ class GameEntry(
 
     interface Screen {
         val alive: Boolean
+
+        /** Fresh foreground evidence, never a cached package name. */
+        val gameInFront: Boolean get() = false
 
         /** Ends the game if it is still running, through Settings ([GameCloser]); [then] gets what happened. */
         fun quit(then: (GameCloser.Result) -> Unit)
@@ -650,24 +656,38 @@ class GameEntry(
     private var switched = false
     private var leftOnce = false
 
-    /**
-     * A game left in the recent apps resumes wherever it was, which may be a screen the run does not know: it is
-     * ended first, so it always comes up through its splash, login and popups.
-     */
+    private var firstLook = true
+    private var fastLobby = false
+    private var finished = false
+
+    /** Inspect an already foreground game; otherwise bring it forward without force stopping it. */
     fun start() {
+        if (!screen.alive) return
         started = screen.now()
-        screen.say("Đang đóng Liên Quân nếu còn chạy…")
-        screen.quit { result ->
-            if (!screen.alive) return@quit
-            screen.note(result.text)
-            screen.note("Mở Liên Quân")
+        if (screen.gameInFront) {
+            screen.say("Đang nhận diện màn hình và kiểm tra UID…")
+            step()
+        } else if (preserveScreen) {
+            fail("Hãy mở đúng màn hình đang thu thập trong Liên Quân rồi bấm Tiếp tục; không tự đổi màn hình của bước đang dở.")
+        } else {
+            screen.note("Mở / đưa Liên Quân ra phía trước, không buộc dừng")
             screen.say("Đang mở Liên Quân…")
-            if (!screen.launch()) return@quit fail("Không mở được Liên Quân. Kiểm tra game đã cài, mở game bằng tay rồi bấm Tiếp tục.")
+            if (!screen.launch()) return fail("Không mở được Liên Quân. Kiểm tra game đã cài, mở game bằng tay rồi bấm Tiếp tục.")
+            // A newly launched/resumed activity still gets the normal popup settling path.
+            firstLook = false
             screen.later(4000) { step() }
         }
     }
 
+    private fun ready() {
+        if (finished || !screen.alive) return
+        finished = true
+        finish(Outcome.Ready)
+    }
+
     private fun fail(reason: String) {
+        if (finished || !screen.alive) return
+        finished = true
         finish(Outcome.Failed(reason))
     }
 
@@ -690,10 +710,10 @@ class GameEntry(
     }
 
     private fun step() {
-        if (!screen.alive) return
+        if (finished || !screen.alive) return
         val now = screen.now()
         screen.look(phase != Phase.ENTER, !uidOk) { s ->
-            if (!screen.alive) {
+            if (finished || !screen.alive) {
                 s?.done(null)
                 return@look
             }
@@ -720,6 +740,26 @@ class GameEntry(
                 )
             }
             val reading = s.reading
+            if (firstLook) {
+                fastLobby = smartLobby && screen.gameInFront && reading.kind == GameScreens.Kind.LOBBY
+                firstLook = false
+            }
+            if (preserveScreen) {
+                // Never move a coordinate macro or a paused cursor to another screen to check identity.
+                val known = reading.kind in setOf(GameScreens.Kind.LOBBY, GameScreens.Kind.LIST, GameScreens.Kind.HERO_PAGE)
+                if (!screen.gameInFront || !known || (expectedUid != null && reading.uid != expectedUid)) {
+                    return@look stop(
+                        s,
+                        "entry-resume",
+                        "Chưa xác minh được đúng UID trên màn hình hiện tại. Giữ nguyên bước; mở đúng màn hình và UID rồi thử lại. " +
+                            "Nếu UID bị ẩn, tạo lượt mới từ sảnh với tác vụ tự điều hướng; không tự quay về sảnh rồi chạy tọa độ đang dở."
+                    )
+                }
+                s.record("Đã kiểm tra màn hình hiện tại và UID; giữ nguyên vị trí")
+                s.done(null)
+                return@look ready()
+            }
+            if (reading.kind != GameScreens.Kind.LOBBY) fastLobby = false
             if (reading.kind != GameScreens.Kind.LOBBY) lobbySince = -1
             if (reading.kind != GameScreens.Kind.POPUP) {
                 seen = null
@@ -829,11 +869,12 @@ class GameEntry(
         s.record("Đã vào danh sách tướng")
         s.done(null)
         screen.note("Đã vào danh sách tướng")
-        finish(Outcome.Ready)
+        ready()
     }
 
     private fun lobby(s: Shot, reading: GameScreens.Reading, now: Long) {
-        if (lobbySince <
+        if (!fastLobby &&
+            lobbySince <
             0
         ) {
             lobbySince = now
@@ -842,9 +883,16 @@ class GameEntry(
             screen.say("Đã vào sảnh; chờ xem còn popup nào không…")
             return again(LOBBY_SETTLE_MS)
         }
-        if (now - lobbySince < LOBBY_SETTLE_MS) {
+        if (!fastLobby && now - lobbySince < LOBBY_SETTLE_MS) {
             s.done(null)
             return again(LOBBY_SETTLE_MS - (now - lobbySince))
+        }
+        if (readOnlyAccount && !uidOk && reading.uid != expectedUid) {
+            return stop(
+                s,
+                "entry-teaching-uid",
+                "Chế độ chỉnh chỉ kiểm tra UID, không thao tác tài khoản. Hãy vào sảnh đúng tài khoản đã chọn với UID đọc được rồi mở Chỉnh từng bước lại."
+            )
         }
         val wrong = wrongUid
         if (wrong != null) return wrongAccount(s, wrong)
@@ -883,7 +931,7 @@ class GameEntry(
             s.record("Đã vào sảnh")
             s.done(null)
             screen.note("Đã vào sảnh")
-            return finish(Outcome.Ready)
+            return ready()
         }
         if (++tabs >
             MAX_TABS

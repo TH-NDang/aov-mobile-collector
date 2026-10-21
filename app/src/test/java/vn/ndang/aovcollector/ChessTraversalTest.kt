@@ -255,10 +255,13 @@ class ChessTraversalTest {
             y: Double,
             preserveDetail: Boolean,
             aliases: Set<String>,
+            reference: NativeSaveEvidence.Reference?,
             then: (ChessWikiReader.NativeResult) -> Unit
         ) = post {
             if (group == "chieu-quan-co") {
                 assertTrue("Skills belong to the open detail", preserveDetail)
+                assertNotNull("Native skill receives the exact current drawer reference before bitmap disposal", reference)
+                assertTrue(reference!!.detailSignature.isNotEmpty())
                 assertNotNull(opened)
                 nativeSkills.add(item)
                 if (interruptAfterNative) alive = false

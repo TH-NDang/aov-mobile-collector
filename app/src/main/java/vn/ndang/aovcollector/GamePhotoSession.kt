@@ -1,6 +1,8 @@
 package vn.ndang.aovcollector
 
 import android.content.Context
+import android.graphics.BitmapFactory
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import kotlin.math.abs
@@ -18,6 +20,17 @@ object GamePhotoSession {
     private const val MAX_IMAGE = 32L * 1024 * 1024
     private const val CLOCK_WINDOW_MS = 20_000L
     private val validGroups = GamePhotoImport.GROUPS.map { it.key }.filter { it != "chua-phan-loai" }.toSet()
+
+    enum class ReceiptStatus { RECEIPT, NONE, UNCERTAIN, ABSENT }
+
+    data class Attempt(val id: String, val status: ReceiptStatus, val item: String, val matchesRequested: Boolean)
+
+    data class ReceiptResult(
+        val status: ReceiptStatus,
+        val documentId: String? = null,
+        val reason: String? = null,
+        val absenceSafe: Boolean = false
+    )
 
     data class Mark(val group: String, val item: String, val time: Long)
 
@@ -102,7 +115,10 @@ object GamePhotoSession {
         val file = location(context, runId)
         file.parentFile?.mkdirs()
         val temp = File(file.parentFile, file.name + ".part")
-        temp.writeText(state.toString(2))
+        temp.outputStream().use { output ->
+            output.write(state.toString(2).toByteArray(Charsets.UTF_8))
+            output.fd.sync()
+        }
         require(temp.renameTo(file)) { "Không lưu được mốc ảnh Pictures" }
     }
 
@@ -123,6 +139,139 @@ object GamePhotoSession {
             .put("saves", JSONArray()).put("status", "collecting").put("storageVersion", 2)
         store(context, runId, state)
         return source.size
+    }
+
+    /** Persist the exact granted-tree baseline before dispatching any native long-press. */
+    @Synchronized fun prepareAttempt(
+        context: Context,
+        runId: String,
+        group: String,
+        item: String,
+        aliases: Set<String> = emptySet(),
+        expectedSignature: String? = null
+    ): Attempt {
+        require(group in validGroups)
+        val state = read(context, runId)
+        val tree = GamePhotoImport.chosen(context) ?: error("Quyền đọc Pictures đã hết hạn")
+        require(tree.toString() == state.getString("tree")) { "Thư mục Pictures đã thay đổi" }
+        NativePhotoReceiptJournal.existing(state, group, item, aliases)?.let { return it }
+        val images = GamePhotoImport.scan(context, tree)
+        val attempt = NativePhotoReceiptJournal.prepare(
+            state,
+            group,
+            item,
+            aliases,
+            expectedSignature,
+            images.map { it.id }.toSet(),
+            System.currentTimeMillis()
+        )
+        store(context, runId, state)
+        return attempt
+    }
+
+    /** Durably arm the attempt before dispatch; a crash after this write cannot authorize a retry. */
+    @Synchronized fun startAttempt(context: Context, runId: String, attemptId: String) {
+        val state = read(context, runId)
+        val tree = GamePhotoImport.chosen(context) ?: error("Quyền đọc Pictures đã hết hạn")
+        require(tree.toString() == state.getString("tree")) { "Thư mục Pictures đã thay đổi" }
+        NativePhotoReceiptJournal.start(state, attemptId, System.currentTimeMillis())
+        store(context, runId, state)
+    }
+
+    /** Close only a positively confirmed Sure or positively verified no-save outcome. */
+    @Synchronized fun finishAttempt(context: Context, runId: String, attemptId: String, confirmed: Boolean) {
+        val state = read(context, runId)
+        NativePhotoReceiptJournal.finish(state, attemptId, confirmed)
+        store(context, runId, state)
+    }
+
+    /**
+     * Pending attempts survive pause/process death. Timestamp/count alone never prove a save:
+     * require one full, readable, content-matching native asset, then pin and mark in one write.
+     */
+    @Synchronized fun reconcileAttempt(context: Context, runId: String, attemptId: String): ReceiptResult = try {
+        val state = read(context, runId)
+        val attempt = NativePhotoReceiptJournal.find(state, attemptId)
+        val tree = GamePhotoImport.chosen(context) ?: error("Quyền đọc Pictures đã hết hạn")
+        require(tree.toString() == state.getString("tree")) { "Thư mục Pictures đã thay đổi" }
+        when (attempt.getString("status")) {
+            "receipt", "confirmed" -> ReceiptResult(ReceiptStatus.RECEIPT, attempt.optString("documentId").takeIf(String::isNotBlank))
+            "prepared", "cancelled" -> ReceiptResult(ReceiptStatus.NONE)
+            else -> {
+                val all = GamePhotoImport.scan(context, tree)
+                val baseline = NativePhotoReceiptJournal.strings(attempt.getJSONArray("baseline")) +
+                    NativePhotoReceiptJournal.strings(state.getJSONArray("baseline"))
+                val excluded = NativePhotoReceiptJournal.exclusions(state, attemptId)
+                val startedAt = attempt.getLong("startedAt")
+                val endsAt = attempt.getLong("endsAt")
+                val fresh = all.filter { it.id !in baseline && it.id !in excluded }
+                NativePhotoReceiptJournal.observe(attempt, fresh.map { it.id }.toSet())
+                val verified = HashMap<String, OriginalPhotoCopy.Integrity>()
+                val candidates = fresh.map { photo ->
+                    val eligible = photo.modified >= startedAt / 1000 * 1000 && photo.modified <= endsAt && photo.modified > 0
+                    if (!eligible) {
+                        NativePhotoReceipt.Candidate(photo.id, photo.modified, false, false)
+                    } else {
+                        try {
+                            val bytes = context.contentResolver.openInputStream(photo.uri)?.use { input ->
+                                val output = ByteArrayOutputStream()
+                                val buffer = ByteArray(64 * 1024)
+                                while (true) {
+                                    val n = input.read(buffer)
+                                    if (n < 0) break
+                                    require(output.size().toLong() + n <= MAX_IMAGE) { "Ảnh vượt giới hạn" }
+                                    output.write(buffer, 0, n)
+                                }
+                                output.toByteArray()
+                            } ?: error("Không đọc được ảnh")
+                            require(bytes.isNotEmpty() && (photo.size == 0L || photo.size == bytes.size.toLong())) { "Ảnh chưa đọc đủ" }
+                            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+                            require(bounds.outWidth >= 32 && bounds.outHeight >= 32) { "Ảnh chưa giải mã được" }
+                            val options = BitmapFactory.Options().apply {
+                                inSampleSize = 1
+                                while (maxOf(bounds.outWidth, bounds.outHeight) / inSampleSize > 384) inSampleSize *= 2
+                            }
+                            val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: error("Ảnh chưa giải mã được")
+                            var ambiguous = false
+                            val matching = try {
+                                val matches = NativePhotoReceipt.matches(attempt.optString("signature"), bitmap)
+                                ambiguous =
+                                    matches &&
+                                    NativePhotoReceiptJournal.earlierAbsentSignatures(state, attemptId, photo.modified).any {
+                                        it.isBlank() || NativePhotoReceipt.matches(it, bitmap)
+                                    }
+                                matches && !ambiguous
+                            } finally {
+                                bitmap.recycle()
+                            }
+                            if (matching) verified[photo.id] = OriginalPhotoCopy.digest(bytes.inputStream())
+                            NativePhotoReceipt.Candidate(photo.id, photo.modified, true, matching, ambiguous)
+                        } catch (_: Exception) {
+                            NativePhotoReceipt.Candidate(photo.id, photo.modified, false, false)
+                        }
+                    }
+                }
+                val id = NativePhotoReceipt.select(baseline, excluded, startedAt, endsAt, candidates)
+                if (id != null) NativePhotoReceiptJournal.receipt(state, attemptId, id, verified.getValue(id))
+                store(context, runId, state)
+                val absenceSafe = id == null &&
+                    NativePhotoReceipt.absenceSafe(startedAt, endsAt, candidates, attempt.optString("signature").isNotBlank())
+                if (absenceSafe && attempt.getString("status") == "absent") {
+                    ReceiptResult(ReceiptStatus.ABSENT, absenceSafe = true)
+                } else if (id == null) {
+                    ReceiptResult(
+                        ReceiptStatus.UNCERTAIN,
+                        reason = "Chưa có đúng một ảnh mới khớp nội dung lần lưu",
+                        absenceSafe = absenceSafe
+                    )
+                } else {
+                    ReceiptResult(ReceiptStatus.RECEIPT, id)
+                }
+            }
+        }
+    } catch (e: Exception) {
+        ReceiptResult(ReceiptStatus.UNCERTAIN, reason = e.message ?: "Không đối chiếu được Pictures")
     }
 
     /** Called AFTER Save Photo → Sure has been confirmed on the correct icon/topic. */
@@ -402,12 +551,26 @@ object GamePhotoSession {
                 }
                 continue
             }
-            val identity = fingerprint(tree.toString() + "|" + image.key)
+            val receipt = assignments.optJSONObject(pick.id)
+            val sourceKey = if (receipt?.has("receiptSha256") == true) {
+                "receipt|" + image.id + "|" + receipt.getString("receiptSha256")
+            } else {
+                image.key
+            }
+            val identity = fingerprint(tree.toString() + "|" + sourceKey)
             var partial: File? = null
             var target: File? = null
             var history: Long? = null
             var committed = false
             try {
+                val receiptExpected = if (receipt?.has("receiptSha256") == true) {
+                    OriginalPhotoCopy.Integrity(receipt.getLong("receiptBytes"), receipt.getString("receiptSha256"))
+                } else {
+                    null
+                }
+                require(receiptExpected == null || sourceHash(image) == receiptExpected) {
+                    "Ảnh gốc không còn khớp biên nhận đã kiểm tra"
+                }
                 val oldKey = if (ChessCaptureFiles.nativeHeadBase(pick.group, pick.item) != null) identity else identity.take(14)
                 val oldPath = ledger.optString(identity).ifBlank { ledger.optString(oldKey) }
                 val known = oldPath.takeIf { it.isNotBlank() }?.let { File(destRoot, it) }?.takeIf {
@@ -420,6 +583,7 @@ object GamePhotoSession {
                     } else {
                         sourceHash(image)
                     }
+                    require(receiptExpected == null || expected == receiptExpected) { "Bản sao không khớp biên nhận ảnh gốc" }
                     if ((image.size <= 0 || expected.bytes == image.size) && OriginalPhotoCopy.matches(known, expected)) {
                         remember(pick, identity, known, expected)
                         already++
@@ -468,6 +632,7 @@ object GamePhotoSession {
                 val owned = known == output || targetClaims.optString(path) == identity
                 if (output.isFile && output.length() > 0 && owned) {
                     val expected = sourceHash(image)
+                    require(receiptExpected == null || expected == receiptExpected) { "Ảnh gốc đã thay đổi sau đối chiếu" }
                     if ((image.size <= 0 || expected.bytes == image.size) && OriginalPhotoCopy.matches(output, expected)) {
                         remember(pick, identity, output, expected)
                         already++
@@ -494,6 +659,7 @@ object GamePhotoSession {
                         true
                     }
                 } ?: error("Không mở được ảnh mới")
+                require(receiptExpected == null || verified == receiptExpected) { "Ảnh gốc đã thay đổi trong khi sao chép" }
                 require(partial.renameTo(output)) { "Không chuyển được ảnh đã kiểm tra" }
                 committed = true
                 history?.let {

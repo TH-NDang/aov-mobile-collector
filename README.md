@@ -1,4 +1,17 @@
-# AOV Mobile Collector — v0.13.0
+# AOV Mobile Collector — v0.13.18
+
+## v0.13.18: vào game chung và cài đặt nhanh
+
+- Mọi tác vụ, gồm Pro, Cờ và macro nhập từ file, đều đi qua kiểm tra vào game/UID chung khi Chạy hoặc Tiếp tục. Chọn tài khoản đã lưu cho lượt; thiết lập bỏ kiểm tra UID của macro cũ không còn vô hiệu hóa bước kiểm tra này.
+- Nếu đã ở sảnh đúng tài khoản, app bỏ qua đóng/mở lại game và chờ popup khởi động. Nếu chưa ở sảnh, app dùng luồng vào game an toàn, không tự buộc dừng game.
+- Bánh răng **Cài đặt** trên bảng nổi gọn cho phép đổi nhận diện sảnh, bật điểm chạm/đường vuốt và mở quản lý tài khoản. Cách vào game/tài khoản chỉ đổi khi không còn lượt đang chạy hoặc tạm dừng; UID không có tùy chọn bỏ kiểm tra.
+- Bước đang dở và macro tọa độ được giữ nguyên màn hình. Nếu không đọc được UID tại đó, app dừng an toàn thay vì về sảnh rồi bấm nhầm tọa độ: mở đúng màn hình có UID để thử lại, hoặc tạo lượt mới từ sảnh bằng tác vụ tự điều hướng.
+- Chi tiết và giới hạn kiểm tra: [luồng vào game chung](docs/SHARED_GAME_ENTRY.md). Chế độ chỉnh từng bước và hiệu chỉnh đã lưu được giữ nguyên.
+
+
+## v0.13.17: đối chiếu ảnh chiêu đã lưu trước khi thử lại
+
+Lưu ảnh chiêu Cờ Liên Quân giờ giữ mốc từng thao tác, đối chiếu ảnh mới trong Pictures theo định danh, thời gian và nội dung biểu tượng, rồi ghim đúng file vào tiến độ. OCR không rõ không còn đồng nghĩa “chưa lưu ảnh”; khi Tiếp tục, app đối chiếu lần trước trước khi cân nhắc thao tác mới. Màn chi tiết không đổi được nhận diện bằng ảnh tham chiếu nếu tiêu đề bị khuất, nhưng không bỏ qua prompt hoặc tên tướng mâu thuẫn. Không bấm Sure mù, không nới an toàn cửa sổ/Stop/Pause. Xem [cơ chế, kiểm thử và giới hạn](docs/CHESS_NATIVE_RECEIPTS.md).
 
 ## v0.13.16: thu thập combo Đề cử Pro
 

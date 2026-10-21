@@ -46,4 +46,28 @@ class NativeSaveEvidenceTest {
             NativeSaveEvidence.scene("bachkhoacolienquan", true, false)
         )
     }
+
+    @Test fun unchangedCurrentDrawerCanSurviveMissingTitleButNotContradiction() {
+        val before = IntArray(2560) { (it * 13) % 240 }
+        assertTrue(NativeSaveEvidence.preservedDetail("lumburr", null, before, before.copyOf()))
+        assertFalse(NativeSaveEvidence.preservedDetail("lumburr", "Raz", before, before.copyOf()))
+        assertTrue(NativeSaveEvidence.preservedDetail("lumburr", "Lumburr", before, before.copyOf()))
+    }
+
+    @Test fun changedDrawerMissingReferenceAndSparseEvidenceNeverAuthorizeContinuation() {
+        val before = IntArray(2560) { (it * 13) % 240 }
+        val moved = IntArray(2560) { (it * 31) % 240 }
+        assertFalse(NativeSaveEvidence.preservedDetail("lumburr", null, before, moved))
+        assertFalse(NativeSaveEvidence.preservedDetail("lumburr", null, null, before))
+        assertFalse(NativeSaveEvidence.preservedDetail("lumburr", null, intArrayOf(1), intArrayOf(1)))
+        assertFalse(NativeSaveEvidence.preservedDetail("lumburr", null, before, IntArray(1000)))
+    }
+
+    @Test fun visualFallbackDoesNotOverrideSavePromptOrUnknownOcr() {
+        val before = IntArray(2560) { (it * 13) % 240 }
+        val verified = NativeSaveEvidence.preservedDetail("lumburr", null, before, before.copyOf())
+        assertEquals(NativeSaveEvidence.Scene.PROMPT, NativeSaveEvidence.scene("savephoto", true, verified))
+        assertEquals(NativeSaveEvidence.Scene.UNKNOWN, NativeSaveEvidence.scene("", true, verified))
+        assertEquals(NativeSaveEvidence.Scene.UNKNOWN, NativeSaveEvidence.scene("unknown", false, verified))
+    }
 }

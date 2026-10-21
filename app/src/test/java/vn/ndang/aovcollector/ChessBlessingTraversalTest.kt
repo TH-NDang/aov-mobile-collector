@@ -77,6 +77,7 @@ class ChessBlessingTraversalTest {
             y: Double,
             preserveDetail: Boolean,
             aliases: Set<String>,
+            reference: NativeSaveEvidence.Reference?,
             then: (ChessWikiReader.NativeResult) -> Unit
         ) = post {
             assertEquals("chuc-phuc-thuong", group)

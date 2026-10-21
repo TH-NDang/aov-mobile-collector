@@ -562,6 +562,8 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
 
         fun skillIcons(): List<ChessWiki.Tile> = emptyList()
 
+        fun nativeIconSignature(x: Double, y: Double): String? = null
+
         fun keep(name: String, then: (Boolean) -> Unit)
 
         /** List-only measurements, using the same RGB profile matcher as normal heroes. */
@@ -606,6 +608,7 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
             y: Double,
             preserveDetail: Boolean = false,
             aliases: Set<String> = emptySet(),
+            reference: NativeSaveEvidence.Reference? = null,
             then: (NativeResult) -> Unit
         ) {
             then(NativeResult.ABSENT)
@@ -1369,6 +1372,9 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
         }
         history.add(current)
         val skillImages = if ("chieu-quan-co" in options.nativeGroups) l.skillIcons() else emptyList()
+        val nativeReferences = skillImages.associate {
+            it.id to NativeSaveEvidence.Reference(current.copyOf(), l.nativeIconSignature(it.x, it.y))
+        }
         val captureKey = "detail-page-v2:" + t.key + ":" + tile.id + ":" + number
         val legacyKey = "detail-page:" + t.key + ":" + tile.id + ":" + number + ":" + current.contentHashCode()
         val prior = screen.detailSignature(captureKey)
@@ -1407,7 +1413,8 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                     candidate.x,
                     candidate.y,
                     true,
-                    candidate.aliases.map { folder + "-skill-" + it }.toSet()
+                    candidate.aliases.map { folder + "-skill-" + it }.toSet(),
+                    nativeReferences[candidate.id]
                 ) { ok ->
                     if (!screen.alive || completed) return@nativeSave
                     if (ok == NativeResult.ABSENT) {
@@ -1419,11 +1426,12 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                     }
                     if (ok != NativeResult.SAVED) {
                         return@nativeSave fail(
-                            "Chưa lưu được ảnh chiêu của " + folder +
-                                "; kiểm tra Save Photo / Pictures rồi bấm Tiếp tục. Chưa đánh dấu hoàn tất."
+                            "Chưa xác minh xong ảnh chiêu của " + folder +
+                                "; ảnh có thể đã lưu. Tiếp tục sẽ đối chiếu Pictures trước, không tải lại khi kết quả chưa rõ."
                         )
                     }
                     (priorKeys + key).toSet().forEach { screen.finished(it) }
+                    screen.note("Ảnh gốc chieu-quan-co: " + folder + "-skill-" + candidate.id)
                     nativeSkill(at + 1, images, next)
                 }
             }
