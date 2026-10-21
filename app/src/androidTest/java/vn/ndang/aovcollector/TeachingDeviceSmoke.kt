@@ -125,7 +125,7 @@ internal object TeachingDeviceSmoke {
                         controls.width > 0 &&
                         controls.height > 0 &&
                         frame.contains(viewBounds(controls)) &&
-                        buttons(controls).all { it.width > 0 && it.height > 0 && frame.contains(viewBounds(it)) }
+                        buttons(controls).filter { it.isShown }.all { it.width > 0 && it.height > 0 && frame.contains(viewBounds(it)) }
                 }
             }
         }
@@ -322,17 +322,53 @@ internal object TeachingDeviceSmoke {
 
             // Exercise the immediate Run guard while a different app is underneath, before event callbacks run.
             startCollector()
+            waitFor("Collector application window did not settle before the rejection check") {
+                main(test) {
+                    val application = service.windows.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION }.singleOrNull()
+                    application?.isFocused == true && application.root?.packageName?.toString() == service.packageName
+                }
+            }
             main(test) {
                 check(service.foreground() == service.packageName)
                 service.beginTeachingDeviceFixture(listOf(tap))
                 val root = checkNotNull(service.calibrationView)
+                val clipboard = service.getSystemService(android.content.ClipboardManager::class.java)
+                val untouched = "Synthetic clipboard must not change without Copy"
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("smoke", untouched))
+                check(!buttons(root).single { it.text.toString() == "Chép lý do lỗi" }.isShown)
                 buttons(root).single { it.text.toString() == "Chạy bước / Tiếp" }.performClick()
                 check(service.calibrationView === root && root.visibility == View.VISIBLE) {
                     "Wrong-underlying-app check let the editor close and enter dispatch"
                 }
+                val failure = checkNotNull(service.calibrationRefusal)
+                check(failure.code == "W02" && failure.report.contains("reason=foreign-or-unknown-application")) {
+                    "Wrong underlying app did not report its exact refusal: $failure"
+                }
+                val title = ((root as ViewGroup).getChildAt(1) as ViewGroup).getChildAt(1) as android.widget.TextView
+                check(title.text.contains(failure.code) && title.text.contains(failure.message)) {
+                    "Actual preflight refusal stayed generic instead of showing its actionable reason"
+                }
+                check(clipboard.primaryClip?.getItemAt(0)?.text?.toString() == untouched) {
+                    "Refusal copied diagnostics without a user click"
+                }
+                val copy = buttons(root).single { it.text.toString() == "Chép lý do lỗi" }
+                check(copy.isShown)
+                copy.performClick()
+                val copied =
+                    checkNotNull(clipboard.primaryClip?.getItemAt(0)?.text?.toString()) { "Explicit Copy left no text on clipboard" }
+                check(copied == failure.report && copied.length <= CalibrationDiagnostics.MAX_REPORT_CHARS) {
+                    "Explicit Copy did not place the bounded current refusal report on the clipboard"
+                }
+                check(!copied.contains(tap.label) && !copied.contains(service.packageName) && !copied.contains(CollectorService.GAME)) {
+                    "Refusal report exposed raw window packages or action labels"
+                }
+                check(copied.contains("Android API") && copied.contains("expectedProfile=") && copied.contains("windowCount="))
+                File(diagnostics, "calibration-device-refusal.txt").writeText(copied)
+                check(service.calibrationView === root) { "Copying a refusal resumed or closed the pending editor" }
             }
             SystemClock.sleep(CollectorService.SHIELD_MS + 300)
             check(events().length() == 2) { "Wrong-underlying-app guard dispatched a gesture" }
+            checks += "Wrong-app refusal shows its exact reason; only explicit Copy writes a bounded metadata-only report, without input."
             main(test) { service.onInterrupt() }
             startFixture()
 

@@ -28,7 +28,8 @@ internal class GestureCalibrationEditor(
     private val save: (CalibrationAction, List<CalibrationPoint>) -> Boolean,
     private val reset: () -> Boolean,
     private val test: (CalibrationAction, List<CalibrationPoint>, (Boolean) -> Unit) -> Unit,
-    private val closed: () -> Unit
+    private val closed: () -> Unit,
+    private val refusal: () -> CalibrationRefusal? = { null }
 ) {
     companion object {
         // Keep the user's panel position when the runner presents its next actual gesture.
@@ -81,6 +82,22 @@ internal class GestureCalibrationEditor(
             }
         )
 
+        var shownRefusal: CalibrationRefusal? = null
+        val copyError = Ui.button(context, "Chép lý do lỗi") {
+            shownRefusal?.let { failure ->
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(android.content.ClipData.newPlainText("AOV teaching ${failure.code}", failure.report))
+                android.widget.Toast.makeText(
+                    context,
+                    "Đã chép lý do lỗi; bạn có thể dán để gửi kiểm tra",
+                    android.widget.Toast.LENGTH_SHORT
+                ).show()
+            }
+        }.apply {
+            visibility = View.GONE
+            textSize = 13f
+        }
+
         fun row(): LinearLayout = LinearLayout(context).also { controls.addView(it) }
 
         fun button(row: LinearLayout, label: String, run: () -> Unit) {
@@ -129,6 +146,8 @@ internal class GestureCalibrationEditor(
                     " · Mở đúng màn hình rồi bấm Đọc vị trí"
                 }
             } else {
+                shownRefusal = null
+                copyError.visibility = View.GONE
                 testing = true
                 // Runtime preflight must inspect a stable, identifiable overlay. The service removes
                 // this editor only after approval, then shields and checks the target again before input.
@@ -137,12 +156,16 @@ internal class GestureCalibrationEditor(
                     testing = false
                     if (root === frame) {
                         applyVisibility()
-                        title.text =
-                            step.title + if (ok) {
-                                if (runtime) " · Đã chạy; đang chuẩn bị thao tác kế" else " · Đã thử 1 lần; vẫn tạm dừng"
-                            } else {
-                                " · Không chạy được; kiểm tra màn hình game"
-                            }
+                        shownRefusal = if (ok) null else refusal()
+                        copyError.visibility = if (shownRefusal != null) View.VISIBLE else View.GONE
+                        title.text = shownRefusal?.let { "${it.code} · ${it.message}" }
+                            ?: (
+                                step.title + if (ok) {
+                                    if (runtime) " · Đã chạy; đang chuẩn bị thao tác kế" else " · Đã thử 1 lần; vẫn tạm dừng"
+                                } else {
+                                    " · Không chạy được; kiểm tra màn hình game"
+                                }
+                                )
                     }
                 }
             }
@@ -183,6 +206,10 @@ internal class GestureCalibrationEditor(
         button(options, "Đổi góc bảng") {
             placePanel(controls.x, if (controls.y > 0) 0f else frame.height.toFloat())
         }
+        controls.addView(
+            copyError,
+            LinearLayout.LayoutParams(-1, Ui.dp(context, 36)).apply { topMargin = Ui.dp(context, 4) }
+        )
         var dragX = 0f
         var dragY = 0f
         var startX = 0f

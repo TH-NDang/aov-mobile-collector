@@ -85,11 +85,14 @@ class CollectorService : AccessibilityService() {
     private var gesturesInFlight = 0
     internal val calibrationView: View? get() = calibrationEditor?.view
 
-    // Metadata-only snapshots for synthetic device tests. Never persisted in real collection history.
+    // Metadata-only snapshots. Shared only by the user's explicit copy action, never collection history.
     internal var calibrationAttemptDiagnostic: String = "not-attempted"
         private set
     internal var calibrationSafetyDiagnostic: String = "not-checked"
         private set
+    internal var calibrationRefusal: CalibrationRefusal? = null
+        private set
+    private var calibrationSafetyReason = "not-checked"
 
     private fun calibrationProfile(): CalibrationProfile {
         val metrics = wm.currentWindowMetrics
@@ -267,7 +270,13 @@ class CollectorService : AccessibilityService() {
             },
             reset = { teaching && token == generation && profile == calibrationProfile() && calibrationStore.reset(profile, action.id) },
             test = { base, points, done ->
+                calibrationRefusal = null
                 val currentProfile = calibrationProfile()
+                // Capture this attempt's window metadata even if a preceding profile/session check refuses it.
+                // Do not leave a stale snapshot from a previous Run in the user-copyable report.
+                calibrationSafetyReason = "not-checked"
+                calibrationSafetyDiagnostic = "not-checked"
+                val gameAllowed = fixtureDispatch != null || calibrationGameAllowed()
                 val refusal = when {
                     !teaching -> "teaching-ended"
                     token != generation -> "generation-changed"
@@ -275,11 +284,17 @@ class CollectorService : AccessibilityService() {
                     profile != currentProfile -> "display-profile-changed"
                     gesturesInFlight > 0 -> "gesture-in-flight"
                     !CalibrationCodec.validPoints(points) -> "invalid-points"
-                    fixtureDispatch == null && !calibrationGameAllowed() -> "window-safety-denied"
+                    !gameAllowed -> "window-safety-denied"
                     else -> null
                 }
                 calibrationAttemptDiagnostic = "result=${refusal ?: "accepted"}; expectedProfile=$profile; actualProfile=$currentProfile"
                 if (refusal != null) {
+                    val version = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull() ?: "?"
+                    calibrationRefusal = CalibrationDiagnostics.refusal(
+                        if (refusal == "window-safety-denied") calibrationSafetyReason else refusal,
+                        "v$version; Android API ${android.os.Build.VERSION.SDK_INT}; $calibrationAttemptDiagnostic",
+                        calibrationSafetyDiagnostic
+                    )
                     done(false)
                 } else {
                     calibrationEditor?.close(notify = false)
@@ -310,7 +325,8 @@ class CollectorService : AccessibilityService() {
                     }, base.durationMs + base.holdMs + 5000)
                 }
             },
-            closed = { endTeaching("Đã dừng chỉnh từng bước; các điểm đã lưu được giữ lại") }
+            closed = { endTeaching("Đã dừng chỉnh từng bước; các điểm đã lưu được giữ lại") },
+            refusal = { calibrationRefusal }
         )
         calibrationEditor = editor
         editor.shield(debugCaptureHidden)
@@ -613,19 +629,15 @@ class CollectorService : AccessibilityService() {
                 }
             }
         val reason = if (target != null && !pathsAllowed) "gesture-path-outside-game" else check.reason
-        calibrationSafetyDiagnostic = "reason=$reason; usable=$usable; windows=" + reported.joinToString { window ->
-            val owner = when (window.packageName) {
-                GAME -> "GAME"
-                packageName -> "COLLECTOR"
-                null -> "UNKNOWN"
-                else -> "OTHER"
-            }
-            "[$owner app=${window.application} overlay=${window.accessibilityOverlay} " +
-                "focused=${window.focused} active=${window.active} bounds=${window.bounds}]"
-        }
+        calibrationSafetyReason = reason
+        val maximum = runCatching { wm.maximumWindowMetrics.bounds.toString() }.getOrDefault("unavailable")
+        calibrationSafetyDiagnostic = "reason=$reason; display=$b; maximumDisplay=$maximum; " +
+            "insets=(${i.left},${i.top},${i.right},${i.bottom}); usable=$usable; " +
+            CalibrationDiagnostics.windows(reported, packageName, GAME)
         pathsAllowed
     } catch (error: Exception) {
-        calibrationSafetyDiagnostic = "window-query-exception=${error.javaClass.simpleName}"
+        calibrationSafetyReason = "window-query-exception=${error.javaClass.simpleName}"
+        calibrationSafetyDiagnostic = calibrationSafetyReason
         false
     }
 

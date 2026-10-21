@@ -1,5 +1,11 @@
 # AOV Mobile Collector — v0.13.0
 
+## v0.13.14: lý do chặn thao tác chỉnh từng bước
+
+Nếu **Chạy bước / Tiếp** bị chặn trước khi chạm game, bảng chỉnh hiện mã và lý do cụ thể thay cho thông báo chung. Bấm **Chép lý do lỗi** để chép báo cáo rồi tự dán khi cần hỗ trợ. Báo cáo chỉ gồm phiên bản, kích thước/vùng an toàn màn hình và loại/vị trí/trạng thái cửa sổ; không lấy ảnh màn hình, chữ trong game, tài khoản hay tên ứng dụng khác. Chỉ thao tác bấm nút chép mới ghi clipboard; báo cáo không tự gửi đi hoặc lưu vào lịch sử thu thập.
+
+Đây là bổ sung chẩn đoán cho lỗi trên máy thật, **chưa khẳng định đã sửa nguyên nhân bị chặn trên mọi máy**. Các kiểm tra đúng game, tiêu điểm, cửa sổ nổi/chia đôi và vùng an toàn vẫn giữ nguyên. Khi khung game có viền đen hoặc thanh bên của hãng máy, hãy gửi mã hoặc báo cáo để xác định đúng điều kiện đang chặn, không bỏ qua kiểm tra an toàn.
+
 App thử nghiệm Android 11+ để chụp dữ liệu menu Liên Quân VN bằng macro. Ảnh lưu trên máy, OCR chạy ngoại tuyến; app không có quyền Internet.
 
 ## Cách dùng

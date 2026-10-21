@@ -18,6 +18,8 @@ internal object GestureCalibrationSmoke {
         var defaults = 0
         var saved = action.points
         var closed = 0
+        var testSucceeds = true
+        var diagnosticRefusal: CalibrationRefusal? = null
         lateinit var editor: GestureCalibrationEditor
 
         fun buttons(view: View): List<Button> = if (view is ViewGroup) {
@@ -49,7 +51,7 @@ internal object GestureCalibrationSmoke {
                         controls.width > 0 &&
                         controls.height > 0 &&
                         frame.contains(screenBounds(controls)) &&
-                        buttons(controls).all { it.width > 0 && it.height > 0 && frame.contains(screenBounds(it)) }
+                        buttons(controls).filter { it.isShown }.all { it.width > 0 && it.height > 0 && frame.contains(screenBounds(it)) }
                 }
                 if (fits) return
                 SystemClock.sleep(50)
@@ -73,8 +75,8 @@ internal object GestureCalibrationSmoke {
                 test = { _, _, done ->
                     check(editor.view?.visibility == View.VISIBLE) { "Runtime editor hid before service preflight" }
                     tests++
-                    done(true)
-                }, closed = { closed++ }
+                    done(testSucceeds)
+                }, closed = { closed++ }, refusal = { diagnosticRefusal }
             )
             editor.shield(true)
             check(editor.show())
@@ -131,7 +133,50 @@ internal object GestureCalibrationSmoke {
             test.waitForIdleSync()
             awaitControls()
             test.runOnMainSync {
+                val root = checkNotNull(editor.view) as ViewGroup
+                check(!buttons(root).single { it.text.toString() == "Chép lý do lỗi" }.isShown)
+                if (root.getChildAt(1).y > 0f) click("Đổi góc bảng")
                 click("Đổi góc bảng")
+            }
+            test.waitForIdleSync()
+            awaitControls()
+            test.runOnMainSync {
+                val root = checkNotNull(editor.view) as ViewGroup
+                check(kotlin.math.abs(screenBounds(root).bottom - screenBounds(root.getChildAt(1)).bottom) <= 1)
+                diagnosticRefusal = CalibrationDiagnostics.refusal(
+                    "game-does-not-cover-usable-display",
+                    "result=window-safety-denied",
+                    "reason=game-does-not-cover-usable-display; windowCount=1"
+                )
+                testSucceeds = false
+                click("Chạy bước / Tiếp")
+                check(editor.view === root && root.visibility == View.VISIBLE && tests == 2)
+                val title = (root.getChildAt(1) as ViewGroup).getChildAt(1) as android.widget.TextView
+                check(
+                    title.text.contains(checkNotNull(diagnosticRefusal).code) &&
+                        title.text.contains(checkNotNull(diagnosticRefusal).message)
+                ) {
+                    "Refused editor did not show its exact code and actionable explanation"
+                }
+            }
+            test.waitForIdleSync()
+            awaitControls()
+            test.runOnMainSync {
+                val root = checkNotNull(editor.view) as ViewGroup
+                val copy = buttons(root).single { it.text.toString() == "Chép lý do lỗi" }
+                check(copy.isShown && screenBounds(root).contains(screenBounds(copy))) { "Error report button is hidden or clipped" }
+                val title = (root.getChildAt(1) as ViewGroup).getChildAt(1) as android.widget.TextView
+                val textLayout = checkNotNull(title.layout)
+                check((0 until textLayout.lineCount).all { textLayout.getEllipsisCount(it) == 0 }) {
+                    "The longest current refusal explanation is truncated"
+                }
+                check(kotlin.math.abs(screenBounds(root).bottom - screenBounds(root.getChildAt(1)).bottom) <= 1) {
+                    "Specific refusal and copy action pushed bottom controls outside the editor"
+                }
+                diagnosticRefusal = null
+                testSucceeds = true
+                click("Chạy bước / Tiếp")
+                check(tests == 3 && !copy.isShown) { "Successful retry retained a stale failure copy action" }
             }
             test.waitForIdleSync()
             awaitControls()
@@ -147,7 +192,7 @@ internal object GestureCalibrationSmoke {
                 check(root.visibility == View.VISIBLE)
                 click("Hủy")
                 editor.shield(false)
-                check(editor.view == null && closed == 1 && tests == 1)
+                check(editor.view == null && closed == 1 && tests == 3)
             }
         } finally {
             test.runOnMainSync { editor.close() }

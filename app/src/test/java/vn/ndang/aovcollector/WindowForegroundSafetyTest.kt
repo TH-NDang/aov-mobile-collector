@@ -40,6 +40,27 @@ class WindowForegroundSafetyTest {
         assertEquals(fullGame, permitted(navigation, fullGame))
     }
 
+    @Test fun passiveSystemEdgeHandleDoesNotChangeFullDisplayGamePermission() {
+        val handle = window(
+            "synthetic.oem.sidebar",
+            application = false,
+            focused = false,
+            active = false,
+            bounds = WindowArea(0, 120, 14, 280)
+        )
+        assertEquals(fullGame, permitted(handle, fullGame))
+        assertNull(permitted(handle.copy(active = true), fullGame))
+        assertNull(permitted(handle.copy(accessibilityOverlay = true), fullGame))
+    }
+
+    @Test fun unexplainedNarrowSideBandsRemainRejectedRatherThanGuessedSafe() {
+        val letterboxed = fullGame.copy(bounds = WindowArea(44, 0, 1876, 1080))
+        assertEquals(game, front(letterboxed))
+        val check = WindowForegroundSafety.inspectGameWindow(listOf(letterboxed), own, game, usable)
+        assertNull(check.target)
+        assertEquals("game-does-not-cover-usable-display", check.reason)
+    }
+
     @Test fun ownFocusedActiveOverlayNeverHidesTheUnderlyingGame() {
         val editor = window(own, application = false, overlay = true)
         assertEquals(game, front(editor, fullGame))
