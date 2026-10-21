@@ -16,6 +16,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowInsets
 import android.view.WindowManager
+import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 import android.widget.Button
 import java.io.File
@@ -46,10 +47,94 @@ internal object TeachingDeviceSmoke {
             "am start -W -n ${CollectorService.GAME}/$FIXTURE_ACTIVITY -f 0x10020000 --ez reset $reset --ez immersive $immersive"
         )
         check("Error" !in result && "Exception" !in result) { "Could not start synthetic receiver: $result" }
+        if (immersive) acknowledgeImmersiveEducation(test, service, automation)
         waitFor("Synthetic receiver did not become the underlying app") {
             main(test) { service.foreground() == CollectorService.GAME }
         }
         test.waitForIdleSync()
+    }
+
+    /** Acknowledge only Android's nonbinding first-run education over the verified CI fixture. */
+    private fun acknowledgeImmersiveEducation(test: Instrumentation, service: CollectorService, automation: UiAutomation) {
+        val originalFlags = automation.serviceInfo.flags
+        automation.serviceInfo = automation.serviceInfo.apply {
+            flags = flags or AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS
+        }
+        val diagnostics = File(service.filesDir, "smoke").apply { mkdirs() }
+        val log = File(diagnostics, "calibration-immersive-setup.txt")
+        val started = SystemClock.uptimeMillis()
+        var acknowledged = false
+        var focusedSince: Long? = null
+
+        fun educationButton(): AccessibilityNodeInfo? {
+            val windows = automation.windows
+            val window = windows.singleOrNull { it.isFocused && it.isActive } ?: return null
+            if (window.type != AccessibilityWindowInfo.TYPE_SYSTEM) return null
+            val root = window.root ?: return null
+            if (root.packageName?.toString() != "android") return null
+            if (windows.none {
+                    it.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
+                        it.root?.packageName?.toString() == CollectorService.GAME
+                }
+            ) {
+                return null
+            }
+
+            fun exact(id: String, text: String): AccessibilityNodeInfo? =
+                root.findAccessibilityNodeInfosByViewId("android:id/$id").singleOrNull()?.takeIf {
+                    it.packageName?.toString() == "android" && it.text?.toString() == text && it.isVisibleToUser
+                }
+            if (exact("immersive_cling_title", "Viewing full screen") == null ||
+                exact("immersive_cling_description", "To exit, swipe down from the top.") == null
+            ) {
+                return null
+            }
+            return exact("ok", "Got it")?.takeIf {
+                it.windowId == window.id && it.className?.toString() == "android.widget.Button" && it.isEnabled && it.isClickable
+            }
+        }
+
+        try {
+            log.appendText("Immersive fixture opened; checking exact Android education only.\n")
+            waitFor("Immersive synthetic receiver remained blocked by an unrecognized system window") {
+                val button = educationButton()
+                if (button != null && !acknowledged) {
+                    val image =
+                        checkNotNull(automation.takeScreenshot()) {
+                            "Cannot record the identified Android education before acknowledgement"
+                        }
+                    try {
+                        File(diagnostics, "calibration-immersive-education.png").outputStream().use {
+                            check(image.compress(Bitmap.CompressFormat.PNG, 100, it))
+                        }
+                    } finally {
+                        image.recycle()
+                    }
+                    // Revalidate the live dialog after screenshot capture. Never click by a generic label
+                    // or screen coordinate, and never repeat an uncertain acknowledgement.
+                    val fresh = checkNotNull(educationButton()) { "Android education changed before acknowledgement" }
+                    check(fresh.windowId == button.windowId) { "Android education window changed before acknowledgement" }
+                    acknowledged = true
+                    log.appendText(
+                        "Matched focused android system window ${fresh.windowId}, exact education IDs/text and enabled button; one click.\n"
+                    )
+                    check(fresh.performAction(AccessibilityNodeInfo.ACTION_CLICK)) { "Android education acknowledgement was not accepted" }
+                }
+                val focused = main(test) { service.foreground() == CollectorService.GAME }
+                val now = SystemClock.uptimeMillis()
+                if (!focused) {
+                    focusedSince = null
+                } else if (focusedSince == null) {
+                    focusedSince = now
+                }
+                // First-run education is posted after the immersive transition. Require sustained
+                // actual game focus, not the transient focus seen before that system window appears.
+                now - started >= 1500 && focusedSince?.let { now - it >= 1000 } == true && educationButton() == null
+            }
+            log.appendText("Underlying GAME focus verified; acknowledged=$acknowledged. No window-safety check bypassed.\n")
+        } finally {
+            automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }
+        }
     }
 
     fun run(test: Instrumentation, service: CollectorService, automation: UiAutomation) {
