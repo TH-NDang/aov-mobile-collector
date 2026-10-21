@@ -29,7 +29,13 @@ internal object TeachingDeviceSmoke {
     private const val FIXTURE_ACTIVITY = "vn.ndang.gamefixture.GestureActivity"
     private const val FIXTURE_MARKER = "vn.ndang.aovcollector.SYNTHETIC_GESTURE_FIXTURE"
 
-    fun openFixture(test: Instrumentation, service: CollectorService, automation: UiAutomation, reset: Boolean = false) {
+    fun openFixture(
+        test: Instrumentation,
+        service: CollectorService,
+        automation: UiAutomation,
+        reset: Boolean = false,
+        immersive: Boolean = false
+    ) {
         val component = ComponentName(CollectorService.GAME, FIXTURE_ACTIVITY)
         val fixture = service.packageManager.getActivityInfo(component, PackageManager.GET_META_DATA)
         check(fixture.metaData?.getBoolean(FIXTURE_MARKER) == true) {
@@ -37,7 +43,7 @@ internal object TeachingDeviceSmoke {
         }
         val result = shell(
             automation,
-            "am start -W -n ${CollectorService.GAME}/$FIXTURE_ACTIVITY -f 0x10020000 --ez reset $reset"
+            "am start -W -n ${CollectorService.GAME}/$FIXTURE_ACTIVITY -f 0x10020000 --ez reset $reset --ez immersive $immersive"
         )
         check("Error" !in result && "Exception" !in result) { "Could not start synthetic receiver: $result" }
         waitFor("Synthetic receiver did not become the underlying app") {

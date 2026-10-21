@@ -203,6 +203,7 @@ internal object GestureCalibrationSmoke {
         TeachingDeviceSmoke.openFixture(test, service, automation)
         pendingGestureFixture(test, service, automation)
         stateIsolationFixture(test, service)
+        TeachingEdgeDeviceSmoke.run(test, service, automation)
         TeachingDeviceSmoke.run(test, service, automation)
         runtimeFixture(test, service)
     }

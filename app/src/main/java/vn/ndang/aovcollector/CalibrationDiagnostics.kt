@@ -15,6 +15,8 @@ internal object CalibrationDiagnostics {
             reason == "display-profile-changed" -> "T04" to "Vùng màn hình đã đổi. Hủy rồi mở lại để đọc đúng vùng."
             reason == "gesture-in-flight" -> "T05" to "Android còn đang xử lý thao tác trước. Đợi rồi thử lại."
             reason == "invalid-points" -> "T06" to "Điểm chạm chưa hợp lệ. Chỉnh lại điểm trước khi chạy."
+            reason == "missing-gesture-path" -> "T07" to "Chưa có đường chạm để kiểm tra vùng che. Hủy rồi mở lại."
+            reason == "invalid-gesture-path" -> "T08" to "Đường chạm chưa hợp lệ. Chỉnh lại điểm trước khi chạy."
             reason == "application-window-count=0" -> "W00" to "Chưa đọc được cửa sổ game. Chép lý do lỗi để kiểm tra."
             reason.startsWith("application-window-count=") -> "W01" to "Có nhiều cửa sổ ứng dụng. Đóng cửa sổ nổi hoặc chia đôi."
             reason == "foreign-or-unknown-application" -> "W02" to "Chưa xác nhận đúng cửa sổ Liên Quân. Hủy và trở lại game."
@@ -26,6 +28,8 @@ internal object CalibrationDiagnostics {
             reason == "game-does-not-cover-usable-display" -> "W08" to "Khung game không phủ vùng an toàn. Chép lý do lỗi để kiểm tra."
             reason == "gesture-path-outside-game" -> "W09" to "Điểm hoặc đường vuốt nằm ngoài khung game. Chỉnh lại điểm."
             reason.startsWith("window-query-exception=") -> "W10" to "Android chưa cho đọc cửa sổ. Chép lý do lỗi để kiểm tra."
+            reason == "gesture-path-near-foreign-window" -> "W11" to "Đường chạm quá gần cửa sổ khác. Dời điểm hoặc đóng thanh bên."
+            reason == "foreign-window-geometry-unknown" -> "W12" to "Chưa xác minh vùng cửa sổ khác. Chép lý do lỗi để kiểm tra."
             else -> "T99" to "Chưa xác minh được thao tác. Chép lý do lỗi để kiểm tra."
         }
         val report = "AOV teaching refusal $code\n$message\n$attempt\n$safety"

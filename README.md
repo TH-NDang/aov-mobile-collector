@@ -1,5 +1,11 @@
 # AOV Mobile Collector — v0.13.0
 
+## v0.13.15: thao tác an toàn cạnh tay nắm thanh bên
+
+Báo cáo trên máy thật xác định W01 do hai cửa sổ nhỏ, không có tiêu điểm và không hoạt động ở mép trái, trong khi Liên Quân vẫn phủ toàn màn hình và nhận tiêu điểm. Bản này cho phép tối đa hai tay nắm có hình học tương tự: nằm sát mép trái/phải, trong dải cạnh giới hạn theo inset màn hình, kích thước nhỏ và không hoạt động. Không dùng danh sách tên ứng dụng được bỏ qua.
+
+Trước khi đóng bảng chỉnh và trước từng đoạn chạm/vuốt, app kiểm tra lại cửa sổ và **toàn bộ vùng đường chạm**, kể cả khoảng cách an toàn với mọi cửa sổ khác. Chạm/vuốt gần hoặc xuyên thanh bên vẫn bị chặn với W11; thanh mở rộng, có tiêu điểm, cửa sổ nổi/chia đôi, vùng không xác định và lớp trợ năng khác vẫn bị từ chối. Không tự thử lại thao tác khi chỉnh từng bước. Kiểm thử dùng cửa sổ và bộ nhận chạm giả lập, không đăng nhập game; kết quả trên máy thật vẫn cần được xác nhận.
+
 ## v0.13.14: lý do chặn thao tác chỉnh từng bước
 
 Nếu **Chạy bước / Tiếp** bị chặn trước khi chạm game, bảng chỉnh hiện mã và lý do cụ thể thay cho thông báo chung. Bấm **Chép lý do lỗi** để chép báo cáo rồi tự dán khi cần hỗ trợ. Báo cáo chỉ gồm phiên bản, kích thước/vùng an toàn màn hình và loại/vị trí/trạng thái cửa sổ; không lấy ảnh màn hình, chữ trong game, tài khoản hay tên ứng dụng khác. Chỉ thao tác bấm nút chép mới ghi clipboard; báo cáo không tự gửi đi hoặc lưu vào lịch sử thu thập.

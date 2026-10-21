@@ -14,6 +14,8 @@ class CalibrationDiagnosticsTest {
             "display-profile-changed" to "T04",
             "gesture-in-flight" to "T05",
             "invalid-points" to "T06",
+            "missing-gesture-path" to "T07",
+            "invalid-gesture-path" to "T08",
             "application-window-count=0" to "W00",
             "application-window-count=2" to "W01",
             "application-window-count=12" to "W01",
@@ -26,7 +28,9 @@ class CalibrationDiagnosticsTest {
             "game-does-not-cover-usable-display" to "W08",
             "gesture-path-outside-game" to "W09",
             "window-query-exception=SecurityException" to "W10",
-            "window-query-exception=IllegalStateException" to "W10"
+            "window-query-exception=IllegalStateException" to "W10",
+            "gesture-path-near-foreign-window" to "W11",
+            "foreign-window-geometry-unknown" to "W12"
         )
         for ((reason, code) in reasons) {
             val refusal = CalibrationDiagnostics.refusal(reason, "result=window-safety-denied", "reason=$reason")

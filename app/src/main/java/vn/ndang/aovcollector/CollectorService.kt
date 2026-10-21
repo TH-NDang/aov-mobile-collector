@@ -276,14 +276,16 @@ class CollectorService : AccessibilityService() {
                 // Do not leave a stale snapshot from a previous Run in the user-copyable report.
                 calibrationSafetyReason = "not-checked"
                 calibrationSafetyDiagnostic = "not-checked"
-                val gameAllowed = fixtureDispatch != null || calibrationGameAllowed()
+                val validPoints = CalibrationCodec.validPoints(points)
+                val gestures = if (validPoints) calibrationGestures(base, points) else emptyList()
+                val gameAllowed = fixtureDispatch != null || calibrationGameAllowed(gestures)
                 val refusal = when {
                     !teaching -> "teaching-ended"
                     token != generation -> "generation-changed"
                     session != calibrationSession -> "session-changed"
                     profile != currentProfile -> "display-profile-changed"
                     gesturesInFlight > 0 -> "gesture-in-flight"
-                    !CalibrationCodec.validPoints(points) -> "invalid-points"
+                    !validPoints -> "invalid-points"
                     !gameAllowed -> "window-safety-denied"
                     else -> null
                 }
@@ -311,7 +313,7 @@ class CollectorService : AccessibilityService() {
                     if (fixtureDispatch != null) {
                         fixtureDispatch(base, points, completed)
                     } else {
-                        touchGameTarget(calibrationGestures(base, points), points.size == 1, null, base.label, completed)
+                        touchGameTarget(gestures, points.size == 1, null, base.label, completed)
                     }
                     teachingDispatch = false
                     handler.postDelayed({
@@ -609,32 +611,35 @@ class CollectorService : AccessibilityService() {
     }
 
     /** Calibration uses full-display coordinates, so fail closed for unknown or multi-window targets. */
-    private fun calibrationGameAllowed(gestures: List<GestureDescription> = emptyList()): Boolean = try {
+    private fun calibrationGameAllowed(gestures: List<GestureDescription>): Boolean = try {
         val metrics = wm.currentWindowMetrics
         val b = metrics.bounds
         val i = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
         val usable = WindowArea(b.left + i.left, b.top + i.top, b.right - i.right, b.bottom - i.bottom)
         val reported = foregroundWindows()
-        val check = WindowForegroundSafety.inspectGameWindow(reported, packageName, GAME, usable)
-        val target = check.target
-        val pathsAllowed = target != null &&
-            gestures.all { gesture ->
-                (0 until gesture.strokeCount).all { stroke ->
-                    val pathBounds = android.graphics.RectF()
-                    gesture.getStroke(stroke).path.computeBounds(pathBounds, true)
-                    pathBounds.left >= target.bounds.left &&
-                        pathBounds.top >= target.bounds.top &&
-                        pathBounds.right < target.bounds.right &&
-                        pathBounds.bottom < target.bounds.bottom
-                }
+        val strokes = gestures.flatMap { gesture ->
+            (0 until gesture.strokeCount).map { stroke ->
+                val area = android.graphics.RectF()
+                gesture.getStroke(stroke).path.computeBounds(area, true)
+                StrokeArea(area.left.toDouble(), area.top.toDouble(), area.right.toDouble(), area.bottom.toDouble())
             }
-        val reason = if (target != null && !pathsAllowed) "gesture-path-outside-game" else check.reason
+        }
+        val check = WindowForegroundSafety.inspectGameWindow(
+            reported,
+            packageName,
+            GAME,
+            usable,
+            WindowArea(b.left, b.top, b.right, b.bottom),
+            strokes
+        )
+        val reason = check.reason
         calibrationSafetyReason = reason
         val maximum = runCatching { wm.maximumWindowMetrics.bounds.toString() }.getOrDefault("unavailable")
         calibrationSafetyDiagnostic = "reason=$reason; display=$b; maximumDisplay=$maximum; " +
-            "insets=(${i.left},${i.top},${i.right},${i.bottom}); usable=$usable; " +
+            "insets=(${i.left},${i.top},${i.right},${i.bottom}); usable=$usable; strokeCount=${strokes.size}; " +
+            "strokes=${strokes.take(8)}; " +
             CalibrationDiagnostics.windows(reported, packageName, GAME)
-        pathsAllowed
+        check.target != null
     } catch (error: Exception) {
         calibrationSafetyReason = "window-query-exception=${error.javaClass.simpleName}"
         calibrationSafetyDiagnostic = calibrationSafetyReason

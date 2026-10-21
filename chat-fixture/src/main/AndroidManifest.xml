@@ -1,6 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application android:label="ChatGPT test fixture" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
         <activity android:name=".ClipboardActivity" android:exported="true"/>
+        <activity android:name=".EdgeHandleActivity" android:exported="true"
+            android:theme="@android:style/Theme.Material.Light.Dialog.NoActionBar"
+            android:taskAffinity="vn.ndang.synthetic.edge" android:launchMode="singleTask"
+            android:excludeFromRecents="true" android:screenOrientation="landscape">
+            <meta-data android:name="vn.ndang.aovcollector.SYNTHETIC_EDGE_HANDLE_FIXTURE" android:value="true"/>
+        </activity>
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter><action android:name="android.intent.action.MAIN"/><category android:name="android.intent.category.LAUNCHER"/></intent-filter>
         </activity>

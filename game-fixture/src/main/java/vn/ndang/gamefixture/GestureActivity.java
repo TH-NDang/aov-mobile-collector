@@ -5,6 +5,8 @@ import android.content.Intent;
 import android.graphics.Color;
 import android.os.Bundle;
 import android.view.MotionEvent;
+import android.view.View;
+import android.view.WindowInsets;
 import android.widget.TextView;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -20,6 +22,7 @@ public class GestureActivity extends Activity {
     private float startX;
     private float startY;
     private int moves;
+    private boolean immersive;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -52,6 +55,16 @@ public class GestureActivity extends Activity {
             return true;
         });
         setContentView(surface);
+        surface.setOnApplyWindowInsetsListener((view, insets) -> {
+            try {
+                String stateText = "requested=" + immersive + ",statusVisible=" + insets.isVisible(WindowInsets.Type.statusBars()) +
+                        ",navigationVisible=" + insets.isVisible(WindowInsets.Type.navigationBars());
+                Files.write(new File(getFilesDir(), "immersive-state.txt").toPath(), stateText.getBytes(StandardCharsets.UTF_8));
+            } catch (Exception exception) {
+                throw new IllegalStateException(exception);
+            }
+            return insets;
+        });
         load(getIntent());
     }
 
@@ -63,6 +76,12 @@ public class GestureActivity extends Activity {
 
     private void load(Intent intent) {
         try {
+            immersive = intent.getBooleanExtra("immersive", false);
+            getWindow().getDecorView().setSystemUiVisibility(immersive
+                    ? View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION |
+                            View.SYSTEM_UI_FLAG_LAYOUT_STABLE | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                    : 0);
+            surface.requestApplyInsets();
             File file = new File(getFilesDir(), "gesture-events.json");
             events = intent.getBooleanExtra("reset", false) || !file.exists()
                     ? new JSONArray()
