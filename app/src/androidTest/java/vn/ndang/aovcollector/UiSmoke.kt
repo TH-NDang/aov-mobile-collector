@@ -24,10 +24,12 @@ import org.json.JSONObject
 /** Runs the actual UI and bundled OCR without a game, account or network. */
 class UiSmoke : Instrumentation() {
     private var teachingOnly = false
+    private var edgeOnly = false
 
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         teachingOnly = arguments?.getString("teaching_only") == "true"
+        edgeOnly = arguments?.getString("edge_only") == "true"
         start()
     }
 
@@ -44,7 +46,8 @@ class UiSmoke : Instrumentation() {
             fun shell(command: String) {
                 android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).use { it.readBytes() }
             }
-            if (teachingOnly) {
+            check(!(teachingOnly && edgeOnly)) { "Choose only one focused smoke suite" }
+            if (teachingOnly || edgeOnly) {
                 // The dedicated CI smoke starts from a fresh disposable app installation.
                 MacroStore.current(targetContext).let { file ->
                     if (!file.exists()) file.writeText(BuiltInMacros.create("", 1, false))
@@ -113,7 +116,7 @@ class UiSmoke : Instrumentation() {
                     File(dest, "startup-accessibility.txt").writeBytes(it.readBytes())
                 }
             }
-            if (teachingOnly) {
+            if (teachingOnly || edgeOnly) {
                 runOnMainSync { bootstrapActivity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
                 check(
                     awaitStartup {
@@ -121,8 +124,15 @@ class UiSmoke : Instrumentation() {
                     }
                 ) { "Teaching smoke did not enter landscape" }
                 waitForIdleSync()
-                GestureCalibrationSmoke.run(this, startupService!!, automation)
-                result.putString("stream", "TEACHING_SMOKE_OK: synthetic editor, real input, navigation and safety checks passed\n")
+                if (edgeOnly) {
+                    // Kept independent of the original API30 suite: platform window publication is
+                    // itself an assertion, never inferred from a visible synthetic surface.
+                    TeachingEdgeDeviceSmoke.run(this, startupService!!, automation)
+                    result.putString("stream", "EDGE_SMOKE_OK: real foreign window identity, clear tap and blocked paths passed\n")
+                } else {
+                    GestureCalibrationSmoke.run(this, startupService!!, automation)
+                    result.putString("stream", "TEACHING_SMOKE_OK: synthetic editor, real input, navigation and safety checks passed\n")
+                }
                 finish(Activity.RESULT_OK, result)
                 return
             }

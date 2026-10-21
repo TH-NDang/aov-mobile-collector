@@ -22,6 +22,10 @@ import java.nio.file.Files;
 
 /** CI-only foreign application window. No overlay permission, account, network, or game data. */
 public class EdgeHandleActivity extends Activity {
+    private static final int EDGE_LEFT = 1;
+    private static final int EDGE_TOP = 100;
+    private static final int EDGE_WIDTH = 60;
+    private static final int EDGE_HEIGHT = 200;
     private int touches;
     private PopupWindow panel;
 
@@ -42,8 +46,10 @@ public class EdgeHandleActivity extends Activity {
         params.gravity = Gravity.TOP | Gravity.LEFT;
         params.x = 0;
         params.y = 0;
-        params.width = 1;
-        params.height = 1;
+        // Child placement is screen-relative, but Android still clips its visible frame to the
+        // attached parent. Enclose the real receiver without making this host touchable.
+        params.width = EDGE_LEFT + EDGE_WIDTH;
+        params.height = EDGE_TOP + EDGE_HEIGHT;
         params.setFitInsetsTypes(0);
         getWindow().setAttributes(params);
 
@@ -71,7 +77,7 @@ public class EdgeHandleActivity extends Activity {
             }
             return true;
         });
-        panel = new PopupWindow(handle, 60, 200, false);
+        panel = new PopupWindow(handle, EDGE_WIDTH, EDGE_HEIGHT, false);
         panel.setWindowLayoutType(WindowManager.LayoutParams.TYPE_APPLICATION_PANEL);
         panel.setTouchable(true);
         panel.setTouchModal(false);
@@ -88,7 +94,7 @@ public class EdgeHandleActivity extends Activity {
         decor.post(() -> {
             if (!isFinishing() && !isDestroyed()) {
                 // showAtLocation uses this actual attached decor's window token, not an app token.
-                panel.showAtLocation(decor, Gravity.TOP | Gravity.LEFT, 1, 100);
+                panel.showAtLocation(decor, Gravity.TOP | Gravity.LEFT, EDGE_LEFT, EDGE_TOP);
             }
         });
         persist();

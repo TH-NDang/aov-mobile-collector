@@ -104,3 +104,66 @@ jobs:
           cp app/build/outputs/apk/debug/app-universal-debug.apk aov-mobile-collector-v0.3.1.apk
           gh release create v0.3.1 aov-mobile-collector-v0.3.1.apk --target "$RELEASE_COMMIT" --title 'AOV Collector v0.3.1' --notes 'Fix macro selection by expanding the searchable list inside the existing floating controller. Keeps the v0.3 signing key and saved collections. Built and checked with UI regression, OCR and Android lint.'
 
+
+  edge-api34:
+    name: API 34 real edge-window regression
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Independent of the mandatory API30 job: unsupported synthetic window publication
+    # must remain a visible failed result, not prevent the original full suite from running.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build the same collector and offline test fixtures
+        run: |
+          base64 --decode debug-keystore.base64 > collector-debug.keystore
+          gradle --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :chat-fixture:assembleDebug :game-fixture:assembleDebug
+      - name: Enable emulator acceleration
+        run: sudo chmod 666 /dev/kvm
+      - name: Verify real edge topology and injected input on the phone API level
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            adb install -r app/build/outputs/apk/debug/app-universal-debug.apk
+            adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb install -r chat-fixture/build/outputs/apk/debug/chat-fixture-debug.apk
+            # Synthetic fixtures only. No actual game or account is used.
+            adb install -r game-fixture/build/outputs/apk/debug/game-fixture-debug.apk
+            adb shell cmd overlay enable --user 0 com.android.internal.systemui.navbar.threebutton
+            adb shell am instrument -w -e edge_only true vn.ndang.aovcollector.test/vn.ndang.aovcollector.UiSmoke > edge-smoke-result.txt
+            cat edge-smoke-result.txt
+            mkdir -p edge-smoke
+            adb logcat -d -s AndroidRuntime > edge-smoke/crash-log.txt
+            adb exec-out run-as vn.ndang.aovcollector tar -C files/smoke -cf - . > edge-smoke.tar
+            tar -xf edge-smoke.tar -C edge-smoke
+            grep -q EDGE_SMOKE_OK edge-smoke-result.txt
+      - name: Report edge integration coverage explicitly
+        if: always()
+        run: |
+          if grep -q EDGE_SMOKE_OK edge-smoke-result.txt 2>/dev/null; then
+            echo 'API34 edge integration passed: real foreign window identity, actual clear tap and blocked paths.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'API34 edge integration NOT VERIFIED. This job failed; no unsupported topology is counted as a pass. Inspect edge-smoke-api34 diagnostics. API30 original smoke and phone-geometry unit tests are separate results.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: edge-smoke-api34
+          path: |
+            edge-smoke
+            edge-smoke-result.txt

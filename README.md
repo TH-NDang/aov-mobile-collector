@@ -6,6 +6,8 @@ Báo cáo trên máy thật xác định W01 do hai cửa sổ nhỏ, không có
 
 Trước khi đóng bảng chỉnh và trước từng đoạn chạm/vuốt, app kiểm tra lại cửa sổ và **toàn bộ vùng đường chạm**, kể cả khoảng cách an toàn với mọi cửa sổ khác. Chạm/vuốt gần hoặc xuyên thanh bên vẫn bị chặn với W11; thanh mở rộng, có tiêu điểm, cửa sổ nổi/chia đôi, vùng không xác định và lớp trợ năng khác vẫn bị từ chối. Không tự thử lại thao tác khi chỉnh từng bước. Kiểm thử dùng cửa sổ và bộ nhận chạm giả lập, không đăng nhập game; kết quả trên máy thật vẫn cần được xác nhận.
 
+Kiểm thử CI tách rõ hai phần: API 30 vẫn bắt buộc chạy chạm/vuốt thật, Home/đa nhiệm, chặn sai ứng dụng, hủy và toàn bộ bộ kiểm thử cũ; các mẫu cửa sổ đúng báo cáo trên máy được kiểm bằng unit test. Cửa sổ thanh bên giả lập chạy riêng trên API 34, cùng phiên bản Android của báo cáo. Nếu Android không công bố cửa sổ giả qua trợ năng, phần này báo thất bại/chưa xác minh, **không tính là đã kiểm thử thành công** và không làm bỏ qua bộ kiểm thử API 30. Kết quả mô phỏng không thay thế xác nhận trên máy thật.
+
 ## v0.13.14: lý do chặn thao tác chỉnh từng bước
 
 Nếu **Chạy bước / Tiếp** bị chặn trước khi chạm game, bảng chỉnh hiện mã và lý do cụ thể thay cho thông báo chung. Bấm **Chép lý do lỗi** để chép báo cáo rồi tự dán khi cần hỗ trợ. Báo cáo chỉ gồm phiên bản, kích thước/vùng an toàn màn hình và loại/vị trí/trạng thái cửa sổ; không lấy ảnh màn hình, chữ trong game, tài khoản hay tên ứng dụng khác. Chỉ thao tác bấm nút chép mới ghi clipboard; báo cáo không tự gửi đi hoặc lưu vào lịch sử thu thập.
