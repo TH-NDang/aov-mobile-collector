@@ -25,11 +25,13 @@ import org.json.JSONObject
 class UiSmoke : Instrumentation() {
     private var teachingOnly = false
     private var edgeOnly = false
+    private var metricsProbe = false
 
     override fun onCreate(arguments: Bundle?) {
         super.onCreate(arguments)
         teachingOnly = arguments?.getString("teaching_only") == "true"
         edgeOnly = arguments?.getString("edge_only") == "true"
+        metricsProbe = arguments?.getString("metrics_probe") == "true"
         start()
     }
 
@@ -46,8 +48,8 @@ class UiSmoke : Instrumentation() {
             fun shell(command: String) {
                 android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand(command)).use { it.readBytes() }
             }
-            check(!(teachingOnly && edgeOnly)) { "Choose only one focused smoke suite" }
-            if (teachingOnly || edgeOnly) {
+            check(listOf(teachingOnly, edgeOnly, metricsProbe).count { it } <= 1) { "Choose only one focused smoke suite" }
+            if (teachingOnly || edgeOnly || metricsProbe) {
                 // The dedicated CI smoke starts from a fresh disposable app installation.
                 MacroStore.current(targetContext).let { file ->
                     if (!file.exists()) file.writeText(BuiltInMacros.create("", 1, false))
@@ -115,6 +117,12 @@ class UiSmoke : Instrumentation() {
                 android.os.ParcelFileDescriptor.AutoCloseInputStream(automation.executeShellCommand("dumpsys accessibility")).use {
                     File(dest, "startup-accessibility.txt").writeBytes(it.readBytes())
                 }
+            }
+            if (metricsProbe) {
+                val outcome = TeachingMetricsProbe.run(this, bootstrapActivity, automation)
+                result.putString("stream", "METRICS_PROBE_RECORDED: $outcome; diagnostic collection only, not a gesture/safety pass\n")
+                finish(Activity.RESULT_OK, result)
+                return
             }
             if (teachingOnly || edgeOnly) {
                 runOnMainSync { bootstrapActivity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }

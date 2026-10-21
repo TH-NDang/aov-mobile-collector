@@ -36,6 +36,8 @@ gradle assembleDebug lintDebug
 ```
 Mở thư mục bằng Android Studio hoặc chạy workflow; Gradle wrapper chưa được đóng gói.
 
+Workflow thủ công có tùy chọn `metrics_probe=true` để ghi một thí nghiệm hữu hạn xoay ngang rồi kết nối lại dịch vụ trên API 30. Commit có nhãn `[metrics probe]` cũng chạy thêm thí nghiệm này song song, vẫn giữ các kiểm thử thông thường. Chế độ chẩn đoán chỉ so sánh cấu hình/ngữ cảnh/vùng cửa sổ, không gửi thao tác chạm và không thay thế hay tính là đã vượt các kiểm thử thông thường. Kết quả không đồng nhất được ghi là chưa giải quyết; không xoay/kết nối lại nhiều lần để ép thành công.
+
 ## Giới hạn
 Screenshot cần API 30+, có thể thất bại nếu game chặn chụp. Nút Dừng hủy các bước tiếp theo; một gesture/screenshot đã gửi Android có thể vẫn hoàn thành. Tạm dừng khi bước đang chạy sẽ chờ hoàn tất bước đó rồi lưu checkpoint; riêng bước vào game và bước lấy chiêu bị ngắt ngay và làm lại từ đầu khi Tiếp tục. Nếu app bị kill giữa một bước, bước đó có thể chạy lại khi tiếp tục. Thay đổi UI/độ phân giải/tỉ lệ màn hình có thể làm tọa độ lệch; chuẩn hóa tỉ lệ không thay thế hiệu chỉnh. Một popup hệ thống hoặc rời game sẽ tạm dừng. Không có bảo đảm phát hiện mọi popup Unity.
 

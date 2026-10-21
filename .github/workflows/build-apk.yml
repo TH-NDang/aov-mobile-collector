@@ -3,13 +3,19 @@ on:
   push:
     branches: [main, codex/chess-encyclopedia-collector, codex/chess-hero-row-capture-fix, codex/chess-verified-title-progress, codex/fix-statistics-warzone-filter]
   workflow_dispatch:
+    inputs:
+      metrics_probe:
+        description: 'Collect bounded API30 rotation/rebind metrics only; no gestures or production verification'
+        type: boolean
+        default: false
 concurrency:
-  group: collector-build-${{ github.ref }}
+  group: collector-build-${{ github.ref }}-${{ inputs.metrics_probe || false }}
   cancel-in-progress: true
 permissions:
   contents: write
 jobs:
   build:
+    if: ${{ !inputs.metrics_probe }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -106,6 +112,7 @@ jobs:
 
 
   edge-api34:
+    if: ${{ !inputs.metrics_probe }}
     name: API 34 real edge-window regression
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -167,3 +174,65 @@ jobs:
           path: |
             edge-smoke
             edge-smoke-result.txt
+
+  metrics-probe:
+    name: API 30 geometry diagnostics (no gestures)
+    if: ${{ (github.event_name == 'workflow_dispatch' && inputs.metrics_probe) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[metrics probe]')) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Check Kotlin formatting
+        run: ./tools/ktlint
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
+          log-accepted-android-sdk-licenses: false
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Build diagnostic instrumentation and offline fixture
+        run: |
+          base64 --decode debug-keystore.base64 > collector-debug.keystore
+          gradle --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest :game-fixture:assembleDebug
+      - name: Enable emulator acceleration
+        run: sudo chmod 666 /dev/kvm
+      - name: Record one bounded landscape-rebind experiment
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            adb install -r app/build/outputs/apk/debug/app-universal-debug.apk
+            adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb install -r game-fixture/build/outputs/apk/debug/game-fixture-debug.apk
+            adb shell cmd overlay enable --user 0 com.android.internal.systemui.navbar.threebutton
+            adb shell am instrument -w -e metrics_probe true vn.ndang.aovcollector.test/vn.ndang.aovcollector.UiSmoke > metrics-probe-result.txt
+            cat metrics-probe-result.txt
+            mkdir -p metrics-probe
+            adb logcat -d -s AndroidRuntime > metrics-probe/crash-log.txt
+            adb exec-out run-as vn.ndang.aovcollector tar -C files/smoke -cf - . > metrics-probe.tar
+            tar -xf metrics-probe.tar -C metrics-probe
+            # This marker means the bounded evidence was recorded, not that geometry or input passed.
+            grep -q METRICS_PROBE_RECORDED metrics-probe-result.txt
+      - name: State diagnostic-only coverage
+        if: always()
+        run: |
+          echo 'Diagnostic experiment only. This job injects no gestures and does not run or count normal API30/API34 regression gates; parallel normal jobs have separate results.' >> "$GITHUB_STEP_SUMMARY"
+          grep METRICS_PROBE_RECORDED metrics-probe-result.txt >> "$GITHUB_STEP_SUMMARY" || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: metrics-probe-api30
+          path: |
+            metrics-probe
+            metrics-probe-result.txt
