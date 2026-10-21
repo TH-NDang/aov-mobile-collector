@@ -253,7 +253,9 @@ class CollectorService : AccessibilityService() {
     private fun previewTeaching(
         action: CalibrationAction,
         result: (Boolean) -> Unit,
-        fixtureDispatch: ((CalibrationAction, List<CalibrationPoint>, (Boolean) -> Unit) -> Unit)? = null
+        fixtureDispatch: ((CalibrationAction, List<CalibrationPoint>, (Boolean) -> Unit) -> Unit)? = null,
+        targetBounds: GameScreens.Word? = null,
+        verifyFinal: ((List<CalibrationPoint>, (Boolean) -> Unit) -> Unit)? = null
     ) {
         if (!teaching || !running || calibrationEditor != null) return result(false)
         val token = generation
@@ -286,6 +288,11 @@ class CollectorService : AccessibilityService() {
                     profile != currentProfile -> "display-profile-changed"
                     gesturesInFlight > 0 -> "gesture-in-flight"
                     !validPoints -> "invalid-points"
+                    base.id.startsWith("pro.v1.") && !ProGestureSafety.valid(base, points, targetBounds) -> "target-bounds-changed"
+                    targetBounds != null &&
+                        points.any {
+                            it.x !in targetBounds.left..targetBounds.right || it.y !in targetBounds.top..targetBounds.bottom
+                        } -> "target-bounds-changed"
                     !gameAllowed -> "window-safety-denied"
                     else -> null
                 }
@@ -299,32 +306,54 @@ class CollectorService : AccessibilityService() {
                     )
                     done(false)
                 } else {
-                    calibrationEditor?.close(notify = false)
-                    calibrationEditor = null
-                    teachingWaitMs += SystemClock.elapsedRealtime() - teachingWaitStarted
-                    teachingWaitStarted = 0L
-                    calibrationTesting = true
-                    teachingDispatch = true
-                    val completed: (Boolean) -> Unit = { ok ->
-                        calibrationTesting = false
-                        done(ok)
-                        if (teaching && token == generation) result(ok)
-                    }
-                    if (fixtureDispatch != null) {
-                        fixtureDispatch(base, points, completed)
-                    } else {
-                        touchGameTarget(gestures, points.size == 1, null, base.label, completed)
-                    }
-                    teachingDispatch = false
-                    handler.postDelayed({
-                        if (teaching &&
-                            token == generation &&
-                            session == calibrationSession &&
-                            calibrationTesting
-                        ) {
-                            endTeaching("Android chưa hoàn tất thao tác; đã dừng chỉnh an toàn")
+                    val dispatchVerified = {
+                        if (!teaching || token != generation || session != calibrationSession || profile != calibrationProfile()) {
+                            done(false)
+                        } else {
+                            calibrationEditor?.close(notify = false)
+                            calibrationEditor = null
+                            teachingWaitMs += SystemClock.elapsedRealtime() - teachingWaitStarted
+                            teachingWaitStarted = 0L
+                            calibrationTesting = true
+                            teachingDispatch = true
+                            val completed: (Boolean) -> Unit = { ok ->
+                                calibrationTesting = false
+                                done(ok)
+                                if (teaching && token == generation) result(ok)
+                            }
+                            if (fixtureDispatch != null) {
+                                fixtureDispatch(base, points, completed)
+                            } else {
+                                touchGameTarget(gestures, points.size == 1, null, base.label, completed)
+                            }
+                            teachingDispatch = false
+                            handler.postDelayed({
+                                if (teaching &&
+                                    token == generation &&
+                                    session == calibrationSession &&
+                                    calibrationTesting
+                                ) {
+                                    endTeaching("Android chưa hoàn tất thao tác; đã dừng chỉnh an toàn")
+                                }
+                            }, base.durationMs + base.holdMs + 5000)
                         }
-                    }, base.durationMs + base.holdMs + 5000)
+                    }
+                    if (verifyFinal == null) {
+                        dispatchVerified()
+                    } else {
+                        verifyFinal(points) { verified ->
+                            if (verified) {
+                                dispatchVerified()
+                            } else {
+                                done(false)
+                                if (teaching &&
+                                    token == generation
+                                ) {
+                                    endTeaching("Đề cử đã thay đổi khi chỉnh; chưa bấm Dùng combo. Mở lại đúng danh sách rồi chỉnh tiếp.")
+                                }
+                            }
+                        }
+                    }
                 }
             },
             closed = { endTeaching("Đã dừng chỉnh từng bước; các điểm đã lưu được giữ lại") },
@@ -475,6 +504,7 @@ class CollectorService : AccessibilityService() {
         val done = index.coerceIn(0, total)
         if (m.json.optString("collectionMode") == "ranking") return "Thống kê tướng · ${clock(elapsed())}" + left(m)
         if (m.json.optString("collectionMode") == "board") return "Chiến khu · ${clock(elapsed())}" + left(m)
+        if (m.json.optString("collectionMode") == "pro-builds") return "Đề cử Pro · ${photosTaken(m)} ảnh · ${clock(elapsed())}"
         if (m.json.optString("collectionMode") == "chess") return "Cờ Liên Quân · ${photosTaken(m)} ảnh · ${clock(elapsed())}"
         val head = if (all) {
             "Tướng ${minOf(
@@ -1186,7 +1216,7 @@ class CollectorService : AccessibilityService() {
         choose?.isEnabled = !isWorking
         choose?.alpha = if (isWorking) .45f else 1f
         // Chess discovers heroes while scrolling; macro step count is not collection progress.
-        val unknownChessTotal = m != null && m.json.optString("collectionMode") == "chess" && step < m.steps.length()
+        val unknownChessTotal = m != null && m.json.optString("collectionMode") in setOf("chess", "pro-builds") && step < m.steps.length()
         progress?.isIndeterminate = unknownChessTotal && running
         progress?.visibility = if (unknownChessTotal && !running) View.GONE else View.VISIBLE
         progress?.progress = if (unknownChessTotal) {
@@ -1327,7 +1357,8 @@ class CollectorService : AccessibilityService() {
                 "Lấy thông tin tướng" to "Theo tên, các ô đầu danh sách hoặc tướng đang mở",
                 "Thống kê tướng" to "Bảng xếp hạng tướng trong Cộng đồng",
                 "Chiến khu" to "Bảng xếp hạng người chơi của từng tướng",
-                "Cờ Liên Quân · Bách khoa" to "Chọn từng mục, tab, chi tiết; cuộn hết trang và lưu theo thư mục"
+                "Cờ Liên Quân · Bách khoa" to "Chọn từng mục, tab, chi tiết; cuộn hết trang và lưu theo thư mục",
+                "Đề cử Pro · Combo tướng" to "Tất cả tướng · tối đa 5 combo · kết thúc giữ top 1"
             ) +
                 saved.map { it.name to "Macro đã nhập" }
         var visible = choices.indices.toList()
@@ -1389,7 +1420,8 @@ class CollectorService : AccessibilityService() {
                     1 -> rankingForm()
                     2 -> boardForm()
                     3 -> chessForm()
-                    else -> selectMacro(saved[i - 4].raw)
+                    4 -> proBuildsForm()
+                    else -> selectMacro(saved[i - 5].raw)
                 }
             }
         }
@@ -2230,6 +2262,114 @@ class CollectorService : AccessibilityService() {
      * Adapter to Android's screenshot/gesture APIs. Each image is written before the reader advances.
      * The progress ledger lets a paused/restarted step revisit the encyclopedia without resaving finished topics.
      */
+    private fun proBuildsForm() {
+        val dialog = AlertDialog.Builder(themed()).setTitle("Đề cử Pro · Combo tướng")
+            .setMessage(
+                "Mở sảnh chính hoặc Chuẩn bị trong game trước. Thu thập lần lượt tất cả tướng, tối đa 5 combo Pro thực có; mỗi combo được áp dụng rồi mới chụp. Cuối mỗi tướng giữ đúng top 1 ban đầu, không khôi phục bộ cũ. Không tự đăng nhập, không dùng Lưu ảnh của game. Nếu không xác minh được màn hình hoặc thao tác đã áp dụng, lượt dừng để kiểm tra."
+            )
+            .setPositiveButton("Chọn tác vụ") { _, _ -> selectMacro(BuiltInMacros.proBuilds()) }
+            .setNegativeButton("Hủy", null).create()
+        dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
+        dialog.show()
+    }
+
+    /** Pro readers never bypass the existing foreground, path, cancellation, or screenshot shields. */
+    private fun proBuilds(step: JSONObject, alive: () -> Boolean, finish: (String?) -> Unit) {
+        val dryRun = teaching
+        val adapterRun = runId
+        val host = object : ProCollectionSession.Host {
+            override val dryRun = dryRun
+            override val root = File(filesDir, "captures/$adapterRun")
+
+            override fun post(ms: Long, then: () -> Unit) {
+                handler.postDelayed({ if (alive()) then() }, ms)
+            }
+
+            override fun report(text: String) {
+                if (alive()) {
+                    lastStatus = text
+                    refreshPanel()
+                }
+            }
+
+            override fun error(error: Exception) {
+                CrashLog.record(this@CollectorService, "Không ghi được tiến độ Pro", error)
+            }
+
+            override fun store(bitmap: Bitmap, name: String, then: (Boolean) -> Unit) =
+                readerStore(bitmap, adapterRun, dryRun, alive, name, then)
+
+            override fun read(then: (Bitmap, List<GameScreens.Word>) -> Unit) {
+                if (!alive()) return
+                if (filesDir.usableSpace < 30L * 1024 * 1024) {
+                    finish("Không đủ dung lượng để thu thập Pro")
+                    return
+                }
+                grab(anyApp = false) { bitmap ->
+                    if (bitmap == null) {
+                        if (alive()) finish("Không chụp được màn hình Pro")
+                        return@grab
+                    }
+                    try {
+                        io.execute {
+                            val words = try {
+                                GameText.words(bitmap).filter { it.bottom < .97 }
+                            } catch (_: Exception) {
+                                null
+                            }
+                            handler.post {
+                                if (!alive()) {
+                                    bitmap.recycle()
+                                } else if (words == null) {
+                                    bitmap.recycle()
+                                    finish("Không đọc được màn hình Pro")
+                                } else {
+                                    then(bitmap, words)
+                                }
+                            }
+                        }
+                    } catch (_: Exception) {
+                        bitmap.recycle()
+                        if (alive()) finish("Không thể đọc ảnh Pro lúc này")
+                    }
+                }
+            }
+
+            override fun touch(
+                action: CalibrationAction,
+                target: GameScreens.Word?,
+                verify: (
+                    (List<CalibrationPoint>, (Boolean) -> Unit) -> Unit
+                )?,
+                then: (Boolean) -> Unit
+            ) {
+                if (!alive()) return
+                val resolved = calibrationStore.resolve(calibrationProfile(), action)
+                if (!ProGestureSafety.valid(action, resolved, target)) {
+                    then(false)
+                    return
+                }
+                val dispatch = {
+                    if (alive()) {
+                        touchGameTarget(
+                            calibrationGestures(action, resolved),
+                            resolved.size == 1,
+                            target,
+                            action.label,
+                            then,
+                            action = action,
+                            retryAllowed = false,
+                            verifyFinal = verify
+                        )
+                    }
+                }
+                // Runtime and the final live teaching click both reobserve the exact recommendation.
+                if (teaching || verify == null) dispatch() else verify(resolved) { if (it) dispatch() else then(false) }
+            }
+        }
+        ProCollectionSession(host, alive, finish).start(step)
+    }
+
     private fun chess(alive: () -> Boolean, finish: (ChessWikiReader.Outcome) -> Unit) {
         val dryRun = teaching
         val adapterRun = runId
@@ -3072,14 +3212,16 @@ class CollectorService : AccessibilityService() {
         try {
             val m = readMacro()
             val mode = m.json.optString("collectionMode")
-            if (mode !in setOf("single", "all", "pick", "ranking", "board", "chess") ||
+            if (mode !in setOf("single", "all", "pick", "ranking", "board", "chess", "pro-builds") ||
                 m.json.optInt("builtinVersion", 1) == BuiltInMacros.VERSION
             ) {
                 return
             }
             val step = if (prefs.getString("hash", "") == m.hash) prefs.getInt("step", 0) else 0
             if (step > 0 && step < m.steps.length() && !prefs.getBoolean("stopped", false)) return
-            if (mode == "chess") {
+            if (mode == "pro-builds") {
+                MacroStore.current(this).writeText(BuiltInMacros.proBuilds(m.json.optInt("heroCount", BuiltInMacros.ALL)))
+            } else if (mode == "chess") {
                 MacroStore.current(this).writeText(BuiltInMacros.chess(BuiltInMacros.chessOptions(m.json)))
             } else if (mode ==
                 "board"
@@ -3355,6 +3497,7 @@ class CollectorService : AccessibilityService() {
                 "ranking" -> 2_700_000L
                 "board" -> 43_200_000L
                 "chess" -> 43_200_000L
+                "pro-builds" -> 43_200_000L
                 else -> 10000L
             }
             val beganAt = SystemClock.elapsedRealtime()
@@ -3373,7 +3516,7 @@ class CollectorService : AccessibilityService() {
             handler.postDelayed({ checkTimeout() }, limit)
             // Its callbacks see the step finished and stop; a tap already sent still lands.
             if (type in
-                setOf("enter", "skills", "ranking", "board", "chess", "find")
+                setOf("enter", "skills", "ranking", "board", "chess", "pro-builds", "find")
             ) {
                 cancelStep =
                     {
@@ -3440,6 +3583,12 @@ class CollectorService : AccessibilityService() {
                             }
                             is BoardReader.Outcome.Failed -> done(false, outcome.reason)
                         }
+                    }
+                }
+                "pro-builds" -> {
+                    proBuilds(s, { !finished && token == generation }) { reason ->
+                        if (finished || token != generation) return@proBuilds
+                        done(reason == null, reason)
                     }
                 }
                 "chess" -> {
@@ -3576,19 +3725,21 @@ class CollectorService : AccessibilityService() {
         label: String?,
         result: (Boolean) -> Unit,
         onSession: ((Long) -> Unit)? = null,
-        action: CalibrationAction? = null
+        action: CalibrationAction? = null,
+        retryAllowed: Boolean = true,
+        verifyFinal: ((List<CalibrationPoint>, (Boolean) -> Unit) -> Unit)? = null
     ) {
         if (teaching && !teachingEntry && !teachingDispatch) {
             if (action == null) {
                 endTeaching("Thao tác chưa có định danh an toàn để chỉnh; đã dừng trước khi chạm game")
                 return
             }
-            previewTeaching(action, result)
+            previewTeaching(action, result, targetBounds = if (action.id.startsWith("pro.v1.")) target else null, verifyFinal = verifyFinal)
             return
         }
         if (calibrationEditor != null && !calibrationTesting) return result(false)
         val debugSession = debugGeneration
-        val allowRetries = !calibrationTesting && !teaching
+        val allowRetries = retryAllowed && !calibrationTesting && !teaching
         val session = captureShield.acquire()
         onSession?.invoke(session)
         var finished = false
@@ -4235,6 +4386,9 @@ class CollectorService : AccessibilityService() {
     /** Photos of the run on disk: with skill rows read at run time, the macro alone cannot tell. */
     private fun photosTaken(m: Macro): Int = when {
         !m.photosVary || runId.isEmpty() -> m.photoSteps.size
+        m.json.optString("collectionMode") == "pro-builds" -> File(filesDir, "captures/$runId").walk().count {
+            it.isFile && it.extension == "png" && (it.name.contains("-top-") || it.name.endsWith("-empty-pro-list.png"))
+        }
         m.json.optString("collectionMode") == "chess" -> File(filesDir, "captures/$runId").walk().count {
             it.isFile &&
                 it.extension == "png" &&
@@ -4665,6 +4819,9 @@ class CollectorService : AccessibilityService() {
     private fun photoDirectory(folder: String, name: String, bitmap: Bitmap): File {
         val base = File(filesDir, "captures/$folder").apply { mkdirs() }
         val m = macro ?: return base
+        if (folder != "manual" && m.json.optString("collectionMode") == "pro-builds") {
+            ProCaptureFiles.hero(name)?.let { return File(base, it).apply { mkdirs() } }
+        }
         // Each table of the hero statistics in a folder of its own.
         if (folder != "manual" && m.json.optString("collectionMode") == "ranking") {
             return RankScreens.COMBOS.firstOrNull { name.contains("-${it.slug}-") }?.let { File(base, it.slug).apply { mkdirs() } } ?: base
@@ -4872,11 +5029,11 @@ class CollectorService : AccessibilityService() {
                 var record: Long? = null
                 val ok = try {
                     val dir = photoDirectory(folder, name, bitmap)
-                    val basename = ChessCaptureFiles.screenshotBase(name)
+                    val basename = ProCaptureFiles.basename(name) ?: ChessCaptureFiles.screenshotBase(name)
                     val target = File(dir, "$basename.png")
                     // A stop after PNG commit but before the progress journal must not overwrite
                     // an earlier numbered detail. Reuse only a visually matching existing image.
-                    if (basename != name && target.isFile && target.length() > 0) {
+                    if (ProCaptureFiles.hero(name) == null && basename != name && target.isFile && target.length() > 0) {
                         val previous = BitmapFactory.decodeFile(target.absolutePath)
                             ?: error("Không đọc được ảnh chi tiết đã có: " + basename)
                         try {

@@ -14,6 +14,7 @@ internal object CalibrationCatalog {
         val mode = macro.optString("collectionMode")
         val canonicalName = when (mode) {
             "chess" -> "chess-wiki"
+            "pro-builds" -> "pro-builds"
             "ranking" -> "hero-ranking"
             "all" -> "batch-heroes"
             "pick" -> "named-heroes"
@@ -28,6 +29,7 @@ internal object CalibrationCatalog {
         }
         return when (mode) {
             "chess" -> chess(macro)
+            "pro-builds" -> proBuilds()
             "ranking" -> ranking(macro)
             else -> heroes()
         }
@@ -52,6 +54,22 @@ internal object CalibrationCatalog {
                 holdMs = if (kotlin.math.abs(x - toX) < .003) timing.hold else 0
             )
         )
+
+    private fun proBuilds(): List<CalibrationStep> = listOf(
+        recognized("pro.v1.lobby.equipment", "Sảnh: Trang bị", "Mở sảnh game; nhận diện chữ Trang bị ở thanh dưới."),
+        tap("pro.v1.picker.open", "Pro: đổi tướng", "Mở Chuẩn bị; đặt vào hai mũi tên dưới danh sách bên trái.", .094, .821),
+        recognized("pro.v1.picker.all", "Pro: Tất cả tướng", "Mở Chọn tướng; chọn tab Tất cả."),
+        recognized(
+            "pro.v1.picker.owned-filter",
+            "Pro: bỏ Đã nhận",
+            "Chỉ chạy khi đọc rõ ô đang được tick; xác minh tắt trước khi chọn tướng."
+        ),
+        recognized("pro.v1.picker.card", "Pro: chọn tướng", "Điểm được đo trên thẻ; không chọn nút mua hoặc nhận tướng."),
+        recognized("pro.v1.other", "Pro: Phương án khác", "Mở Chuẩn bị của đúng tướng."),
+        recognized("pro.v1.tab", "Pro: Đề cử Pro", "Mở Hệ thống đề xuất; chọn tab Đề cử Pro."),
+        recognized("pro.v1.apply", "Pro: Dùng combo", "Chỉ trong nút của đúng đề cử đã nhận diện; điểm ngoài nút bị từ chối."),
+        tap("pro.v1.popup.close", "Pro: đóng đề xuất", "Đóng cửa sổ Hệ thống đề xuất bằng dấu X.", .824, .111)
+    )
 
     private fun chess(macro: JSONObject): List<CalibrationStep> = buildList {
         val selected = macro.optJSONArray("chessTopics")

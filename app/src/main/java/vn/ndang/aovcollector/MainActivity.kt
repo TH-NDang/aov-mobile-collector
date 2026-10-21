@@ -193,6 +193,7 @@ class MainActivity : Activity() {
             "ranking" -> "Thống kê tướng"
             "board" -> "Chiến khu"
             "chess" -> "Cờ Liên Quân · Bách khoa"
+            "pro-builds" -> "Đề cử Pro · Combo tướng"
             else -> if (file.name == "manual") "Chụp nhanh" else "Lượt thu thập"
         }
     }
@@ -1015,6 +1016,7 @@ class MainActivity : Activity() {
         "ranking" -> "Thống kê"
         "board" -> "Chiến khu"
         "chess" -> "Cờ Liên Quân"
+        "pro-builds" -> "Đề cử Pro"
         "custom" -> "Macro"
         else -> if (file.name == "manual") "Chụp nhanh" else null
     }

@@ -26,7 +26,7 @@ class Macro(val raw: String) {
     val photosVary: Boolean by lazy {
         (0 until steps.length()).any {
             steps.getJSONObject(it).getString("type") in
-                setOf("skills", "ranking", "board", "chess")
+                setOf("skills", "ranking", "board", "chess", "pro-builds")
         }
     }
     val hash = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray()).joinToString("") { "%02x".format(it) }
@@ -91,6 +91,10 @@ class Macro(val raw: String) {
                     }
                 }
                 "skills" -> require(s.getString("prefix").matches(Regex("[a-zA-Z0-9_-]{1,40}"))) { "skills: prefix không hợp lệ" }
+                "pro-builds" -> {
+                    require(json.optString("collectionMode") == "pro-builds") { "pro-builds: không đúng chế độ" }
+                    require(s.getInt("heroes") in 1..BuiltInMacros.ALL) { "pro-builds: số tướng không hợp lệ" }
+                }
                 "chess" -> {
                     require(json.optString("collectionMode") == "chess") { "chess: không đúng chế độ" }
                     require((json.optJSONArray("chessTopics")?.length() ?: 0) in 1..ChessWiki.TOPICS.size) {
@@ -115,10 +119,20 @@ class Macro(val raw: String) {
 /** Coordinates calibrated from the user's 2400x1080 VN hero menu. */
 object BuiltInMacros {
     /** Bump when the generated steps change; selected built-in macros are then regenerated with the same settings. */
-    const val VERSION = 7
+    const val VERSION = 8
 
     /** "Tất cả": more cards than the game has; the run stops at the end of the list. */
     const val ALL = 300
+
+    /** Preparation-only collection. Never launches, signs in, or reads account data. */
+    fun proBuilds(heroes: Int = ALL): String {
+        require(heroes in 1..ALL)
+        return JSONObject().put("name", "pro-builds").put("targetPackage", "com.garena.game.kgvn")
+            .put("orientation", "landscape").put("collectionMode", "pro-builds")
+            .put("heroCount", heroes).put("builtinVersion", VERSION)
+            .put("steps", org.json.JSONArray().put(JSONObject().put("type", "pro-builds").put("heroes", heroes)))
+            .toString(2)
+    }
 
     /**
      * [fast] shortens the waits after taps (tab switches most); [detailOnly] skips the summary ("Tóm tắt")

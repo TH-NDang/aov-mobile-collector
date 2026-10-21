@@ -1,5 +1,11 @@
 # AOV Mobile Collector — v0.13.0
 
+## v0.13.16: thu thập combo Đề cử Pro
+
+Thêm tác vụ **Đề cử Pro · Combo tướng**: từ sảnh → Trang bị → đổi tướng, bỏ Đã nhận khi đang tick, duyệt danh sách đầy đủ. Mỗi tướng lấy tối đa năm combo thực có, chụp Chuẩn bị sau khi xác minh áp dụng, rồi giữ đúng top 1 ban đầu mà không chụp thêm. Nếu đọc rõ thông báo không có Pro, chụp ngay danh sách trống; tải lỗi hoặc OCR không rõ thì dừng, không báo trống. Có tiến độ bền vững và Chỉnh từng bước dùng cùng thao tác thật, không đăng nhập/mua tướng/Lưu ảnh trong game.
+
+Luồng mới **cần xác nhận trên điện thoại/game thật**. Xác minh so các thành phần combo nhìn thấy và tổng cấp ngọc, không đọc thành phần ngọc ẩn. Xem [hướng dẫn, tiến độ và giới hạn](docs/PRO_BUILDS.md). Không thay đổi các cổng kiểm thử an toàn hiện có.
+
 ## v0.13.15: thao tác an toàn cạnh tay nắm thanh bên
 
 Báo cáo trên máy thật xác định W01 do hai cửa sổ nhỏ, không có tiêu điểm và không hoạt động ở mép trái, trong khi Liên Quân vẫn phủ toàn màn hình và nhận tiêu điểm. Bản này cho phép tối đa hai tay nắm có hình học tương tự: nằm sát mép trái/phải, trong dải cạnh giới hạn theo inset màn hình, kích thước nhỏ và không hoạt động. Không dùng danh sách tên ứng dụng được bỏ qua.
