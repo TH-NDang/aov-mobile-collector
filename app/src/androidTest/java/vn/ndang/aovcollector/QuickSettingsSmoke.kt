@@ -211,7 +211,7 @@ internal object QuickSettingsSmoke {
                     oldState.forEach { (name, value) -> field(name).set(service, value) }
                     field("panelParams").set(service, oldParams)
                     if (hadPanel) invoke("rebuildPanel") else invoke("hidePanel")
-                    invoke("updateGestureDebug")
+                    service.updateGestureDebug()
                 }
                 // Rebuilding/hiding may persist panel metadata; restore exact preference presence as well as values.
                 restore(ui, oldUi)
