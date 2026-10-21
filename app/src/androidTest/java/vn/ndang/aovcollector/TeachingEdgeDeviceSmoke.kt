@@ -46,6 +46,19 @@ internal object TeachingEdgeDeviceSmoke {
 
         fun edgeTouches() = shell(automation, "run-as $EDGE_PACKAGE cat files/edge-touches.txt").trim().toInt()
 
+        fun matchesFixtureWindowId(): Boolean {
+            val fixtureId = shell(automation, "run-as $EDGE_PACKAGE cat files/edge-window-id.txt").trim().toIntOrNull() ?: return false
+            if (fixtureId < 0) return false
+            return main(test) {
+                service.windows.singleOrNull { it.id == fixtureId }?.let {
+                    it.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
+                        it.root?.packageName?.toString() == EDGE_PACKAGE &&
+                        !it.isFocused &&
+                        !it.isActive
+                } == true
+            }
+        }
+
         fun edgeCommand(close: Boolean) {
             val result = shell(automation, "am start -W -n $EDGE_PACKAGE/$EDGE_ACTIVITY --ez close $close")
             commands.appendText("close=$close\n$result\n")
@@ -123,7 +136,8 @@ internal object TeachingEdgeDeviceSmoke {
                             it.bounds.left in 0..2 &&
                             it.bounds.right - it.bounds.left in 1..65 &&
                             it.bounds.bottom - it.bounds.top in 1..205
-                    } == true
+                    } == true &&
+                    matchesFixtureWindowId()
             }
             val edgeBounds = checkNotNull(edge).bounds
 
@@ -138,7 +152,8 @@ internal object TeachingEdgeDeviceSmoke {
                         game?.focused == true &&
                         game.active &&
                         game.bounds == WindowArea(display.left, display.top, display.right, display.bottom) &&
-                        foreign?.let { !it.focused && !it.active && it.bounds == edgeBounds } == true
+                        foreign?.let { !it.focused && !it.active && it.bounds == edgeBounds } == true &&
+                        matchesFixtureWindowId()
                 }
             }
             check(gameEvents().length() == 0 && edgeTouches() == 0)
