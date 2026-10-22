@@ -4,8 +4,12 @@ import kotlin.math.abs
 
 /** Semantic bounds supplement, never replace, foreground/window/path safety. */
 object ProGestureSafety {
+    /** Only permits opening the editor, never its Run/Next dispatch, with a rejected saved override. */
+    fun canPrepare(action: CalibrationAction, points: List<CalibrationPoint>, target: GameScreens.Word?, previewOnly: Boolean): Boolean =
+        (previewOnly && points.size == action.points.size && CalibrationCodec.validPoints(points)) || valid(action, points, target)
+
     fun valid(action: CalibrationAction, points: List<CalibrationPoint>, target: GameScreens.Word? = null): Boolean {
-        if (points.size != action.points.size || points.isEmpty()) return false
+        if (points.size != action.points.size || !CalibrationCodec.validPoints(points)) return false
         if (target != null && points.any { it.x !in target.left..target.right || it.y !in target.top..target.bottom }) return false
         if (points.size == 1) {
             val base = action.points.single()

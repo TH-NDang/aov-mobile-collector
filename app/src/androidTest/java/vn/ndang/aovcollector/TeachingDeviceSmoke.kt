@@ -150,6 +150,14 @@ internal object TeachingDeviceSmoke {
             listOf(CalibrationPoint(.70, .68), CalibrationPoint(.70, .35)),
             durationMs = 400
         )
+        val proFine = CalibrationAction(
+            "pro.v1.list.scroll",
+            "Pro fine scroll regression",
+            listOf(CalibrationPoint(.70, .78), CalibrationPoint(.70, .762)),
+            true,
+            durationMs = 700,
+            holdMs = 450
+        )
         val editedTap = CalibrationPoint(.80, .42)
         val editedEnd = CalibrationPoint(.80, .28)
         val wm = service.getSystemService(WindowManager::class.java)
@@ -478,6 +486,29 @@ internal object TeachingDeviceSmoke {
                 assertNoReplay(2, stale)
                 checks += "Actual SystemUI $navigation touch leaves the fixture, cancels teaching, and cannot replay on return."
             }
+            // Real editor + dispatch half of the Pro adapter regression: the saved coarse
+            // endpoint adjustment is too long for this fine probe. Run must refuse, Reset repairs it.
+            main(test) {
+                val coarse = proFine.copy(points = listOf(CalibrationPoint(.70, .78), CalibrationPoint(.70, .56)))
+                check(store.save(checkNotNull(profile), coarse, listOf(CalibrationPoint(.70, .78), CalibrationPoint(.70, .54))))
+                check(!ProGestureSafety.valid(proFine, store.resolve(checkNotNull(profile), proFine)))
+            }
+            begin(listOf(proFine))
+            click("Chạy bước / Tiếp")
+            main(test) {
+                check(service.calibrationView != null) { "Unsafe saved Pro points closed the repair editor" }
+                check(service.calibrationRefusal?.code == "T09") { "Unsafe Pro override was not rejected by final editor validation" }
+            }
+            SystemClock.sleep(CollectorService.SHIELD_MS + 300)
+            check(events().length() == 2) { "Unsafe saved Pro override reached the game" }
+            click("Mặc định")
+            main(test) { check(store.resolve(checkNotNull(profile), proFine) == proFine.points) }
+            click("Chạy bước / Tiếp")
+            waitFor("Reset Pro fine swipe did not reach the synthetic receiver exactly once") {
+                events().length() == 3 && main(test) { service.calibrationView == null && !service.isWorking }
+            }
+            checkInput(events().getJSONObject(2), pixel(proFine.points.first()), pixel(proFine.points.last()), swipe = true)
+            checks += "Unsafe saved Pro fine-swipe override remains editable, Run refuses without input, Reset then runs exactly once."
         } finally {
             File(diagnostics, "calibration-device-events.json").writeText(
                 runCatching { events().toString(2) }.getOrElse { it.stackTraceToString() }
@@ -492,6 +523,7 @@ internal object TeachingDeviceSmoke {
                 profile?.let {
                     store.reset(it, tap.id)
                     store.reset(it, swipe.id)
+                    store.reset(it, proFine.id)
                 }
             }
             automation.serviceInfo = automation.serviceInfo.apply { flags = originalFlags }

@@ -17,6 +17,9 @@ internal object CalibrationDiagnostics {
             reason == "invalid-points" -> "T06" to "Điểm chạm chưa hợp lệ. Chỉnh lại điểm trước khi chạy."
             reason == "missing-gesture-path" -> "T07" to "Chưa có đường chạm để kiểm tra vùng che. Hủy rồi mở lại."
             reason == "invalid-gesture-path" -> "T08" to "Đường chạm chưa hợp lệ. Chỉnh lại điểm trước khi chạy."
+            reason == "target-bounds-changed" ->
+                "T09" to
+                    "Điểm đã chỉnh vượt vùng/độ dài an toàn của thao tác. Chỉnh lại hoặc chọn Mặc định."
             reason == "application-window-count=0" -> "W00" to "Chưa đọc được cửa sổ game. Chép lý do lỗi để kiểm tra."
             reason.startsWith("application-window-count=") -> "W01" to "Có nhiều cửa sổ ứng dụng. Đóng cửa sổ nổi hoặc chia đôi."
             reason == "foreign-or-unknown-application" -> "W02" to "Chưa xác nhận đúng cửa sổ Liên Quân. Hủy và trở lại game."

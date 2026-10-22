@@ -255,7 +255,8 @@ class CollectorService : AccessibilityService() {
         result: (Boolean) -> Unit,
         fixtureDispatch: ((CalibrationAction, List<CalibrationPoint>, (Boolean) -> Unit) -> Unit)? = null,
         targetBounds: GameScreens.Word? = null,
-        verifyFinal: ((List<CalibrationPoint>, (Boolean) -> Unit) -> Unit)? = null
+        verifyFinal: ((List<CalibrationPoint>, (Boolean) -> Unit) -> Unit)? = null,
+        onFailure: ((GestureFailure) -> Unit)? = null
     ) {
         if (!teaching || !running || calibrationEditor != null) return result(false)
         val token = generation
@@ -324,7 +325,7 @@ class CollectorService : AccessibilityService() {
                             if (fixtureDispatch != null) {
                                 fixtureDispatch(base, points, completed)
                             } else {
-                                touchGameTarget(gestures, points.size == 1, null, base.label, completed)
+                                touchGameTarget(gestures, points.size == 1, null, base.label, completed, onFailure = onFailure)
                             }
                             teachingDispatch = false
                             handler.postDelayed({
@@ -2447,27 +2448,25 @@ class CollectorService : AccessibilityService() {
                 then: (Boolean) -> Unit
             ) {
                 if (!alive()) return
-                val resolved = calibrationStore.resolve(calibrationProfile(), action)
-                if (!ProGestureSafety.valid(action, resolved, target)) {
-                    then(false)
-                    return
-                }
-                val dispatch = {
-                    if (alive()) {
+                val profile = calibrationProfile()
+                val resolved = calibrationStore.resolve(profile, action)
+                ProGestureAttempt(action, resolved, profile, target, teaching, alive, { note(it) }, { finish(it) }).run(
+                    verify,
+                    dispatch = { onFailure, completed ->
                         touchGameTarget(
                             calibrationGestures(action, resolved),
                             resolved.size == 1,
                             target,
                             action.label,
-                            then,
+                            completed,
                             action = action,
                             retryAllowed = false,
-                            verifyFinal = verify
+                            verifyFinal = verify,
+                            onFailure = onFailure
                         )
-                    }
-                }
-                // Runtime and the final live teaching click both reobserve the exact recommendation.
-                if (teaching || verify == null) dispatch() else verify(resolved) { if (it) dispatch() else then(false) }
+                    },
+                    then = then
+                )
             }
         }
         ProCollectionSession(host, alive, finish).start(step)
@@ -4060,17 +4059,27 @@ class CollectorService : AccessibilityService() {
         onSession: ((Long) -> Unit)? = null,
         action: CalibrationAction? = null,
         retryAllowed: Boolean = true,
-        verifyFinal: ((List<CalibrationPoint>, (Boolean) -> Unit) -> Unit)? = null
+        verifyFinal: ((List<CalibrationPoint>, (Boolean) -> Unit) -> Unit)? = null,
+        onFailure: ((GestureFailure) -> Unit)? = null
     ) {
         if (teaching && !teachingEntry && !teachingDispatch) {
             if (action == null) {
                 endTeaching("Thao tác chưa có định danh an toàn để chỉnh; đã dừng trước khi chạm game")
                 return
             }
-            previewTeaching(action, result, targetBounds = if (action.id.startsWith("pro.v1.")) target else null, verifyFinal = verifyFinal)
+            previewTeaching(
+                action,
+                result,
+                targetBounds = if (action.id.startsWith("pro.v1.")) target else null,
+                verifyFinal = verifyFinal,
+                onFailure = onFailure
+            )
             return
         }
-        if (calibrationEditor != null && !calibrationTesting) return result(false)
+        if (calibrationEditor != null && !calibrationTesting) {
+            onFailure?.invoke(GestureFailure("editor-open"))
+            return result(false)
+        }
         val debugSession = debugGeneration
         val allowRetries = retryAllowed && !calibrationTesting && !teaching
         val session = captureShield.acquire()
@@ -4085,19 +4094,34 @@ class CollectorService : AccessibilityService() {
             }
         }
 
-        fun send(attempt: Int) {
-            if (current !== this || !captureShield.contains(session) || (!allowRetries && !calibrationGameAllowed(gestures))) {
-                done(false)
-                return
+        var acceptedParts = 0
+
+        fun refuse(reason: String, detail: String = "") {
+            onFailure?.invoke(GestureFailure(reason, acceptedParts, detail))
+            done(false)
+        }
+
+        fun ready(): Boolean {
+            val reason = when {
+                current !== this -> "service-changed"
+                !captureShield.contains(session) -> "shield-session-ended"
+                !allowRetries && !calibrationGameAllowed(gestures) -> calibrationSafetyReason
+                else -> null
             }
+            if (reason != null) {
+                refuse(reason, if (reason == calibrationSafetyReason) calibrationSafetyDiagnostic else "")
+                return false
+            }
+            return true
+        }
+
+        fun send(attempt: Int) {
+            if (!ready()) return
             swallowed = false
             if (debugSession == debugGeneration) gestureDebug?.show(gestures, tap, target, label)
 
             fun part(i: Int) {
-                if (current !== this || !captureShield.contains(session) || (!allowRetries && !calibrationGameAllowed(gestures))) {
-                    done(false)
-                    return
-                }
+                if (!ready()) return
                 var flightEnded = false
                 gesturesInFlight++
 
@@ -4112,7 +4136,7 @@ class CollectorService : AccessibilityService() {
                     override fun onCompleted(g: GestureDescription?) {
                         endFlight()
                         if (!captureShield.contains(session)) {
-                            done(false)
+                            refuse("shield-session-ended")
                             return
                         }
                         if (i > 0 || !swallowed) {
@@ -4129,7 +4153,7 @@ class CollectorService : AccessibilityService() {
                         } else {
                             failure =
                                 "Cú chạm rơi vào bảng nổi; kéo bảng sang chỗ khác rồi tiếp tục"
-                            done(false)
+                            refuse("overlay-intercepted")
                         }
                     }
 
@@ -4137,7 +4161,7 @@ class CollectorService : AccessibilityService() {
                     override fun onCancelled(g: GestureDescription?) {
                         endFlight()
                         if (!captureShield.contains(session)) {
-                            done(false)
+                            refuse("shield-session-ended")
                             return
                         }
                         if (allowRetries &&
@@ -4148,22 +4172,26 @@ class CollectorService : AccessibilityService() {
                         } else {
                             failure =
                                 "Android hủy thao tác chạm (có thể do chạm tay vào màn hình)"
-                            done(false)
+                            refuse("android-cancelled")
                         }
                     }
                 }
+                var dispatchException = false
                 val sent = try {
                     dispatchGesture(gestures[i], callback, handler)
                 } catch (
                     e: Exception
                 ) {
+                    dispatchException = true
                     CrashLog.record(this, "Không gửi được thao tác chạm", e)
                     false
                 }
                 if (!sent) {
                     endFlight()
                     failure = "Android không nhận thao tác chạm"
-                    done(false)
+                    refuse(if (dispatchException) "android-exception" else "android-rejected")
+                } else {
+                    acceptedParts++
                 }
             }
             part(0)

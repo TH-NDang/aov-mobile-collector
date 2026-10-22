@@ -1,4 +1,10 @@
-# AOV Mobile Collector — v0.13.18
+# AOV Mobile Collector — v0.13.19
+
+## v0.13.19: lý do dừng thao tác Pro và sửa hiệu chỉnh
+
+- Lỗi Pro ghi rõ thao tác, lý do chặn trước khi gửi hoặc Android từ chối/hủy sau khi gửi; không còn chỉ báo chung “Không cuộn được danh sách Pro”. Lịch sử `events.txt` giữ cấu hình màn hình, điểm mặc định/hiệu lực và hình học cửa sổ đã ẩn danh.
+- Hiệu chỉnh Pro đã lưu nhưng không còn an toàn vẫn mở được **Chỉnh từng bước** để sửa hoặc **Mặc định**. Nút **Chạy bước / Tiếp** vẫn kiểm tra vùng an toàn trước khi chạm, không bỏ qua chặn cửa sổ hoặc tự thử lại.
+- Hai dòng lỗi máy thật cũ chưa đủ xác định nguyên nhân thiết bị; bản này sửa lỗi không mở được chỉnh và bổ sung bằng chứng để phân biệt nguyên nhân. Xem [giới hạn hiệu chỉnh Pro](docs/PRO_BUILDS.md).
 
 ## v0.13.18: vào game chung và cài đặt nhanh
 

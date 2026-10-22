@@ -84,6 +84,7 @@ class ProCollectionSession(private val host: Host, private val alive: () -> Bool
                 }.singleOrNull()
             }
             if (action.id == "pro.v1.apply" && expected == null) {
+                finish("Pro [pro.v1.apply] chưa gửi thao tác: đề cử không khớp duy nhất với danh mục đã xác minh")
                 then(false)
                 return
             }
