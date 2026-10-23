@@ -213,19 +213,8 @@ internal object GestureCalibrationSmoke {
         val dispatched = mutableListOf<Pair<CalibrationAction, List<CalibrationPoint>>>()
         val preferences = service.getSharedPreferences("gesture-calibration", 0)
         val wm = service.getSystemService(WindowManager::class.java)
-        val bounds = android.graphics.Rect(wm.currentWindowMetrics.bounds)
-        val insets = wm.currentWindowMetrics.windowInsets.getInsetsIgnoringVisibility(
-            android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout()
-        )
-        val profile = CalibrationProfile(
-            bounds.width(),
-            bounds.height(),
-            wm.defaultDisplay.rotation,
-            insets.left,
-            insets.top,
-            insets.right,
-            insets.bottom
-        )
+        val bounds = android.graphics.Rect(wm.maximumWindowMetrics.bounds)
+        val profile = service.calibrationProfile()
         val store = CalibrationStore(preferences)
         val normalPreferences = service.getSharedPreferences("collector", 0).all.toMap()
         val captures = java.io.File(service.filesDir, "captures")
@@ -296,7 +285,8 @@ internal object GestureCalibrationSmoke {
             check(captured.await(8, java.util.concurrent.TimeUnit.SECONDS) && hasBitmap.get())
             test.runOnMainSync {
                 check(service.calibrationView?.visibility == View.VISIBLE)
-                check(wm.currentWindowMetrics.bounds == bounds) { "Editor changed orientation" }
+                check(wm.maximumWindowMetrics.bounds == bounds &&
+                    service.calibrationProfile() == profile) { "Editor changed orientation" }
             }
             automation.takeScreenshot()?.let { bitmap ->
                 val file = java.io.File(service.filesDir, "smoke/calibration-runtime.png")

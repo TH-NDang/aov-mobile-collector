@@ -94,8 +94,29 @@ class CollectorService : AccessibilityService() {
         private set
     private var calibrationSafetyReason = "not-checked"
 
-    private fun calibrationProfile(): CalibrationProfile {
-        val metrics = wm.currentWindowMetrics
+    /**
+     * AccessibilityService can keep a portrait currentWindowMetrics snapshot after the
+     * actual display rotates into a full-screen landscape game (observed in API30 CI).
+     * Use physical maximum metrics ONLY when the real accessibility window inventory
+     * positively verifies that the focused game covers that entire display. Otherwise
+     * retain the current window and let safety checks reject ambiguous geometry.
+     */
+    private fun gameWindowMetrics(): android.view.WindowMetrics {
+        val current = wm.currentWindowMetrics
+        val maximum = wm.maximumWindowMetrics
+        if (current.bounds == maximum.bounds) return current
+        val b = maximum.bounds
+        val full = WindowArea(b.left, b.top, b.right, b.bottom)
+        val verified = runCatching {
+            foregroundWindows().any {
+                it.application && it.packageName == GAME && it.focused && it.active && it.bounds == full
+            }
+        }.getOrDefault(false)
+        return if (verified) maximum else current
+    }
+
+    internal fun calibrationProfile(): CalibrationProfile {
+        val metrics = gameWindowMetrics()
         val b = metrics.bounds
         val i = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
         return CalibrationProfile(b.width(), b.height(), wm.defaultDisplay.rotation, i.left, i.top, i.right, i.bottom)
@@ -643,7 +664,7 @@ class CollectorService : AccessibilityService() {
 
     /** Calibration uses full-display coordinates, so fail closed for unknown or multi-window targets. */
     private fun calibrationGameAllowed(gestures: List<GestureDescription>): Boolean = try {
-        val metrics = wm.currentWindowMetrics
+        val metrics = gameWindowMetrics()
         val b = metrics.bounds
         val i = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
         val usable = WindowArea(b.left + i.left, b.top + i.top, b.right - i.right, b.bottom - i.bottom)
@@ -3988,7 +4009,7 @@ class CollectorService : AccessibilityService() {
                     }
                 }
                 else -> {
-                    val bounds = wm.currentWindowMetrics.bounds
+                    val bounds = screen()
                     val p = Path().apply {
                         moveTo((s.getDouble("x") * (bounds.width() - 1)).toFloat(), (s.getDouble("y") * (bounds.height() - 1)).toFloat())
                     }
@@ -4199,7 +4220,7 @@ class CollectorService : AccessibilityService() {
         handler.postDelayed({ send(0) }, SHIELD_MS)
     }
 
-    private fun screen() = wm.currentWindowMetrics.bounds
+    private fun screen() = gameWindowMetrics().bounds
 
     private fun tapAt(x: Double, y: Double): GestureDescription {
         val b = screen()

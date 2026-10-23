@@ -39,7 +39,7 @@ internal object TeachingEdgeDeviceSmoke {
         val automationLog = File(diagnostics, "calibration-edge-automation-windows.txt").apply { writeText("") }
         val commands = File(diagnostics, "calibration-edge-commands.txt").apply { writeText("") }
         val checks = mutableListOf<String>()
-        val display = Rect(service.getSystemService(WindowManager::class.java).currentWindowMetrics.bounds)
+        val display = Rect(service.getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds)
         var originalFailure: Throwable? = null
 
         fun gameEvents() = JSONArray(shell(automation, "run-as ${CollectorService.GAME} cat files/gesture-events.json"))

@@ -16,21 +16,21 @@ permissions:
 jobs:
   build:
     if: ${{ !inputs.metrics_probe }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
       - name: Check Kotlin formatting
         run: ./tools/ktlint
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
           log-accepted-android-sdk-licenses: false
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.9'
       - name: Restore fixed development signing key
@@ -53,17 +53,17 @@ jobs:
             grep -q "ic_launcher" /tmp/collector-badging.txt
             "$SIGNER" verify --print-certs "$APK"
           done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: aov-mobile-collector-apk
           path: app/build/outputs/apk/debug/app-universal-debug.apk
           retention-days: 30
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: aov-mobile-collector-apk-arm64
           path: app/build/outputs/apk/debug/app-arm64-v8a-debug.apk
           retention-days: 30
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: lint-report
@@ -72,7 +72,7 @@ jobs:
       - name: Enable emulator acceleration
         run: sudo chmod 666 /dev/kvm
       - name: UI and OCR smoke check
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
           api-level: 30
           arch: x86_64
@@ -107,7 +107,7 @@ jobs:
             adb logcat -d -s AndroidRuntime > ui-smoke/crash-log.txt
             cat ui-smoke/accessibility.txt
             grep -q SMOKE_OK smoke-result.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: ui-smoke
@@ -130,21 +130,21 @@ jobs:
   edge-api34:
     if: ${{ !inputs.metrics_probe }}
     name: API 34 real edge-window regression
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Independent of the mandatory API30 job: unsupported synthetic window publication
     # must remain a visible failed result, not prevent the original full suite from running.
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
           log-accepted-android-sdk-licenses: false
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.9'
       - name: Build the same collector and offline test fixtures
@@ -154,7 +154,7 @@ jobs:
       - name: Enable emulator acceleration
         run: sudo chmod 666 /dev/kvm
       - name: Verify real edge topology and injected input on the phone API level
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
           api-level: 34
           arch: x86_64
@@ -183,7 +183,7 @@ jobs:
           else
             echo 'API34 edge integration NOT VERIFIED. This job failed; no unsupported topology is counted as a pass. Inspect edge-smoke-api34 diagnostics. API30 original smoke and phone-geometry unit tests are separate results.' >> "$GITHUB_STEP_SUMMARY"
           fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: edge-smoke-api34
@@ -194,23 +194,23 @@ jobs:
   metrics-probe:
     name: API 30 geometry diagnostics (no gestures)
     if: ${{ (github.event_name == 'workflow_dispatch' && inputs.metrics_probe) || (github.event_name == 'push' && contains(github.event.head_commit.message, '[metrics probe]')) }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: '17'
       - name: Check Kotlin formatting
         run: ./tools/ktlint
-      - uses: android-actions/setup-android@v3
+      - uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
           log-accepted-android-sdk-licenses: false
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
         with:
           gradle-version: '8.9'
       - name: Build diagnostic instrumentation and offline fixture
@@ -220,7 +220,7 @@ jobs:
       - name: Enable emulator acceleration
         run: sudo chmod 666 /dev/kvm
       - name: Record one bounded landscape-rebind experiment
-        uses: reactivecircus/android-emulator-runner@v2
+        uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
           api-level: 30
           arch: x86_64
@@ -245,7 +245,7 @@ jobs:
         run: |
           echo 'Diagnostic experiment only. This job injects no gestures and does not run or count normal API30/API34 regression gates; parallel normal jobs have separate results.' >> "$GITHUB_STEP_SUMMARY"
           grep METRICS_PROBE_RECORDED metrics-probe-result.txt >> "$GITHUB_STEP_SUMMARY" || true
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: metrics-probe-api30

@@ -14,7 +14,6 @@ import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityManager;
 import android.view.accessibility.AccessibilityNodeInfo;
-import android.widget.PopupWindow;
 import android.widget.TextView;
 import java.io.File;
 import java.nio.charset.StandardCharsets;
@@ -27,33 +26,33 @@ public class EdgeHandleActivity extends Activity {
     private static final int EDGE_WIDTH = 60;
     private static final int EDGE_HEIGHT = 200;
     private int touches;
-    private PopupWindow panel;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         if (getIntent().getBooleanExtra("close", false)) { finish(); return; }
         getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+        // A single *touchable*, non-focusable TYPE_APPLICATION edge window is a real
+        // input target and eligible for Accessibility window discovery. The old
+        // touchless base activity + child PopupWindow was visible in screenshots but
+        // invisible to service.getWindows() on API34, so it could not test preflight.
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE |
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
         setFinishOnTouchOutside(false);
         // Only supplies an attached application token. This touchless base window is not a receiver.
-        setContentView(new View(this));
+        TextView handle = new TextView(this);
+        setContentView(handle);
         View decor = getWindow().getDecorView();
         decor.setElevation(0f);
         WindowManager.LayoutParams params = getWindow().getAttributes();
         params.gravity = Gravity.TOP | Gravity.LEFT;
-        params.x = 0;
-        params.y = 0;
-        // Child placement is screen-relative, but Android still clips its visible frame to the
-        // attached parent. Enclose the real receiver without making this host touchable.
-        params.width = EDGE_LEFT + EDGE_WIDTH;
-        params.height = EDGE_TOP + EDGE_HEIGHT;
+        params.x = EDGE_LEFT;
+        params.y = EDGE_TOP;
+        params.width = EDGE_WIDTH;
+        params.height = EDGE_HEIGHT;
         params.setFitInsetsTypes(0);
         getWindow().setAttributes(params);
 
-        TextView handle = new TextView(this);
         handle.setText("CI\nedge");
         handle.setTextColor(Color.WHITE);
         handle.setBackgroundColor(Color.rgb(130, 65, 20));
@@ -77,26 +76,6 @@ public class EdgeHandleActivity extends Activity {
             }
             return true;
         });
-        panel = new PopupWindow(handle, EDGE_WIDTH, EDGE_HEIGHT, false);
-        panel.setWindowLayoutType(WindowManager.LayoutParams.TYPE_APPLICATION_PANEL);
-        panel.setTouchable(true);
-        panel.setTouchModal(false);
-        panel.setOutsideTouchable(false);
-        panel.setInputMethodMode(PopupWindow.INPUT_METHOD_NOT_NEEDED);
-        panel.setIsLaidOutInScreen(true);
-        panel.setAttachedInDecor(false);
-        // Keep normal display clipping; disabling it would add FLAG_LAYOUT_NO_LIMITS.
-        panel.setClippingEnabled(true);
-        panel.setIsClippedToScreen(false);
-        panel.setElevation(0f);
-        panel.setAnimationStyle(0);
-        panel.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
-        decor.post(() -> {
-            if (!isFinishing() && !isDestroyed()) {
-                // showAtLocation uses this actual attached decor's window token, not an app token.
-                panel.showAtLocation(decor, Gravity.TOP | Gravity.LEFT, EDGE_LEFT, EDGE_TOP);
-            }
-        });
         persist();
     }
 
@@ -107,7 +86,6 @@ public class EdgeHandleActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
-        if (panel != null) panel.dismiss();
         super.onDestroy();
     }
 
