@@ -25,7 +25,7 @@ class ProCombosTest {
             word("Ph.án khác", .89, .91)
         )
 
-    private inner class Fake(val rows: List<String>, val journal: JSONObject = JSONObject()) : ProComboReader.Screen {
+    private inner class Fake(var rows: List<String>, val journal: JSONObject = JSONObject()) : ProComboReader.Screen {
         override var alive = true
         var popupOpen = false
         var offset = 0
@@ -49,6 +49,33 @@ class ProCombosTest {
         var values = rows.map { 10 }
         var seenEntries = emptyList<ProComboScreens.Entry>()
         var mutateOnReset = false
+        var resetGestures = 0
+        var oversizedDiscovery = false
+        var overshot = false
+        var mutateOnReplay = false
+        var corruptDiscoveryReads = 0
+        var discoveryMoved = false
+        var cancelOnReplay = false
+        var emptyOnReplay = false
+        var shortenOnReplay = false
+        var pixelOnlyMotion = false
+        var scrollGestures = 0
+        var replayNotices = 0
+
+        override fun say(text: String) {
+            replayNotices++
+            if (shortenOnReplay) {
+                rows = rows.take(1)
+                scroll = 0.0
+            }
+            if (emptyOnReplay) {
+                explicitEmpty = true
+                dropRows = true
+                scroll = 0.0
+            }
+            if (mutateOnReplay) values = values.map { (it + 80) % 220 }
+            if (cancelOnReplay) alive = false
+        }
 
         override fun look(then: (ProComboReader.Look?) -> Unit) {
             val p = popupOpen
@@ -62,7 +89,13 @@ class ProCombosTest {
             } else {
                 rows.drop(offset).take(2).mapIndexed { i, id -> entry(id, .41 + .365 * i, values[offset + i]) }
             }
-            seenEntries = visible
+            val observed = if (discoveryMoved && corruptDiscoveryReads > 0 && p) {
+                corruptDiscoveryReads--
+                visible.map { it.copy(signature = signature(220)) }
+            } else {
+                visible
+            }
+            seenEntries = observed
             val words = if (p) {
                 popup + if (explicitEmpty) listOf(word("Không có đề cử", .5, .5)) else emptyList()
             } else if (wrongHero) {
@@ -76,9 +109,17 @@ class ProCombosTest {
             then(object : ProComboReader.Look {
                 override val words = words
                 override val proSelected = p
-                override val entries = if (p) visible else emptyList()
+                override val entries = if (p) observed else emptyList()
                 override val preparationSignature = if (p) null else actual
-                override val listSignature = IntArray(40) { if (geometric) (scroll * 1000).toInt() else offset * 30 + 10 }
+                override val listSignature = IntArray(40) {
+                    if (pixelOnlyMotion && scrollGestures > 0) {
+                        40 + minOf(resetGestures, 2) * 30
+                    } else if (geometric) {
+                        (scroll * 1000).toInt()
+                    } else {
+                        offset * 30 + 10
+                    }
+                }
                 override val listBottomClear =
                     fullBoundary ||
                         p &&
@@ -114,6 +155,8 @@ class ProCombosTest {
                 "pro.v1.other" -> popupOpen = true
                 "pro.v1.tab" -> popupOpen = true
                 "pro.v1.list.reset" -> {
+                    resetGestures++
+                    discoveryMoved = false
                     if (mutateOnReset) values = values.map { 150 }
                     if (geometric) {
                         scroll = maxOf(0.0, scroll - (action.points[1].y - action.points[0].y))
@@ -122,11 +165,22 @@ class ProCombosTest {
                             maxOf(0, offset - 1)
                     }
                 }
-                "pro.v1.list.scroll" -> if (!ineffectiveScroll) {
-                    if (geometric) {
-                        scroll = minOf(maxOf(0.0, (rows.size - 2) * .365), scroll + action.points[0].y - action.points[1].y)
-                    } else {
-                        offset = minOf(maxOf(0, rows.size - 1), offset + 1)
+                "pro.v1.list.scroll" -> {
+                    scrollGestures++
+                    if (!ineffectiveScroll) {
+                        if (geometric) {
+                            val distance = action.points[0].y - action.points[1].y
+                            discoveryMoved = resetGestures >= 3 && applies == 0
+                            val actualDistance = if (oversizedDiscovery && discoveryMoved && distance > .2) {
+                                overshot = true
+                                .50
+                            } else {
+                                distance
+                            }
+                            scroll = minOf(maxOf(0.0, (rows.size - 2) * .365), scroll + actualDistance)
+                        } else {
+                            offset = minOf(maxOf(0, rows.size - 1), offset + 1)
+                        }
                     }
                 }
                 "pro.v1.apply" -> {
@@ -179,6 +233,131 @@ class ProCombosTest {
         f.run()
         assertEquals(ProComboReader.Outcome.Done(5, false), f.outcome)
         assertEquals(6, f.applies)
+    }
+
+    @Test fun oversizedFirstDiscoveryReplaysFrozenPrefixWithSmallerStep() {
+        val f = Fake(listOf("a", "b", "c", "d", "e", "f"))
+        f.geometric = true
+        f.oversizedDiscovery = true
+        f.run()
+        assertEquals(ProComboReader.Outcome.Done(5, false), f.outcome)
+        assertTrue(f.replayNotices > 0)
+        assertEquals(listOf("a", "b", "c", "d", "e", "f"), ProComboScreens.catalog(f.journal).map { it.id })
+        assertEquals(6, f.applies)
+        assertArrayEquals(signature(10), f.actual)
+    }
+
+    @Test fun transientOverlapDescriptorFailureIsRereadWithoutRestartOrApplyRetry() {
+        val f = Fake(listOf("a", "b", "c", "d", "e", "f"))
+        f.geometric = true
+        f.corruptDiscoveryReads = 1
+        f.run()
+        assertEquals(ProComboReader.Outcome.Done(5, false), f.outcome)
+        assertEquals(0, f.replayNotices)
+        assertEquals(6, f.applies)
+    }
+
+    @Test fun changedFrozenRankOnReplayFailsBeforeApply() {
+        val f = Fake(listOf("a", "b", "c", "d", "e", "f"))
+        f.geometric = true
+        f.oversizedDiscovery = true
+        f.mutateOnReplay = true
+        f.run()
+        assertTrue(f.outcome is ProComboReader.Outcome.Failed)
+        assertTrue((f.outcome as ProComboReader.Outcome.Failed).reason.contains("Thứ hạng/combo"))
+        assertEquals(0, f.applies)
+        assertTrue(f.captures.isEmpty())
+    }
+
+    @Test fun persistentOverlapFailureStopsAfterBoundedReplaysWithoutApply() {
+        val f = Fake(listOf("a", "b", "c", "d", "e", "f"))
+        f.geometric = true
+        f.corruptDiscoveryReads = 10000
+        f.run()
+        assertTrue(f.outcome is ProComboReader.Outcome.Failed)
+        assertEquals(4, f.replayNotices)
+        assertEquals(0, f.applies)
+        assertTrue(f.captures.isEmpty())
+    }
+
+    @Test fun shorterNonemptyReplayCannotTruncateFrozenPrefix() {
+        val f = Fake(listOf("a", "b", "c", "d", "e", "f"))
+        f.geometric = true
+        f.oversizedDiscovery = true
+        f.shortenOnReplay = true
+        f.run()
+        assertTrue(f.outcome is ProComboReader.Outcome.Failed)
+        assertTrue((f.outcome as ProComboReader.Outcome.Failed).reason.contains("ngắn hơn"))
+        assertEquals(0, f.applies)
+        assertTrue(f.captures.isEmpty())
+        assertFalse(f.journal.has("order"))
+    }
+
+    @Test fun changedSameCreatorDescriptorOnReplayCannotSubstituteRank() {
+        val f = Fake(listOf("same", "same", "c", "d", "e", "f"))
+        f.values = listOf(10, 100, 10, 10, 10, 10)
+        f.geometric = true
+        f.oversizedDiscovery = true
+        f.mutateOnReplay = true
+        f.run()
+        assertTrue(f.outcome is ProComboReader.Outcome.Failed)
+        assertTrue((f.outcome as ProComboReader.Outcome.Failed).reason.contains("Thứ hạng/combo"))
+        assertEquals(0, f.applies)
+        assertTrue(f.captures.isEmpty())
+    }
+
+    @Test fun emptyReplayCannotEraseAlreadyObservedPrefix() {
+        val f = Fake(listOf("a", "b", "c", "d", "e", "f"))
+        f.geometric = true
+        f.oversizedDiscovery = true
+        f.emptyOnReplay = true
+        f.run()
+        assertTrue(f.outcome is ProComboReader.Outcome.Failed)
+        assertEquals(0, f.applies)
+        assertTrue(f.captures.isEmpty())
+        assertFalse(f.journal.optBoolean("empty"))
+    }
+
+    @Test fun stopDuringReplayNeverAppliesOrCaptures() {
+        val f = Fake(listOf("a", "b", "c", "d", "e", "f"))
+        f.geometric = true
+        f.oversizedDiscovery = true
+        f.cancelOnReplay = true
+        f.run()
+        assertEquals(1, f.replayNotices)
+        assertEquals(0, f.applies)
+        assertTrue(f.captures.isEmpty())
+    }
+
+    @Test fun pixelChangesWithoutSharedCardMotionCannotProveTop() {
+        val f = Fake(listOf("a", "b", "c"))
+        f.ineffectiveScroll = true
+        f.pixelOnlyMotion = true
+        f.run()
+        assertTrue(f.outcome is ProComboReader.Outcome.Failed)
+        assertTrue((f.outcome as ProComboReader.Outcome.Failed).reason.contains("đầu danh sách"))
+        assertEquals(0, f.applies)
+    }
+
+    @Test fun nominalCoarseMoveRetainsCompleteSecondCardDespiteClippedNeighbors() {
+        fun frame(offset: Double): List<ProComboScreens.Entry> {
+            val words = popup + listOf(.408, .773, 1.138).flatMapIndexed { i, y ->
+                listOf(word("creator$i", .40, y - offset - .185), word("Dùng combo", .75, y - offset), word("90", .635, y - offset + .055))
+            }
+            return ProComboScreens.entries(1000, 500, words) { _, row -> row.fill(0xff303080.toInt()) }
+        }
+        assertEquals(listOf("creator0", "creator1"), frame(0.0).map { it.id })
+        assertEquals(listOf("creator1"), frame(.22).map { it.id })
+        assertTrue(ProComboScreens.matches(frame(0.0)[1].signature, frame(.22)[0].signature))
+    }
+
+    @Test fun listMotionSignatureExcludesRightSideAttributeTooltip() {
+        val plain = ProComboScreens.listSignature(1000, 500) { _, row -> row.fill(0xff303080.toInt()) }
+        val tooltip = ProComboScreens.listSignature(1000, 500) { y, row ->
+            row.fill(0xff303080.toInt())
+            if (y in 160..215) for (x in 620..780) row[x] = 0xffeeeeee.toInt()
+        }
+        assertArrayEquals(plain, tooltip)
     }
 
     @Test fun missingPendingCaptureIsReverifiedAndRecapturedWithoutApply() {

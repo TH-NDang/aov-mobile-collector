@@ -18,8 +18,8 @@ android {
         applicationId = "vn.ndang.aovcollector"
         minSdk = 30
         targetSdk = 35
-        versionCode = 50
-        versionName = "0.13.19"
+        versionCode = 51
+        versionName = "0.13.20"
         testInstrumentationRunner =
             "vn.ndang.aovcollector.UiSmoke"
     }

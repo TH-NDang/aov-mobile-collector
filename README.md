@@ -1,4 +1,8 @@
-# AOV Mobile Collector — v0.13.19
+# AOV Mobile Collector — v0.13.20
+
+## v0.13.20: đọc lại phần chồng lặp Pro có kiểm chứng
+
+Khi một khung hình chưa khớp dòng Pro trước đó, app đọc lại tối đa hai lần mà không cuộn. Nếu vẫn thiếu bằng chứng, app về đầu đã xác minh rồi đọc lại bằng bước ngắn hơn, tối đa bốn lượt; thứ hạng và chữ ký combo đã đọc được giữ nguyên để đối chiếu, không bỏ qua dòng hay đoán combo. Vùng tooltip thuộc tính không còn làm sai dấu hiệu chuyển động danh sách; về đầu phải thấy dòng đã nhận diện thực sự dịch chuyển. Giữ kiểm tra đầy đủ cuối danh sách, top 5 gốc, khôi phục top 1, và không tự bấm lại thao tác áp dụng chưa rõ kết quả. Xem [giới hạn và kiểm thử](docs/PRO_BUILDS.md).
 
 ## v0.13.19: lý do dừng thao tác Pro và sửa hiệu chỉnh
 

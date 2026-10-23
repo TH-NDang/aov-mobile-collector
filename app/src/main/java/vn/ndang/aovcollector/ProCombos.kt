@@ -140,7 +140,7 @@ object ProComboScreens {
     fun listSignature(width: Int, height: Int, readRow: (Int, IntArray) -> Unit): IntArray = signature(
         width,
         height,
-        (0..11).flatMap { y -> listOf(.32, .42, .52, .75).map { x -> x to (.20 + y * .059) } },
+        (0..11).flatMap { y -> listOf(.32, .42, .52).map { x -> x to (.20 + y * .059) } },
         readRow
     )
 
@@ -277,6 +277,9 @@ class ProComboReader(
     private var returnedFromProbe = false
     private var endProbed = false
     private var shortListProof: List<ProComboScreens.Entry>? = null
+    private var previousTopEntries = emptyList<ProComboScreens.Entry>()
+    private var discoveryStep = .22
+    private var replayPrefix = emptyList<ProComboScreens.Entry>()
     private val chosen = ArrayList<ProComboScreens.Entry>()
     private val discovered = ArrayList<ProComboScreens.Entry>()
 
@@ -452,6 +455,7 @@ class ProComboReader(
                         return@look fail("Không chứng minh được thao tác cuộn Pro; không coi vị trí hiện tại là đầu/cuối")
                     }
                     last = after.listSignature
+                    previousTopEntries = after.entries
                     returnedFromProbe = !moved && explicitSmall
                     if (!moved && explicitSmall) shortListProof = originalEntries
                     after.done(null)
@@ -486,7 +490,11 @@ class ProComboReader(
             return@look fail("Danh sách Pro thay đổi khi kiểm tra hai chiều; chưa xác minh danh sách ngắn")
         }
         val unchanged = last?.let { ProComboScreens.still(it, l.listSignature) } == true
-        if (!unchanged) returnedFromProbe = true
+        // Tooltip/animation changes are not proof that a scroll moved the list.
+        if (previousTopEntries.any { old -> l.entries.any { same(old, it) && it.button.y - old.button.y > .012 } }) {
+            returnedFromProbe = true
+        }
+        previousTopEntries = l.entries
         val atTop = l.entries.firstOrNull()?.let { abs(it.button.y - .408) < .03 } == true || ProComboScreens.empty(l.words)
         stable = if (unchanged) stable + 1 else 0
         last = l.listSignature
@@ -503,7 +511,27 @@ class ProComboReader(
         }
     }
 
-    private fun discover(): Unit = look { l ->
+    /** Never bridge a missing overlap. Re-read first, then replay from a positively verified top
+     * with a smaller step and the original prefix frozen. No apply has happened at this stage.
+     */
+    private fun retryDiscovery(l: Look, reads: Int) {
+        if (reads < 2) {
+            l.done(null)
+            later { discover(reads + 1) }
+        } else if (discoveryStep > .018 && discovered.isNotEmpty()) {
+            l.done("pro-list-replay")
+            if (discovered.size > replayPrefix.size) replayPrefix = discovered.toList()
+            discovered.clear()
+            discoveryStep = maxOf(.018, discoveryStep / 2)
+            screen.say("Đang đọc lại Pro từ đầu bằng bước cuộn ngắn hơn; chưa áp dụng combo")
+            reset { discover() }
+        } else {
+            l.done("pro-list-gap")
+            fail("Không chứng minh được phần chồng lặp khi cuộn Pro sau khi đọc lại; chưa áp dụng combo")
+        }
+    }
+
+    private fun discover(reads: Int = 0): Unit = look { l ->
         if (!ProComboScreens.popup(l.words) ||
             !l.proSelected ||
             ProComboScreens.blocked(l.words)
@@ -512,13 +540,12 @@ class ProComboReader(
             return@look fail("Mất tab Đề cử Pro")
         }
         if (l.entries.isEmpty()) {
-            if (discovered.isEmpty() && ProComboScreens.empty(l.words)) {
+            if (discovered.isEmpty() && replayPrefix.isEmpty() && ProComboScreens.empty(l.words)) {
                 // Re-read the explicit status, so loading/error/one missing OCR frame cannot become EMPTY.
                 l.done(null)
                 return@look later { confirmEmpty() }
             }
-            l.done("pro-unreadable-list")
-            return@look fail("Không đọc được combo/điểm cuối danh sách Pro; không coi là danh sách trống")
+            return@look retryDiscovery(l, reads)
         }
         if (ambiguous(l.entries)) {
             l.done("pro-ambiguous")
@@ -540,8 +567,7 @@ class ProComboReader(
         if (overlap <
             0
         ) {
-            l.done("pro-list-gap")
-            return@look fail("Không chứng minh được phần chồng lặp khi cuộn Pro; có thể bỏ qua thứ hạng")
+            return@look retryDiscovery(l, reads)
         }
         for (e in l.entries.take(overlap)) {
             val old = discovered.first { same(it, e) }
@@ -555,7 +581,13 @@ class ProComboReader(
                 l.done("pro-ambiguous")
                 return@look fail("Người đề cử lặp lại ở dòng khác; không thể xác định combo duy nhất")
             }
-            discovered += e
+            val frozen = replayPrefix.getOrNull(discovered.size)
+            if (frozen != null && !same(frozen, e)) {
+                l.done("pro-replay-changed")
+                return@look fail("Thứ hạng/combo Pro đổi khi đọc lại; chưa áp dụng combo")
+            }
+            // A replay must not slowly drift frozen signatures through successive fuzzy matches.
+            discovered += frozen ?: e
         }
         val unchanged = last?.let { ProComboScreens.still(it, l.listSignature) } == true
         if (!unchanged) endProbed = false
@@ -567,6 +599,9 @@ class ProComboReader(
             return@look drag(false, .22) { discover() } // Fine scans may be below a device's touch slop.
         }
         if (stable >= 2 && l.listBottomClear && endProbed) {
+            if (discovered.size < replayPrefix.size) {
+                return@look fail("Danh sách Pro ngắn hơn phần đã xác minh; chưa áp dụng combo")
+            }
             chosen.addAll(discovered.take(5))
             journal.put(
                 "order",
@@ -593,7 +628,7 @@ class ProComboReader(
         ) {
             fail("Không xác minh được điểm cuối Pro")
         } else {
-            drag(false, if (l.entries.size >= 2) .22 else .018) { discover() }
+            drag(false, if (l.entries.size >= 2) discoveryStep else .018) { discover() }
         }
     }
 
