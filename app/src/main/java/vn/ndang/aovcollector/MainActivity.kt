@@ -50,6 +50,8 @@ class MainActivity : Activity() {
                 n.endsWith("-attributes") -> "Thuộc tính"
                 n.contains("passive") -> "Nội tại · "+if(n.endsWith("detail")) "Chi tiết" else "Tóm tắt"
                 Regex("skill-[123]").containsMatchIn(n) -> "Chiêu ${Regex("skill-([123])").find(n)!!.groupValues[1]} · "+if(n.endsWith("detail")) "Chi tiết" else "Tóm tắt"
+                n.contains("-pro-none") -> "Không có đề cử Pro"
+                Regex("-pro-[0-9]+").containsMatchIn(n) -> "Combo Pro "+(Regex("-pro-([0-9]+)").find(n)?.groupValues?.get(1)?:"")
                 n.contains("page-") -> "Trang danh sách"
                 else -> "Ảnh chụp"
             }
@@ -60,6 +62,7 @@ class MainActivity : Activity() {
         return when(m.optString("collectionMode")) {
             "single" -> m.optString("heroName").takeIf { it.isNotBlank()&&it!="Chưa đặt tên" }?:"Một tướng"
             "all" -> "Danh sách tướng"
+            "pro-builds" -> "Pro Builds"
             else -> if(file.name=="manual") "Chụp nhanh" else "Lượt thu thập"
         }
     }
