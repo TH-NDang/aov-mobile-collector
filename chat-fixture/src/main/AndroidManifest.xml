@@ -1,4 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- CI-only synthetic floating edge receiver; never bundled with the collector APK. -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW"/>
     <application android:label="ChatGPT test fixture" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
         <activity android:name=".ClipboardActivity" android:exported="true"/>
         <activity android:name=".EdgeHandleActivity" android:exported="true"

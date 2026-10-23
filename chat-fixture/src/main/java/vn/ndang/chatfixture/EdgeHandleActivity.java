@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Rect;
+import android.graphics.PixelFormat;
+import android.provider.Settings;
 import android.graphics.drawable.ColorDrawable;
 import android.os.Bundle;
 import android.view.Gravity;
@@ -19,40 +21,45 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
-/** CI-only foreign application window. No overlay permission, account, network, or game data. */
+/** CI-only foreign touchable overlay. The app has no account, network, or game data. */
 public class EdgeHandleActivity extends Activity {
     private static final int EDGE_LEFT = 1;
     private static final int EDGE_TOP = 100;
     private static final int EDGE_WIDTH = 60;
     private static final int EDGE_HEIGHT = 200;
     private int touches;
+    private WindowManager overlayManager;
+    private View overlayView;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         if (getIntent().getBooleanExtra("close", false)) { finish(); return; }
         getWindow().setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
         getWindow().clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
-        // A single *touchable*, non-focusable TYPE_APPLICATION edge window is a real
-        // input target and eligible for Accessibility window discovery. The old
-        // touchless base activity + child PopupWindow was visible in screenshots but
-        // invisible to service.getWindows() on API34, so it could not test preflight.
+        // A non-focusable, touchless activity is merely the fixture controller.
+        // The real receiver is a separately permissioned TYPE_APPLICATION_OVERLAY
+        // above the focused full-screen game. The old TYPE_APPLICATION child/host
+        // was visible but omitted by API34 AccessibilityService.getWindows().
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN);
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE |
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL);
         setFinishOnTouchOutside(false);
-        // Only supplies an attached application token. This touchless base window is not a receiver.
-        TextView handle = new TextView(this);
-        setContentView(handle);
+        setContentView(new View(this));
         View decor = getWindow().getDecorView();
-        decor.setElevation(0f);
-        WindowManager.LayoutParams params = getWindow().getAttributes();
+        if (!Settings.canDrawOverlays(this)) {
+            throw new IllegalStateException("CI fixture does not have SYSTEM_ALERT_WINDOW app-op");
+        }
+        TextView handle = new TextView(this);
+        overlayManager = (WindowManager) getSystemService(WINDOW_SERVICE);
+        WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                EDGE_WIDTH, EDGE_HEIGHT, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE |
+                        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL |
+                        WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                PixelFormat.TRANSLUCENT);
         params.gravity = Gravity.TOP | Gravity.LEFT;
         params.x = EDGE_LEFT;
         params.y = EDGE_TOP;
-        params.width = EDGE_WIDTH;
-        params.height = EDGE_HEIGHT;
-        params.setFitInsetsTypes(0);
-        getWindow().setAttributes(params);
-
         handle.setText("CI\nedge");
         handle.setTextColor(Color.WHITE);
         handle.setBackgroundColor(Color.rgb(130, 65, 20));
@@ -76,6 +83,8 @@ public class EdgeHandleActivity extends Activity {
             }
             return true;
         });
+        overlayManager.addView(handle, params);
+        overlayView = handle;
         persist();
     }
 
@@ -86,6 +95,10 @@ public class EdgeHandleActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        if (overlayView != null && overlayManager != null) {
+            overlayManager.removeViewImmediate(overlayView);
+            overlayView = null;
+        }
         super.onDestroy();
     }
 

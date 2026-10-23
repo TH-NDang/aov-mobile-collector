@@ -129,7 +129,7 @@ jobs:
 
   edge-api34:
     if: ${{ !inputs.metrics_probe }}
-    name: API 34 real edge-window regression
+    name: API 34 real external overlay regression
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     # Independent of the mandatory API30 job: unsupported synthetic window publication
@@ -165,6 +165,9 @@ jobs:
             adb install -r app/build/outputs/apk/debug/app-universal-debug.apk
             adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb install -r chat-fixture/build/outputs/apk/debug/chat-fixture-debug.apk
+            # Synthetic external floating window. Permission is granted only on the
+            # disposable emulator to this fixture app, never to AOV Collector.
+            adb shell appops set com.openai.chatgpt SYSTEM_ALERT_WINDOW allow
             # Synthetic fixtures only. No actual game or account is used.
             adb install -r game-fixture/build/outputs/apk/debug/game-fixture-debug.apk
             adb shell cmd overlay enable --user 0 com.android.internal.systemui.navbar.threebutton
@@ -179,9 +182,9 @@ jobs:
         if: always()
         run: |
           if grep -q EDGE_SMOKE_OK edge-smoke-result.txt 2>/dev/null; then
-            echo 'API34 edge integration passed: real foreign window identity, actual clear tap and blocked paths.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'API34 real foreign overlay integration passed: actual window identity, clear tap and blocked paths.' >> "$GITHUB_STEP_SUMMARY"
           else
-            echo 'API34 edge integration NOT VERIFIED. This job failed; no unsupported topology is counted as a pass. Inspect edge-smoke-api34 diagnostics. API30 original smoke and phone-geometry unit tests are separate results.' >> "$GITHUB_STEP_SUMMARY"
+            echo 'API34 external overlay integration NOT VERIFIED. Job failed; no unsupported topology is counted as a pass. Inspect edge-smoke-api34 diagnostics. API30 original smoke and phone-geometry unit tests are separate results.' >> "$GITHUB_STEP_SUMMARY"
           fi
       - uses: actions/upload-artifact@v7
         if: always()
