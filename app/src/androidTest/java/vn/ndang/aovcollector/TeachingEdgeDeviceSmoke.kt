@@ -21,7 +21,7 @@ import java.util.concurrent.atomic.AtomicReference
 import kotlin.math.abs
 import org.json.JSONArray
 
-/** Real foreign application window and real injection, only in explicitly marked offline CI fixtures. */
+/** Real external system overlay window and injection, only in signed offline CI fixtures. */
 internal object TeachingEdgeDeviceSmoke {
     private const val EDGE_PACKAGE = "com.openai.chatgpt"
     private const val EDGE_ACTIVITY = "vn.ndang.chatfixture.EdgeHandleActivity"
@@ -39,7 +39,7 @@ internal object TeachingEdgeDeviceSmoke {
         val automationLog = File(diagnostics, "calibration-edge-automation-windows.txt").apply { writeText("") }
         val commands = File(diagnostics, "calibration-edge-commands.txt").apply { writeText("") }
         val checks = mutableListOf<String>()
-        val display = Rect(service.getSystemService(WindowManager::class.java).currentWindowMetrics.bounds)
+        val display = Rect(service.getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds)
         var originalFailure: Throwable? = null
 
         fun gameEvents() = JSONArray(shell(automation, "run-as ${CollectorService.GAME} cat files/gesture-events.json"))
@@ -51,7 +51,7 @@ internal object TeachingEdgeDeviceSmoke {
             if (fixtureId < 0) return false
             return main(test) {
                 service.windows.singleOrNull { it.id == fixtureId }?.let {
-                    it.type == AccessibilityWindowInfo.TYPE_APPLICATION &&
+                    it.type == AccessibilityWindowInfo.TYPE_SYSTEM &&
                         it.root?.packageName?.toString() == EDGE_PACKAGE &&
                         !it.isFocused &&
                         !it.isActive
@@ -120,13 +120,13 @@ internal object TeachingEdgeDeviceSmoke {
             }
             edgeCommand(close = false)
             var edge: ForegroundWindow? = null
-            waitFor("Android did not publish a passive foreign edge application over a focused full-display game") {
+            waitFor("Android did not publish a foreign app overlay over the focused full-display game") {
                 val windows = windowSnapshot()
                 log.appendText(windows.joinToString("\n") + "\n\n")
                 val apps = windows.filter { it.application }
                 val game = apps.singleOrNull { it.packageName == CollectorService.GAME }
-                edge = apps.singleOrNull { it.packageName == EDGE_PACKAGE }
-                apps.size == 2 &&
+                edge = windows.singleOrNull { it.packageName == EDGE_PACKAGE && !it.accessibilityOverlay }
+                apps.size == 1 &&
                     game?.focused == true &&
                     game.active &&
                     game.bounds == WindowArea(display.left, display.top, display.right, display.bottom) &&
@@ -147,8 +147,8 @@ internal object TeachingEdgeDeviceSmoke {
                     log.appendText(windows.joinToString("\n") + "\n\n")
                     val apps = windows.filter { it.application }
                     val game = apps.singleOrNull { it.packageName == CollectorService.GAME }
-                    val foreign = apps.singleOrNull { it.packageName == EDGE_PACKAGE }
-                    apps.size == 2 &&
+                    val foreign = windows.singleOrNull { it.packageName == EDGE_PACKAGE && !it.accessibilityOverlay }
+                    apps.size == 1 &&
                         game?.focused == true &&
                         game.active &&
                         game.bounds == WindowArea(display.left, display.top, display.right, display.bottom) &&

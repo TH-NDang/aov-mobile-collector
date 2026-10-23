@@ -317,19 +317,16 @@ internal object TeachingDeviceSmoke {
         try {
             main(test) { service.onInterrupt() }
             startFixture(reset = true)
-            val bounds = Rect(wm.currentWindowMetrics.bounds)
-            val insets = wm.currentWindowMetrics.windowInsets.getInsetsIgnoringVisibility(
-                WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout()
-            )
-            profile = CalibrationProfile(
-                bounds.width(),
-                bounds.height(),
-                wm.defaultDisplay.rotation,
-                insets.left,
-                insets.top,
-                insets.right,
-                insets.bottom
-            )
+            // Use the full physical display that the synthetic full-screen game actually covers,
+            // not a stale portrait AccessibilityService currentWindowMetrics snapshot.
+            val bounds = Rect(wm.maximumWindowMetrics.bounds)
+            profile = main(test) { service.calibrationProfile() }
+            check(
+                checkNotNull(profile).width == bounds.width() &&
+                    checkNotNull(profile).height == bounds.height()
+            ) {
+                "The service did not resolve the verified full-screen game geometry"
+            }
             main(test) {
                 store.reset(checkNotNull(profile), tap.id)
                 store.reset(checkNotNull(profile), swipe.id)

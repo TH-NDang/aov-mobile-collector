@@ -94,8 +94,29 @@ class CollectorService : AccessibilityService() {
         private set
     private var calibrationSafetyReason = "not-checked"
 
-    private fun calibrationProfile(): CalibrationProfile {
-        val metrics = wm.currentWindowMetrics
+    /**
+     * AccessibilityService can keep a portrait currentWindowMetrics snapshot after the
+     * actual display rotates into a full-screen landscape game (observed in API30 CI).
+     * Use physical maximum metrics ONLY when the real accessibility window inventory
+     * positively verifies that the focused game covers that entire display. Otherwise
+     * retain the current window and let safety checks reject ambiguous geometry.
+     */
+    private fun gameWindowMetrics(): android.view.WindowMetrics {
+        val current = wm.currentWindowMetrics
+        val maximum = wm.maximumWindowMetrics
+        if (current.bounds == maximum.bounds) return current
+        val b = maximum.bounds
+        val full = WindowArea(b.left, b.top, b.right, b.bottom)
+        val verified = runCatching {
+            foregroundWindows().any {
+                it.application && it.packageName == GAME && it.focused && it.active && it.bounds == full
+            }
+        }.getOrDefault(false)
+        return if (verified) maximum else current
+    }
+
+    internal fun calibrationProfile(): CalibrationProfile {
+        val metrics = gameWindowMetrics()
         val b = metrics.bounds
         val i = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
         return CalibrationProfile(b.width(), b.height(), wm.defaultDisplay.rotation, i.left, i.top, i.right, i.bottom)
@@ -608,22 +629,71 @@ class CollectorService : AccessibilityService() {
         note("Lượt chạy trọn không tạm dừng: đã lưu thời gian để ước tính lần sau")
     }
 
-    private fun foregroundWindows(): List<ForegroundWindow> = windows.orEmpty().map { window ->
-        val node = window.root
-        val name = try {
-            node?.packageName?.toString()
+    /**
+     * Android 14 briefly reports the owner of a shielded accessibility overlay as null
+     * between hiding it and removing its window. Identify ONLY our actual attached
+     * window IDs, measured while the View is visible and owned by this process.
+     * Unknown IDs, changed bounds, focused windows and expired records stay foreign.
+     */
+    private val verifiedOwnOverlayIds = HashMap<Int, Pair<WindowArea, Long>>()
+
+    private fun rememberOwnOverlay(view: View?) {
+        if (view == null || !view.isAttachedToWindow || !view.isShown || view.width <= 0 || view.height <= 0) return
+        val node = try {
+            view.createAccessibilityNodeInfo()
+        } catch (_: Exception) {
+            null
+        }
+        val id = try {
+            node?.windowId ?: -1
         } finally {
             node?.recycle()
         }
-        val bounds = android.graphics.Rect().also(window::getBoundsInScreen)
-        ForegroundWindow(
-            name,
-            window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION,
-            window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY,
-            window.isFocused,
-            window.isActive,
-            WindowArea(bounds.left, bounds.top, bounds.right, bounds.bottom)
-        )
+        if (id < 0) return
+        val position = IntArray(2)
+        view.getLocationOnScreen(position)
+        val area = WindowArea(position[0], position[1], position[0] + view.width, position[1] + view.height)
+        verifiedOwnOverlayIds[id] = area to SystemClock.uptimeMillis()
+    }
+
+    private fun foregroundWindows(): List<ForegroundWindow> {
+        rememberOwnOverlay(calibrationEditor?.view)
+        rememberOwnOverlay(panel)
+        val now = SystemClock.uptimeMillis()
+        verifiedOwnOverlayIds.entries.removeAll { now - it.value.second > 10_000L }
+        return windows.orEmpty().map { window ->
+            val node = window.root
+            val reported = try {
+                node?.packageName?.toString()
+            } finally {
+                node?.recycle()
+            }
+            val bounds = android.graphics.Rect().also(window::getBoundsInScreen)
+            val area = WindowArea(bounds.left, bounds.top, bounds.right, bounds.bottom)
+            if (reported == packageName &&
+                window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY &&
+                !window.isFocused &&
+                !window.isActive
+            ) {
+                verifiedOwnOverlayIds[window.id] = area to now
+            }
+            val ownId = verifiedOwnOverlayIds[window.id]
+            val isOwnRootlessOverlay = reported == null &&
+                window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY &&
+                !window.isFocused &&
+                !window.isActive &&
+                ownId != null &&
+                ownId.first == area &&
+                now - ownId.second in 0L..10_000L
+            ForegroundWindow(
+                if (isOwnRootlessOverlay) packageName else reported,
+                window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION,
+                window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY,
+                window.isFocused,
+                window.isActive,
+                area
+            )
+        }
     }
 
     /** The focused underlying window, not a layer-high floating game or our own active overlay. */
@@ -643,7 +713,7 @@ class CollectorService : AccessibilityService() {
 
     /** Calibration uses full-display coordinates, so fail closed for unknown or multi-window targets. */
     private fun calibrationGameAllowed(gestures: List<GestureDescription>): Boolean = try {
-        val metrics = wm.currentWindowMetrics
+        val metrics = gameWindowMetrics()
         val b = metrics.bounds
         val i = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
         val usable = WindowArea(b.left + i.left, b.top + i.top, b.right - i.right, b.bottom - i.bottom)
@@ -3988,7 +4058,7 @@ class CollectorService : AccessibilityService() {
                     }
                 }
                 else -> {
-                    val bounds = wm.currentWindowMetrics.bounds
+                    val bounds = screen()
                     val p = Path().apply {
                         moveTo((s.getDouble("x") * (bounds.width() - 1)).toFloat(), (s.getDouble("y") * (bounds.height() - 1)).toFloat())
                     }
@@ -4199,7 +4269,7 @@ class CollectorService : AccessibilityService() {
         handler.postDelayed({ send(0) }, SHIELD_MS)
     }
 
-    private fun screen() = wm.currentWindowMetrics.bounds
+    private fun screen() = gameWindowMetrics().bounds
 
     private fun tapAt(x: Double, y: Double): GestureDescription {
         val b = screen()
