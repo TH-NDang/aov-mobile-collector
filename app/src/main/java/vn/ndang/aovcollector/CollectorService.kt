@@ -254,7 +254,7 @@ class CollectorService : AccessibilityService() {
         if(macroPicker!=null) { dismissMacroPicker();return }
         val host=panel?:return
         val saved=MacroStore.saved(this).mapNotNull { try { Macro(it.readText()) } catch(_:Exception) { null } }
-        val choices=listOf("Một tướng đang mở","Danh sách tướng")+saved.map { it.name }
+        val choices=listOf("Một tướng đang mở","Danh sách tướng","Pro Builds · Trang bị")+saved.map { it.name }
         var visible=choices.indices.toList()
         val body=Ui.stack(this).apply { setPadding(dp(10),dp(10),dp(10),dp(6));background=Ui.shape(Color.argb(248,248,248,254),dp(14),Ui.border) }
         val search=Ui.field(this,"Tìm macro…");body.addView(search,LinearLayout.LayoutParams(-1,dp(46)))
@@ -274,7 +274,7 @@ class CollectorService : AccessibilityService() {
         })
         list.setOnItemClickListener { _,_,position,_ ->
             val i=visible.getOrNull(position)?:return@setOnItemClickListener;dismissMacroPicker()
-            handler.post { when(i) { 0 -> taskForm(false);1 -> taskForm(true);else -> selectMacro(saved[i-2].raw) } }
+            handler.post { when(i) { 0 -> taskForm(false);1 -> taskForm(true);2 -> proTaskForm();else -> selectMacro(saved[i-3].raw) } }
         }
         body.addView(Ui.button(this,"Đóng danh sách") { dismissMacroPicker() },LinearLayout.LayoutParams(-1,dp(38)))
         filter("")
@@ -356,6 +356,44 @@ class CollectorService : AccessibilityService() {
             } catch(e:Exception) { field.error=e.message }
         }
     }
+    /** Pro Builds starts in the lobby or on Trang bị, not in the five-column hero library. */
+    private fun proTaskForm() {
+        val body=Ui.stack(this).apply { setPadding(dp(20),dp(8),dp(20),dp(8)) }
+        body.addView(Ui.text(this,"Từ sảnh chính, app vào Trang bị/Chuẩn bị. Với MỖI tướng: mở danh sách 8 cột, kiểm tra và bỏ tích Đã nhận; chọn tướng, Ph.án khác → Đề cử Pro. Lần lượt dùng tối đa 5 combo và chụp ảnh sau mỗi lần áp dụng.",14f))
+        body.addView(Ui.text(this,"Số tướng cần thu thập",13f,Ui.muted,true))
+        val field=Ui.field(this,"1–"+BuiltInMacros.ALL,uiPrefs.getInt("proCount",2).toString(),true)
+        body.addView(field)
+        val quick=LinearLayout(this)
+        listOf(1 to "1 tướng",2 to "2 tướng",10 to "10 tướng",BuiltInMacros.ALL to "Tất cả").forEach { (n,title) ->
+            quick.addView(Ui.button(this,title) { field.setText(n.toString()) },LinearLayout.LayoutParams(0,dp(42),1f).apply { marginEnd=dp(4) })
+        }
+        body.addView(quick)
+        val estimate=Ui.text(this,"",13f,Ui.ink,true).also { body.addView(it) }
+        fun update() {
+            val n=field.text.toString().toIntOrNull()?.coerceIn(0,BuiltInMacros.ALL)?:0
+            val approx=if(n>=BuiltInMacros.ALL) uiPrefs.getInt("heroTotal",130) else n
+            estimate.text="Tối đa "+(approx*5)+" ảnh combo · khoảng "+Format.size(approx*5L*averageShot())+
+                "\nTướng không có combo sẽ lưu 1 ảnh ngay trong popup Đề cử Pro. Không chọn lại combo trùng."
+        }
+        field.addTextChangedListener(object:android.text.TextWatcher {
+            override fun beforeTextChanged(s:CharSequence?,start:Int,count:Int,after:Int) {}
+            override fun onTextChanged(s:CharSequence?,start:Int,before:Int,count:Int) {}
+            override fun afterTextChanged(s:android.text.Editable?) { update() }
+        })
+        update()
+        body.addView(Ui.text(this,"Nên chạy thử 2 tướng trước. Độ phân giải có thể khác nhưng bố cục phải tương đương ảnh mẫu.",12f,Ui.muted))
+        val dialog=AlertDialog.Builder(this).setTitle("Thu thập Pro Builds")
+            .setView(ScrollView(this).apply { addView(body) })
+            .setPositiveButton("Chọn tác vụ",null).setNegativeButton("Hủy",null).create()
+        display(dialog)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val count=field.text.toString().toIntOrNull()
+            if(count==null || count !in 1..BuiltInMacros.ALL) { field.error="Nhập 1–"+BuiltInMacros.ALL;return@setOnClickListener }
+            uiPrefs.edit().putInt("proCount",count).apply()
+            if(selectMacro(BuiltInMacros.proBuilds(count))) dialog.dismiss()
+        }
+    }
+
     /** Mean size of the screenshots saved on this phone, which depends on its screen and the game's art; 1.5 MB before any. */
     private fun averageShot():Long {
         val sizes=File(filesDir,"captures").walkTopDown().filter { it.isFile&&it.extension=="png" }.take(300).map { it.length() }.toList()
