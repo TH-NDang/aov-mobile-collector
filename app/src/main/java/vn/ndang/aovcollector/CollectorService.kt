@@ -60,14 +60,15 @@ class CollectorService : AccessibilityService() {
     private fun clock(ms:Long):String { val t=ms/1000; return if(t>=3600) "%d:%02d:%02d".format(t/3600,t/60%60,t%60) else "%d:%02d".format(t/60,t%60) }
     /** Progress line such as "Tướng 23/129 · 25:12 · còn ~1:30:00", with collection time excluding pauses. */
     private fun progress(m:Macro):String {
-        val all=m.json.optString("collectionMode")=="all"; val heroes=m.json.optInt("heroCount",1)
-        val perHero=if(all) ((m.steps.length()-1)/heroes).coerceAtLeast(1) else m.steps.length()
-        val target=if(all) minOf(heroes,listTotal?:heroes) else 1
-        val total=if(all) 1+target*perHero else m.steps.length()
+        val mode=m.json.optString("collectionMode"); val batch=mode=="all"||mode=="pro-builds"
+        val heroes=m.json.optInt("heroCount",1)
+        val perHero=if(mode=="all") ((m.steps.length()-1)/heroes).coerceAtLeast(1) else 1
+        val target=if(batch) minOf(heroes,listTotal?:heroes) else 1
+        val total=if(mode=="all") 1+target*perHero else if(batch) target else m.steps.length()
         val done=index.coerceIn(0,total)
-        val head=if(all) "Tướng ${minOf(target,(index-1).coerceAtLeast(0)/perHero+1)}/${if(listTotal==null&&heroes>=BuiltInMacros.ALL) "?" else target}"
+        val head=if(batch) "Tướng ${minOf(target,(index-(if(mode=="all") 1 else 0)).coerceAtLeast(0)/perHero+1)}/${if(listTotal==null&&heroes>=BuiltInMacros.ALL) "?" else target}"
             else "${m.photoSteps.count { it<index }}/${m.photoSteps.size} ảnh"
-        val t=elapsed(); val eta=if(done>=20&&t>60_000) " · còn ~"+clock(t*(total-done)/done) else ""
+        val t=elapsed(); val eta=if(done>=2&&t>60_000) " · còn ~"+clock(t*(total-done)/done) else ""
         return "$head · ${clock(t)}$eta"
     }
     /** Package in front, or null when Android does not report one, which is common with Unity games. */
@@ -416,13 +417,13 @@ class CollectorService : AccessibilityService() {
             if(runId.isEmpty()) {
                 val mode=m.json.optString("collectionMode","custom")
                 val slug=m.json.optString("heroName","").replace(Regex("[^a-zA-Z0-9_-]"),"-").take(40)
-                runId="$mode-${slug}-"+SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US).format(Date()); listRef=null; listTotal=null
+                runId="$mode-${slug}-"+SimpleDateFormat("yyyyMMdd-HHmmss-SSS",Locale.US).format(Date()); listRef=null; listTotal=null; proGrid=ProBuildRunner.GridState()
             }
             if(prefs.getString("hash","")==m.hash) activeMs=prefs.getLong("activeMs",0L) else activeMs=0L
             setRunning(true); generation++; save(); note(if(index==0) "Bắt đầu lượt" else "Tiếp tục"); next(generation)
         } catch(e:Exception) { pause("Lỗi macro: ${e.message}") }
     }
-    fun reset() { if(busy || manualBusy) { status("Chờ bước hiện tại xong"); return }; setRunning(false); activeMs=0L; listTotal=null; generation++; stopped=false; index=0; runId=""; macro=null; listRef=null; prefs.edit().clear().commit(); upgradeBuiltIn(); status("Sẵn sàng lượt mới") }
+    fun reset() { if(busy || manualBusy) { status("Chờ bước hiện tại xong"); return }; setRunning(false); activeMs=0L; listTotal=null; generation++; stopped=false; index=0; runId=""; macro=null; listRef=null; proGrid=ProBuildRunner.GridState(); prefs.edit().clear().commit(); upgradeBuiltIn(); status("Sẵn sàng lượt mới") }
     /**
      * A built-in macro selected before an app update keeps its old steps in macro.json. Regenerate it with the
      * same settings unless a run of it is still unfinished, so a new run always uses the current steps.
@@ -431,10 +432,12 @@ class CollectorService : AccessibilityService() {
         if(!MacroStore.current(this).exists()) return   // nothing selected yet on a fresh install
         try {
             val m=readMacro(); val mode=m.json.optString("collectionMode")
-            if((mode!="single"&&mode!="all")||m.json.optInt("builtinVersion",1)==BuiltInMacros.VERSION) return
+            if(mode !in listOf("single","all","pro-builds") || m.json.optInt("builtinVersion",1)==BuiltInMacros.VERSION) return
             val step=if(prefs.getString("hash","")==m.hash) prefs.getInt("step",0) else 0
             if(step>0&&step<m.steps.length()&&!prefs.getBoolean("stopped",false)) return
-            MacroStore.current(this).writeText(BuiltInMacros.create(m.json.optString("heroName",""),m.json.optInt("heroCount",1),mode=="all",m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills")))
+            val updated=if(mode=="pro-builds") BuiltInMacros.proBuilds(m.json.optInt("heroCount",1))
+                else BuiltInMacros.create(m.json.optString("heroName",""),m.json.optInt("heroCount",1),mode=="all",m.json.optBoolean("fast"),m.json.optBoolean("detailOnly"),m.json.optBoolean("directSkills"))
+            MacroStore.current(this).writeText(updated)
             selectionCache=null
         } catch(e:Exception) { CrashLog.record(this,"Không nâng cấp được macro",e) }
     }
@@ -458,7 +461,7 @@ class CollectorService : AccessibilityService() {
     private fun next(token:Int,away:Int=0) {
         val m=macro ?: return
         if(!running || token!=generation) return
-        if(index>=m.steps.length()) { afterSaves { if(token==generation&&running) { setRunning(false); save(); note("Hoàn tất · ${clock(elapsed())}"); status("Đã chụp xong · ${m.photoSteps.size} ảnh · ${clock(elapsed())}") } }; return }
+        if(index>=m.steps.length()) { afterSaves { if(token==generation&&running) { setRunning(false); save(); note("Hoàn tất · ${clock(elapsed())}"); status(if(m.json.optString("collectionMode")=="pro-builds") "Đã hoàn tất Pro Builds · ${clock(elapsed())}" else "Đã chụp xong · ${m.photoSteps.size} ảnh · ${clock(elapsed())}") } }; return }
         val front=foreground()
         if(front!=null&&front!=m.target) {
             // A notification or game booster can hold focus for a moment; only stop when another app stays in front.
@@ -489,7 +492,7 @@ class CollectorService : AccessibilityService() {
         try {
             val type=s.getString("type")
             // A step that never reports back must not leave the controller stuck on "Đang xử lý".
-            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; "pick" -> 300000L; else -> 10000L }
+            val limit=when(type) { "wait" -> s.getLong("ms")+5000; "screenshot" -> 30000L; "swipe" -> s.optLong("ms",500)+10000; "pick" -> 300000L; "pro-hero" -> 600000L; else -> 10000L }
             handler.postDelayed({ if(!finished && token==generation) done(false,"Bước ${index+1} ($type) quá ${limit/1000} giây không xong. Kiểm tra màn hình rồi tiếp tục.") },limit)
             when(type) {
                 "wait" -> handler.postDelayed({ done(true) },s.getLong("ms"))
@@ -502,6 +505,14 @@ class CollectorService : AccessibilityService() {
                     is ListNavigator.Outcome.End -> listEnded(card)
                     is ListNavigator.Outcome.Failed -> done(false,outcome.reason)
                 } } }
+                "pro-hero" -> {
+                    val card=s.getInt("index")
+                    proHero(card,{ running && !finished && token==generation }) { outcome -> when(outcome) {
+                        is ProBuildRunner.Outcome.Collected -> done(true)
+                        is ProBuildRunner.Outcome.EndOfHeroes -> listEnded(card)
+                        is ProBuildRunner.Outcome.Failed -> done(false,outcome.reason)
+                    } }
+                }
                 else -> {
                     val bounds=wm.currentWindowMetrics.bounds
                     val p=Path().apply { moveTo((s.getDouble("x")*(bounds.width()-1)).toFloat(),(s.getDouble("y")*(bounds.height()-1)).toFloat()) }
@@ -554,6 +565,7 @@ class CollectorService : AccessibilityService() {
         return listOf(GestureDescription.Builder().addStroke(move).build(),GestureDescription.Builder().addStroke(hold).build())
     }
     private var listRef:FloatArray?=null
+    private var proGrid=ProBuildRunner.GridState()
     /** Runs a [ListNavigator] for card [card] against the real screen; its state survives in list.json. */
     private fun pick(card:Int,stamp:String,alive:()->Boolean,finish:(ListNavigator.Outcome)->Unit) {
         val file=File(filesDir,"captures/$runId/list.json")
