@@ -25,6 +25,7 @@ class Macro(val raw: String) {
                 "screenshot" -> require(s.getString("name").matches(Regex("[a-zA-Z0-9_-]{1,64}"))) { "Tên ảnh không hợp lệ" }
                 "back" -> Unit
                 "pick" -> require(s.getInt("index") in 0..9999) { "pick: index từ 0 đến 9999" }
+                "pro-hero" -> require(s.getInt("index") in 0 until BuiltInMacros.ALL) { "pro-hero: index ngoài danh sách" }
                 else -> error("Bước ${i+1}: type không hỗ trợ")
             }
         }
@@ -80,6 +81,23 @@ object BuiltInMacros {
             .put("collectionMode",if(batch) "all" else "single").put("heroName",safeName)
             .put("heroCount",if(batch) count else 1).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills)
             .put("builtinVersion",VERSION).put("steps",steps).toString(2)
+    }
+    /**
+     * Built-in Pro Builds macro. Each hero is a single resumable step; navigation, scrolling,
+     * available-combo detection and screenshot capture happen inside ProBuildRunner.
+     */
+    fun proBuilds(count: Int): String {
+        require(count in 1..ALL)
+        val steps = org.json.JSONArray()
+        for (i in 0 until count) steps.put(JSONObject().put("type", "pro-hero").put("index", i))
+        return JSONObject().put("name", "pro-builds")
+            .put("targetPackage", "com.garena.game.kgvn")
+            .put("orientation", "landscape")
+            .put("collectionMode", "pro-builds")
+            .put("heroCount", count)
+            .put("buildsPerHero", 5)
+            .put("builtinVersion", VERSION)
+            .put("steps", steps).toString(2)
     }
     /**
      * Rough seconds per hero, read from the steps themselves: every wait, plus typical times measured for a tap
