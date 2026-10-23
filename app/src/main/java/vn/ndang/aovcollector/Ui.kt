@@ -55,15 +55,17 @@ object MacroStore {
         File(folder,"${m.hash}.json").writeText(raw)
     }
     fun saved(c:Context):List<File> = File(c.filesDir,"macros").listFiles()?.filter { it.extension=="json" }?.sortedByDescending { it.lastModified() }.orEmpty()
-    fun title(m:Macro):String = when(m.json.optString("collectionMode")) { "single" -> "Một tướng"; "all" -> "Danh sách tướng"; else -> "Macro đã nhập" }
+    fun title(m:Macro):String = when(m.json.optString("collectionMode")) { "single" -> "Một tướng"; "all" -> "Danh sách tướng"; "pro-builds" -> "Pro Builds"; else -> "Macro đã nhập" }
     fun description(m:Macro):String = when(m.json.optString("collectionMode")) {
+        "pro-builds" -> base(m)
         "single","all" -> base(m)+(if(m.json.optBoolean("fast")) " · nhanh" else "")+(if(m.json.optBoolean("detailOnly")) " · chỉ Chi tiết" else "")+(if(m.json.optBoolean("directSkills")) " · chuyển thẳng chiêu" else "")
         else -> m.name
     }
     private fun base(m:Macro):String = when(m.json.optString("collectionMode")) {
         "single" -> m.json.optString("heroName","").ifBlank { "Tướng đang mở" }+" · ${m.photoSteps.size} ảnh"
+        "pro-builds" -> if(m.json.optInt("heroCount",1)>=BuiltInMacros.ALL) "Pro Builds: tất cả tướng · tối đa 5 combo/tướng" else "Pro Builds: ${m.json.optInt("heroCount",1)} tướng · tối đa 5 combo/tướng"
         "all" -> if(m.json.optInt("heroCount",1)>=BuiltInMacros.ALL) "Tất cả tướng · dừng ở cuối danh sách" else "${m.json.optInt("heroCount",1)} ô tướng · cuộn có đo, dừng ở cuối danh sách"
         else -> m.name
     }
-    fun instruction(m:Macro):String = if(m.json.optString("collectionMode")=="all") "Mở danh sách Tất cả tướng; app tự đưa về đầu danh sách." else if(m.json.optString("collectionMode")=="single") "Mở trang chi tiết tướng, đóng bảng mô tả chiêu." else "Mở đúng màn hình bắt đầu của macro."
+    fun instruction(m:Macro):String = if(m.json.optString("collectionMode")=="pro-builds") "Mở sảnh chính hoặc Trang bị/Chuẩn bị. App tự mở Chọn tướng, bỏ lọc Đã nhận và lấy tối đa 5 combo Pro mỗi tướng." else if(m.json.optString("collectionMode")=="all") "Mở danh sách Tất cả tướng; app tự đưa về đầu danh sách." else if(m.json.optString("collectionMode")=="single") "Mở trang chi tiết tướng, đóng bảng mô tả chiêu." else "Mở đúng màn hình bắt đầu của macro."
 }
