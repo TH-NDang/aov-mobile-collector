@@ -629,22 +629,63 @@ class CollectorService : AccessibilityService() {
         note("Lượt chạy trọn không tạm dừng: đã lưu thời gian để ước tính lần sau")
     }
 
-    private fun foregroundWindows(): List<ForegroundWindow> = windows.orEmpty().map { window ->
-        val node = window.root
-        val name = try {
-            node?.packageName?.toString()
+    /**
+     * Android 14 briefly reports the owner of a shielded accessibility overlay as null
+     * between hiding it and removing its window. Identify ONLY our actual attached
+     * window IDs, measured while the View is visible and owned by this process.
+     * Unknown IDs, changed bounds, focused windows and expired records stay foreign.
+     */
+    private val verifiedOwnOverlayIds = HashMap<Int, Pair<WindowArea, Long>>()
+
+    private fun rememberOwnOverlay(view: View?) {
+        if (view == null || !view.isAttachedToWindow || !view.isShown || view.width <= 0 || view.height <= 0) return
+        val node = try {
+            view.createAccessibilityNodeInfo()
+        } catch (_: Exception) {
+            null
+        }
+        val id = try {
+            node?.windowId ?: -1
         } finally {
             node?.recycle()
         }
-        val bounds = android.graphics.Rect().also(window::getBoundsInScreen)
-        ForegroundWindow(
-            name,
-            window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION,
-            window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY,
-            window.isFocused,
-            window.isActive,
-            WindowArea(bounds.left, bounds.top, bounds.right, bounds.bottom)
-        )
+        if (id < 0) return
+        val position = IntArray(2)
+        view.getLocationOnScreen(position)
+        val area = WindowArea(position[0], position[1], position[0] + view.width, position[1] + view.height)
+        verifiedOwnOverlayIds[id] = area to SystemClock.uptimeMillis()
+    }
+
+    private fun foregroundWindows(): List<ForegroundWindow> {
+        rememberOwnOverlay(calibrationEditor?.view)
+        rememberOwnOverlay(panel)
+        val now = SystemClock.uptimeMillis()
+        verifiedOwnOverlayIds.entries.removeAll { now - it.value.second > 10_000L }
+        return windows.orEmpty().map { window ->
+            val node = window.root
+            val reported = try {
+                node?.packageName?.toString()
+            } finally {
+                node?.recycle()
+            }
+            val bounds = android.graphics.Rect().also(window::getBoundsInScreen)
+            val area = WindowArea(bounds.left, bounds.top, bounds.right, bounds.bottom)
+            val ownId = verifiedOwnOverlayIds[window.id]
+            val isOwnRootlessOverlay = reported == null &&
+                window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY &&
+                !window.isFocused &&
+                !window.isActive &&
+                ownId?.first == area &&
+                now - ownId.second in 0..10_000L
+            ForegroundWindow(
+                if (isOwnRootlessOverlay) packageName else reported,
+                window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION,
+                window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY,
+                window.isFocused,
+                window.isActive,
+                area
+            )
+        }
     }
 
     /** The focused underlying window, not a layer-high floating game or our own active overlay. */
