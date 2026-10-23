@@ -66,8 +66,8 @@ object ProBuildVision {
     /** A recommendation row is located by its long yellow "Dùng combo" button, not by fixed row Y. */
     data class Proposal(val buttonY: Double, val avatar: Long, val account: Long) {
         fun same(other: Proposal): Boolean =
-            java.lang.Long.bitCount(avatar xor other.avatar) <= 8 &&
-                java.lang.Long.bitCount(account xor other.account) <= 12
+            java.lang.Long.bitCount(avatar xor other.avatar) <= 14 &&
+                java.lang.Long.bitCount(account xor other.account) <= 16
     }
 
     private fun yellow(c: Int): Boolean {
