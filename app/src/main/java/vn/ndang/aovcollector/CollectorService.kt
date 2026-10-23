@@ -646,12 +646,12 @@ class CollectorService : AccessibilityService() {
         }.start()
     }
     /** Adapts accessibility gestures/screenshots to the guarded, checkpointed ProBuildRunner. */
-    private fun proHero(card:Int,alive:()->Boolean,finish:(ProBuildRunner.Outcome)->Unit) {
+    private fun proHero(card:Int,isAlive:()->Boolean,finish:(ProBuildRunner.Outcome)->Unit) {
         val screen=object:ProBuildRunner.Game {
-            override val alive get()=alive()
+            override val alive get()=isAlive()
             override fun look(then:(ProBuildRunner.Shot?)->Unit) {
                 grab { bitmap ->
-                    if(bitmap==null || !alive()) { bitmap?.recycle(); then(null); return@grab }
+                    if(bitmap==null || !isAlive()) { bitmap?.recycle(); then(null); return@grab }
                     then(object:ProBuildRunner.Shot {
                         var released=false
                         override val frame=object:ProBuildVision.Frame {
