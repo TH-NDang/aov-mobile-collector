@@ -1,7 +1,7 @@
 name: Build APK
 on:
   push:
-    branches: [main, codex/chess-encyclopedia-collector, codex/chess-hero-row-capture-fix, codex/chess-verified-title-progress, codex/fix-statistics-warzone-filter]
+    branches: [main, codex/chess-encyclopedia-collector, codex/chess-hero-row-capture-fix, codex/chess-verified-title-progress, codex/fix-statistics-warzone-filter, codex/pro-builds-compatible-upgrade]
   workflow_dispatch:
     inputs:
       metrics_probe:
@@ -37,6 +37,22 @@ jobs:
         run: |
           base64 --decode debug-keystore.base64 > collector-debug.keystore
       - run: gradle --no-daemon assembleDebug assembleDebugAndroidTest lintDebug testDebugUnitTest
+      # Regression guard: an APK missing the real launcher artwork or having a lower
+      # versionCode than the previously installed build must never be offered as an update.
+      - name: Verify upgrade metadata, original launcher icon and APK signing
+        run: |
+          set -euo pipefail
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          SIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          for APK in app/build/outputs/apk/debug/app-universal-debug.apk app/build/outputs/apk/debug/app-arm64-v8a-debug.apk; do
+            echo "Validating $APK"
+            test -s "$APK"
+            "$AAPT" dump badging "$APK" > /tmp/collector-badging.txt
+            grep -q "package: name='vn.ndang.aovcollector' versionCode='52' versionName='0.13.21'" /tmp/collector-badging.txt
+            grep -q "application-icon-" /tmp/collector-badging.txt
+            grep -q "ic_launcher" /tmp/collector-badging.txt
+            "$SIGNER" verify --print-certs "$APK"
+          done
       - uses: actions/upload-artifact@v4
         with:
           name: aov-mobile-collector-apk
