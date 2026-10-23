@@ -1,4 +1,4 @@
-# AOV Mobile Collector — v0.3
+# AOV Mobile Collector — v0.4.7
 
 App thử nghiệm Android 11+ để chụp dữ liệu menu Liên Quân VN bằng macro. Ảnh lưu trên máy, OCR chạy ngoại tuyến; app không có quyền Internet.
 
@@ -13,6 +13,16 @@ App thử nghiệm Android 11+ để chụp dữ liệu menu Liên Quân VN bằ
 8. **Nhập** trên header nhận ZIP đã xuất (cả dạng ZIP chứa ZIP nhỏ lẫn ZIP cũ) hoặc macro JSON. Macro JSON xuất hiện trong ô tìm của bảng nổi.
 
 Nền bảng nổi bán trong suốt, có thể kéo ở thanh tiêu đề. Bảng tự ẩn khi chụp để không dính vào ảnh. Xuất ZIP trước khi gỡ app vì gỡ app sẽ xóa ảnh nội bộ.
+
+## Thu thập Pro Builds (v0.4.7)
+
+1. Mở game Liên Quân VN ở **sảnh chính** hoặc trang **Chuẩn bị/Trang bị**. Trên bảng nổi: **Chọn macro → Pro Builds · Trang bị**; nhập 1–300 tướng (nên thử 1–2 tướng trước), rồi bấm **Chạy**.
+2. Từng tướng: nếu đang ở sảnh, app mở **Trang bị**; bấm biểu tượng dưới danh sách ảnh tướng phía trái → popup **Chọn tướng**. App **đọc và bỏ dấu tích “Đã nhận” nếu đang bật**, cho MỖI tướng, rồi chọn thẻ trong lưới 8 cột theo thứ tự trái sang phải, trên xuống dưới.
+3. Sau khi chọn tướng, app mở **Ph.án khác → Đề cử Pro**. Nó tìm các nút **Dùng combo** trên màn hình, so ảnh tài khoản/ảnh đại diện để tránh chọn lại; nếu cần, cuộn trong popup, dùng lần lượt **tối đa 5** combo khác nhau.
+4. Sau mỗi **Dùng combo**, game quay về **Chuẩn bị/Trang bị**; app lưu PNG đúng màn hình trang bị/phù hiệu/ngọc/phụ trợ mới áp dụng. Khi ít hơn 5 đề cử, giữ những ảnh có được; **không có đề cử** thì lưu ảnh ngay trong popup Đề cử Pro (`-pro-none.png`).
+5. Mỗi tướng có thư mục riêng trong một lượt `pro-builds-...`; tên thư mục lấy từ OCR ở màn hình Chuẩn bị khi được, còn không dùng `tuong-001`, `tuong-002`... Ảnh có hậu tố `-pro-01.png`…`-pro-05.png`.
+
+**Lưu ý:** Nhận dạng màn hình và cuộn dựa trên ảnh, tối ưu cho bố cục ngang **1536 × 691** như bộ ảnh tham khảo. Ứng dụng không tự nhận diện chính xác mọi biến thể độ phân giải, giao diện cập nhật hay popup che. Nếu không kiểm chứng được màn hình/ô tướng, tác vụ dừng và lưu ảnh chẩn đoán ở thư mục lượt. Khi tiếp tục một bước đang dở, vào lại **Chuẩn bị**; một số ảnh `pro-XX` có thể được ghi lại vì checkpoint hiện tại được lưu **theo tướng**, không phải theo từng combo. Chưa có thử nghiệm thao tác với game thật trong CI (giả lập CI chỉ kiểm thử app/trợ năng).
 
 ## Build
 Android SDK 35, JDK 17, Gradle 8.9:
