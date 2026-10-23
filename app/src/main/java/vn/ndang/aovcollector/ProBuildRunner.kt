@@ -180,7 +180,7 @@ class ProBuildRunner(
         expected(ProBuildVision.Page.HERO_PICKER, "danh sách khi tìm đầu") { before ->
             val profile = ProHeroGrid.profile(before.frame)
             before.done()
-            swipe(-.64, true, 650) {
+            swipe(-.29, false, 650) {
                 expected(ProBuildVision.Page.HERO_PICKER, "danh sách sau vuốt lên") { after ->
                     val updated = ProHeroGrid.profile(after.frame)
                     val height = after.frame.height
