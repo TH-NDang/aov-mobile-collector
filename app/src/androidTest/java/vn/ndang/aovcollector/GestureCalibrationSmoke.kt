@@ -285,8 +285,10 @@ internal object GestureCalibrationSmoke {
             check(captured.await(8, java.util.concurrent.TimeUnit.SECONDS) && hasBitmap.get())
             test.runOnMainSync {
                 check(service.calibrationView?.visibility == View.VISIBLE)
-                check(wm.maximumWindowMetrics.bounds == bounds &&
-                    service.calibrationProfile() == profile) { "Editor changed orientation" }
+                check(
+                    wm.maximumWindowMetrics.bounds == bounds &&
+                        service.calibrationProfile() == profile
+                ) { "Editor changed orientation" }
             }
             automation.takeScreenshot()?.let { bitmap ->
                 val file = java.io.File(service.filesDir, "smoke/calibration-runtime.png")

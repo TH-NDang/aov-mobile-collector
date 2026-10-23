@@ -321,8 +321,10 @@ internal object TeachingDeviceSmoke {
             // not a stale portrait AccessibilityService currentWindowMetrics snapshot.
             val bounds = Rect(wm.maximumWindowMetrics.bounds)
             profile = main(test) { service.calibrationProfile() }
-            check(checkNotNull(profile).width == bounds.width() &&
-                checkNotNull(profile).height == bounds.height()) {
+            check(
+                checkNotNull(profile).width == bounds.width() &&
+                    checkNotNull(profile).height == bounds.height()
+            ) {
                 "The service did not resolve the verified full-screen game geometry"
             }
             main(test) {
