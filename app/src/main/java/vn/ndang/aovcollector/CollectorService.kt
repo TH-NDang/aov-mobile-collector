@@ -607,6 +607,44 @@ class CollectorService : AccessibilityService() {
             finish(outcome)
         }.start()
     }
+    /** Adapts accessibility gestures/screenshots to the guarded, checkpointed ProBuildRunner. */
+    private fun proHero(card:Int,alive:()->Boolean,finish:(ProBuildRunner.Outcome)->Unit) {
+        val screen=object:ProBuildRunner.Game {
+            override val alive get()=alive()
+            override fun look(then:(ProBuildRunner.Shot?)->Unit) {
+                grab { bitmap ->
+                    if(bitmap==null || !alive()) { bitmap?.recycle(); then(null); return@grab }
+                    then(object:ProBuildRunner.Shot {
+                        var released=false
+                        override val frame=object:ProBuildVision.Frame {
+                            override val width=bitmap.width
+                            override val height=bitmap.height
+                            override fun pixel(x:Int,y:Int):Int = bitmap.getPixel(x.coerceIn(0,width-1),y.coerceIn(0,height-1))
+                        }
+                        override fun done(keep:String?) {
+                            if(released) return
+                            released=true
+                            if(keep!=null) store(bitmap,runId,"%04d-%s".format(index+1,keep)) { ok -> if(!ok) note("Không lưu được ảnh kiểm tra $keep") }
+                            else bitmap.recycle()
+                        }
+                    })
+                }
+            }
+            override fun tap(x:Double,y:Double,then:(Boolean)->Unit) { touchGame(tapAt(x,y),true,then) }
+            override fun swipe(d:Double,flick:Boolean,then:(Boolean)->Unit) {
+                val from=if(d>0) .79 else .36
+                val to=(from-d).coerceIn(.27,.85)
+                touchGame(drag(.655,from,to,if(flick) 180 else 700,if(flick) 0 else 440),false,then)
+            }
+            override fun screenshot(name:String,then:(Boolean)->Unit) {
+                capture("%04d-%s".format(index+1,name),runId,wait=true,done=then)
+            }
+            override fun later(ms:Long,then:()->Unit) { handler.postDelayed(then,ms) }
+            override fun note(text:String) { this@CollectorService.note(text) }
+        }
+        ProBuildRunner(card,proGrid,screen,finish).start()
+    }
+
     private fun manualCapture() {
         if(libraryBusy) { status("Đang lưu dữ liệu; vui lòng chờ");return }
         if(busy || running || manualBusy) { status("Tạm dừng trước khi chụp riêng"); return }
@@ -617,13 +655,19 @@ class CollectorService : AccessibilityService() {
     private fun photoDirectory(folder:String,name:String,bitmap:Bitmap):File {
         val base=File(filesDir,"captures/$folder").apply { mkdirs() }
         val m=macro ?: return base
-        if(folder=="manual" || m.json.optString("collectionMode") !in listOf("single","all")) return base
+        if(folder=="manual" || m.json.optString("collectionMode") !in listOf("single","all","pro-builds")) return base
+        if(name.contains("-unexpected-") || name.endsWith("-after-tap")) return base
         val key=Regex("(hero(?:-\\d{3})?)-").find(name)?.groupValues?.get(1) ?: return base
         val mapFile=File(base,"hero-folders.json")
         val mapping=try { JSONObject(mapFile.readText()) } catch(_:Exception) { JSONObject() }
         val existing=mapping.optString(key)
         if(existing.matches(Regex("[a-z0-9_-]{1,100}")) && File(base,existing).isDirectory) return File(base,existing)
-        val ocr=if(name.endsWith("-overview")) HeroNames.read(bitmap) else null
+        val ocr=when {
+            name.endsWith("-overview") -> HeroNames.read(bitmap)
+            m.json.optString("collectionMode")=="pro-builds" && name.contains("-pro-") && !name.endsWith("-none") ->
+                HeroNames.readEquipmentName(bitmap)
+            else -> null
+        }
         val manual=if(m.json.optString("collectionMode")=="single") m.json.optString("heroName","").trim().takeUnless { it.isBlank()||it=="Chưa đặt tên" } else null
         val displayName=manual?:ocr
         val slug=displayName?.let { HeroNames.slug(it) } ?: "tuong-${key.removePrefix("hero-").takeUnless { it=="hero" }?:"001"}"
