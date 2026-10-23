@@ -176,7 +176,7 @@ class ProBuildRunner(
     }
     /** Go to top ONLY when the previous screen cannot be registered. Check displacement after every swipe. */
     private fun gridHome(round: Int) {
-        if (round >= 18) return fail("Không tìm được đầu danh sách chọn tướng sau 18 lần vuốt")
+        if (round >= 48) return fail("Không tìm được đầu danh sách chọn tướng sau 48 lần vuốt")
         expected(ProBuildVision.Page.HERO_PICKER, "danh sách khi tìm đầu") { before ->
             val profile = ProHeroGrid.profile(before.frame)
             before.done()
