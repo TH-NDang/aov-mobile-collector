@@ -65,6 +65,13 @@ object HeroNames {
         for(start in starts) for(y in top..bottom) for(x in left..right) if(luma[y*w+x]>threshold) out[(y-top+margin)*width+start+x-left]=Color.BLACK
         return Line(Bitmap.createBitmap(out,width,tall,Bitmap.Config.ARGB_8888),starts,word)
     }
+    /** The selected hero's name below the 3D preview on the equipment preparation screen. */
+    fun readEquipmentName(bitmap:Bitmap):String? {
+        if(bitmap.width<=bitmap.height) return null
+        val text=ocr(crop(bitmap,.305,.86,.20,.095))?:return null
+        return text.textBlocks.flatMap { it.lines }.mapNotNull { valid(it.text) }
+            .firstOrNull { it !in listOf("Chuẩn bị","Trang bị","Ph án khác") }
+    }
     /** The "owned/total" counter above the All-heroes list (14/129 means 129 heroes). */
     fun readListTotal(bitmap:Bitmap):Int? {
         if(bitmap.width<=bitmap.height) return null
