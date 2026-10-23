@@ -670,13 +670,21 @@ class CollectorService : AccessibilityService() {
             }
             val bounds = android.graphics.Rect().also(window::getBoundsInScreen)
             val area = WindowArea(bounds.left, bounds.top, bounds.right, bounds.bottom)
+            if (reported == packageName &&
+                window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY &&
+                !window.isFocused &&
+                !window.isActive
+            ) {
+                verifiedOwnOverlayIds[window.id] = area to now
+            }
             val ownId = verifiedOwnOverlayIds[window.id]
             val isOwnRootlessOverlay = reported == null &&
                 window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY &&
                 !window.isFocused &&
                 !window.isActive &&
-                ownId?.first == area &&
-                now - ownId.second in 0..10_000L
+                ownId != null &&
+                ownId.first == area &&
+                now - ownId.second in 0L..10_000L
             ForegroundWindow(
                 if (isOwnRootlessOverlay) packageName else reported,
                 window.type == android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION,
