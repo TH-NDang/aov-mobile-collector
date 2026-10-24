@@ -71,7 +71,11 @@ jobs:
 
       - name: Enable emulator acceleration
         run: sudo chmod 666 /dev/kvm
-      - name: UI and OCR smoke check
+      # Teaching tests exercise focus, overlays and service rebinding.
+      # A following instrumentation run in the SAME emulator intermittently ANRs on
+      # FocusEvent(hasFocus=false) even after 'pm clear'. Run each suite on a fresh
+      # emulator instance; do not discard either suite or mask its exit status.
+      - name: Teaching UI smoke (isolated emulator)
         uses: reactivecircus/android-emulator-runner@v2.38.0
         with:
           api-level: 30
@@ -80,16 +84,12 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
+            set -e
             adb install -r app/build/outputs/apk/debug/app-universal-debug.apk
             adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
             adb install -r chat-fixture/build/outputs/apk/debug/chat-fixture-debug.apk
-            # This is a synthetic touch receiver, not the real game. Never install it on a user's device.
             adb install -r game-fixture/build/outputs/apk/debug/game-fixture-debug.apk
-            # Tap the actual Home/Recents navigation buttons instead of bypassing them with global actions.
             adb shell cmd overlay enable --user 0 com.android.internal.systemui.navbar.threebutton
-            # UiSmoke enables the service itself once its process is up; enabling it here races the
-            # process restart of am instrument and can leave the binding stuck.
-            # Fail quickly on teaching regressions; retain its diagnostics before resetting this CI-only app.
             adb shell am instrument -w -e teaching_only true vn.ndang.aovcollector.test/vn.ndang.aovcollector.UiSmoke > teaching-smoke-result.txt
             cat teaching-smoke-result.txt
             mkdir -p teaching-smoke
@@ -97,8 +97,22 @@ jobs:
             adb exec-out run-as vn.ndang.aovcollector tar -C files/smoke -cf - . > teaching-smoke.tar
             tar -xf teaching-smoke.tar -C teaching-smoke
             grep -q TEACHING_SMOKE_OK teaching-smoke-result.txt
-            # Disposable emulator only: clear focused-test state, then require the original full suite too.
-            adb shell pm clear vn.ndang.aovcollector | grep -q Success
+      - name: Full UI and OCR smoke (fresh emulator)
+        uses: reactivecircus/android-emulator-runner@v2.38.0
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          profile: pixel_2
+          disable-animations: true
+          script: |
+            set -e
+            adb install -r app/build/outputs/apk/debug/app-universal-debug.apk
+            adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+            adb install -r chat-fixture/build/outputs/apk/debug/chat-fixture-debug.apk
+            # Offline fixture only; never install on a user's device.
+            adb install -r game-fixture/build/outputs/apk/debug/game-fixture-debug.apk
+            adb shell cmd overlay enable --user 0 com.android.internal.systemui.navbar.threebutton
             adb shell am instrument -w vn.ndang.aovcollector.test/vn.ndang.aovcollector.UiSmoke > smoke-result.txt
             cat smoke-result.txt
             mkdir -p ui-smoke
