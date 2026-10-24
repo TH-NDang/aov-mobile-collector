@@ -535,6 +535,11 @@ class GameEntry(
     private val smartLobby: Boolean = true,
     private val preserveScreen: Boolean = false,
     private val readOnlyAccount: Boolean = false,
+    /**
+     * Only the dedicated event-invite runner sets this. A UID-less run must prove it
+     * actively used the supplied Garena credentials instead of trusting a previous login.
+     */
+    private val forceFreshLogin: Boolean = false,
     private val finish: (Outcome) -> Unit
 ) {
     sealed class Outcome {
@@ -926,6 +931,26 @@ class GameEntry(
             uidOk = true
             screen.note("UID $uid khớp tài khoản test")
         }
+        if (forceFreshLogin && !switched) {
+            // We have no account UID by design. Prove account selection through a fresh
+            // credential submission instead of silently reusing whichever account is logged in.
+            if (leftOnce) {
+                return stop(
+                    s,
+                    "entry-event-login",
+                    "Đã đăng xuất nhưng game tự vào lại tài khoản cũ; cần mở màn đăng nhập Garena trước khi tiếp tục."
+                )
+            }
+            leftOnce = true
+            phase = Phase.LOGOUT
+            lobbySince = -1
+            return tap(
+                s,
+                "Sự kiện: mở Cài đặt để đăng xuất tài khoản đang dùng",
+                GameScreens.SETTINGS_X to GameScreens.SETTINGS_Y,
+                2500
+            )
+        }
         // The hero statistics start from the lobby.
         if (toLobby) {
             s.record("Đã vào sảnh")
@@ -1023,9 +1048,7 @@ class GameEntry(
     }
 
     private fun form(s: Shot, now: Long) {
-        if (expectedUid ==
-            null
-        ) {
+        if (expectedUid == null && !forceFreshLogin) {
             return stop(
                 s,
                 "entry-form",

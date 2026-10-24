@@ -194,6 +194,7 @@ class MainActivity : Activity() {
             "board" -> "Chiến khu"
             "chess" -> "Cờ Liên Quân · Bách khoa"
             "pro-builds" -> "Đề cử Pro · Combo tướng"
+            "event-invite" -> "Sự kiện · Mã mời nhiều tài khoản"
             else -> if (file.name == "manual") "Chụp nhanh" else "Lượt thu thập"
         }
     }

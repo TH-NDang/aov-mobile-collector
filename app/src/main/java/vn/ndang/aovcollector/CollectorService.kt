@@ -508,8 +508,25 @@ class CollectorService : AccessibilityService() {
         return if (t >= 3600) "%d:%02d:%02d".format(t / 3600, t / 60 % 60, t % 60) else "%d:%02d".format(t / 60, t % 60)
     }
 
+    private fun eventInviteProgress(): JSONObject? = try {
+        if (runId.isBlank()) {
+            null
+        } else {
+            JSONObject(File(filesDir, "captures/$runId/event-invite-progress.json").readText())
+        }
+    } catch (_: Exception) {
+        null
+    }
+
     /** Progress line such as "Tướng 23/129 · 25:12 · còn ~1:30:00", with collection time excluding pauses. */
     private fun progress(m: Macro): String {
+        if (m.json.optString("collectionMode") == "event-invite") {
+            val state = eventInviteProgress()
+            val finished = state?.optInt("next", 0) ?: 0
+            val total = m.json.optInt("accountCount", 0)
+            return "Mã mời · $finished/$total tài khoản · ${state?.optInt("gifts",0) ?: 0} quà · " +
+                "${state?.optInt("tickets",0) ?: 0} Vé nhảy · ${clock(elapsed())}"
+        }
         // Heroes by name go as the list does, one block of steps a hero.
         val all = m.json.optString("collectionMode") in LISTED
         val heroes = m.json.optInt("heroCount", 1)
@@ -1376,6 +1393,9 @@ class CollectorService : AccessibilityService() {
         progress?.visibility = if (unknownChessTotal && !running) View.GONE else View.VISIBLE
         progress?.progress = if (unknownChessTotal) {
             0
+        } else if (m?.json?.optString("collectionMode") == "event-invite") {
+            val total = m.json.optInt("accountCount", 1).coerceAtLeast(1)
+            (eventInviteProgress()?.optInt("next", 0) ?: 0) * 100 / total
         } else if (m != null) {
             step * 100 / maxOf(1, m.steps.length())
         } else {
@@ -1513,7 +1533,8 @@ class CollectorService : AccessibilityService() {
                 "Thống kê tướng" to "Bảng xếp hạng tướng trong Cộng đồng",
                 "Chiến khu" to "Bảng xếp hạng người chơi của từng tướng",
                 "Cờ Liên Quân · Bách khoa" to "Chọn từng mục, tab, chi tiết; cuộn hết trang và lưu theo thư mục",
-                "Đề cử Pro · Combo tướng" to "Tất cả tướng · tối đa 5 combo · kết thúc giữ top 1"
+                "Đề cử Pro · Combo tướng" to "Tất cả tướng · tối đa 5 combo · kết thúc giữ top 1",
+                "Sự kiện · Mã mời nhiều tài khoản" to "Tài khoản Garena riêng, không UID/UUID · Thập kỷ chung sức · đếm quà"
             ) +
                 saved.map { it.name to "Macro đã nhập" }
         var visible = choices.indices.toList()
@@ -1576,7 +1597,8 @@ class CollectorService : AccessibilityService() {
                     2 -> boardForm()
                     3 -> chessForm()
                     4 -> proBuildsForm()
-                    else -> selectMacro(saved[i - 5].raw)
+                    5 -> EventInviteDialog(this@CollectorService) { raw -> selectMacro(raw) }.show()
+                    else -> selectMacro(saved[i - 6].raw)
                 }
             }
         }
@@ -2446,6 +2468,243 @@ class CollectorService : AccessibilityService() {
             .setNegativeButton("Hủy", null).create()
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
         dialog.show()
+    }
+
+    /**
+     * Separate event-invite task adapter. One macro step covers every selected Garena account.
+     * Its private progress lives in the run folder; credentials and invite code stay in
+     * Android Keystore-backed private preferences and never enter the exported ZIP.
+     */
+    private fun eventInvite(step: JSONObject, isActive: () -> Boolean, finish: (String?) -> Unit) {
+        val refs = step.getJSONArray("accountKeys")
+        val keys = (0 until refs.length()).map { refs.getString(it) }
+        val fingerprint = step.getString("codeFingerprint")
+        val invite = EventInviteAccounts.loadCode(this, fingerprint)
+            ?: return finish("Mã mời đã đổi hoặc không đọc được. Chọn lại tác vụ để dùng mã mới.")
+        if (!EventInviteAccounts.validateSelection(this, keys)) {
+            return finish("Tài khoản sự kiện đã bị sửa/xóa hoặc mất khóa mã hóa. Chọn lại tác vụ và kiểm tra mật khẩu.")
+        }
+        val activeRun = runId
+        val directory = File(filesDir, "captures/$activeRun").apply { mkdirs() }
+        val journalFile = File(directory, "event-invite-progress.json")
+
+        val adapter = object : EventInviteRunner.Screen {
+            override val alive get() = isActive() && runId == activeRun
+
+            override fun loadLedger(): JSONObject? = if (journalFile.isFile) {
+                // A corrupted existing ledger must fail closed; do not overwrite it with "new".
+                try {
+                    JSONObject(journalFile.readText())
+                } catch (_: Exception) {
+                    JSONObject().put("schema", -1)
+                }
+            } else {
+                null
+            }
+
+            override fun saveLedger(journal: JSONObject): Boolean = try {
+                if (!alive) {
+                    false
+                } else {
+                    val temp = File(directory, "event-invite-progress.json.part")
+                    temp.writeText(journal.toString(2))
+                    val saved = temp.renameTo(journalFile)
+                    if (!saved) temp.delete()
+                    saved
+                }
+            } catch (e: Exception) {
+                CrashLog.record(this@CollectorService, "Không lưu được tiến độ sự kiện", e)
+                false
+            }
+
+            override fun login(key: String, then: (Boolean, String?) -> Unit) {
+                val credential = EventInviteAccounts.load(this@CollectorService, key)
+                if (credential == null || !alive) {
+                    then(false, "Không đọc được tài khoản Garena sự kiện; kiểm tra danh sách riêng.")
+                    return
+                }
+                entering = true
+                enterGame(toLobby = true, alive = isActive, eventAccount = credential) { outcome ->
+                    if (!alive) return@enterGame
+                    entering = false
+                    when (outcome) {
+                        is GameEntry.Outcome.Ready -> {
+                            note("Đã đăng nhập Garena bằng danh sách sự kiện, không cần UID")
+                            then(true, null)
+                        }
+                        is GameEntry.Outcome.Failed -> then(false, outcome.reason)
+                    }
+                }
+            }
+
+            override fun look(then: (EventInviteRunner.Look?) -> Unit) {
+                if (!alive || foreground() != GAME) {
+                    then(null)
+                    return
+                }
+                grab { bitmap ->
+                    if (bitmap == null || !alive || foreground() != GAME) {
+                        bitmap?.recycle()
+                        then(null)
+                        return@grab
+                    }
+                    val hierarchy = screenWords()
+                    try {
+                        io.execute {
+                            val scene = try {
+                                val pixels = GameScreens.read(bitmap.width, bitmap.height) { y, row ->
+                                    bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
+                                }
+                                val words = hierarchy + GameText.words(bitmap)
+                                EventInviteScreens.classify(words, pixels.kind == GameScreens.Kind.LOBBY)
+                            } catch (e: Throwable) {
+                                CrashLog.record(this@CollectorService, "Không đọc được popup sự kiện", e)
+                                null
+                            }
+                            handler.post {
+                                val detected = scene
+                                if (!alive || detected == null || foreground() != GAME) {
+                                    bitmap.recycle()
+                                    then(null)
+                                } else {
+                                    then(object : EventInviteRunner.Look {
+                                        override val scene: EventInviteScreens.Scene = detected
+                                        private var released = false
+
+                                        override fun done(keep: String?) {
+                                            if (released) return
+                                            released = true
+                                            if (keep != null &&
+                                                scene.kind !in setOf(EventInviteScreens.Kind.INVITE, EventInviteScreens.Kind.UNKNOWN)
+                                            ) {
+                                                store(bitmap, activeRun, "event-diagnostic-$keep") {}
+                                            } else {
+                                                bitmap.recycle()
+                                            }
+                                        }
+
+                                        override fun keep(name: String, then: (Boolean) -> Unit) {
+                                            if (released || !alive) return then(false)
+                                            released = true
+                                            readerStore(bitmap, activeRun, false, isActive, name, then)
+                                        }
+                                    })
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        bitmap.recycle()
+                        then(null)
+                    }
+                }
+            }
+
+            override fun tap(x: Double, y: Double, then: (Boolean) -> Unit) {
+                if (!alive || foreground() != GAME) return then(false)
+                touchGame(tapAt(x, y), true, then)
+            }
+
+            override fun typeInviteCode(code: String, then: (Boolean) -> Unit) {
+                if (!alive ||
+                    foreground() != GAME ||
+                    !EventInviteAccounts.validCode(code)
+                ) {
+                    then(false)
+                    return
+                }
+                // Only here, after a freshly recognized "Hỗ trợ bạn bè" popup,
+                // is the code-entry box allowed to receive focus.
+                touchGame(tapAt(.506, .464), true) { focused ->
+                    if (!alive || !focused) return@touchGame then(false)
+                    handler.postDelayed({
+                        if (!alive) return@postDelayed then(false)
+                        val root = try {
+                            rootInActiveWindow
+                        } catch (_: Exception) {
+                            null
+                        }
+                        if (root == null || root.packageName == packageName) {
+                            then(false)
+                            return@postDelayed
+                        }
+                        val bounds = screen()
+                        val editable = nodes(root).filter { it.isEditable && !it.isPassword }
+                        val field = editable.filter { node ->
+                            val b = android.graphics.Rect()
+                            node.getBoundsInScreen(b)
+                            val x = b.centerX().toDouble() / bounds.width()
+                            val y = b.centerY().toDouble() / bounds.height()
+                            x in .30..0.73 && y in .27..0.70
+                        }.singleOrNull() ?: editable.singleOrNull()
+                        if (field == null) {
+                            then(false)
+                            return@postDelayed
+                        }
+
+                        fun write(value: String): Boolean {
+                            val args = android.os.Bundle().apply {
+                                putCharSequence(
+                                    android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
+                                    value
+                                )
+                            }
+                            return field.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT, args)
+                        }
+                        val oldLength = field.text?.length ?: 0
+                        val selection = android.os.Bundle().apply {
+                            putInt(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
+                            putInt(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, oldLength)
+                        }
+                        // Explicit select all + clear, even if the game prefilled a code for the last account.
+                        field.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_SELECTION, selection)
+                        val cleaned = write("")
+                        val entered = cleaned && write(code)
+                        if (!entered) {
+                            then(false)
+                            return@postDelayed
+                        }
+                        handler.postDelayed({
+                            if (!alive) return@postDelayed then(false)
+                            val current = try {
+                                rootInActiveWindow
+                            } catch (_: Exception) {
+                                null
+                            }
+                            val confirmed = current != null &&
+                                nodes(current).any {
+                                    it.isEditable && !it.isPassword && it.text?.toString() == code
+                                }
+                            if (confirmed &&
+                                wm.currentWindowMetrics.windowInsets.isVisible(WindowInsets.Type.ime())
+                            ) {
+                                performGlobalAction(GLOBAL_ACTION_BACK)
+                            }
+                            // Never log the code or keep a screenshot of its plaintext.
+                            then(confirmed)
+                        }, 380)
+                    }, 520)
+                }
+            }
+
+            override fun capture(name: String, then: (Boolean) -> Unit) {
+                if (!alive) return then(false)
+                this@CollectorService.capture(name, activeRun, wait = true, done = then)
+            }
+
+            override fun later(ms: Long, then: () -> Unit) {
+                handler.postDelayed({ if (alive) then() }, ms)
+            }
+
+            override fun say(message: String) {
+                if (alive) {
+                    lastStatus = message
+                    refreshPanel()
+                    note(message)
+                }
+            }
+        }
+
+        EventInviteRunner(keys, invite, fingerprint, adapter, finish).start()
     }
 
     /** Pro readers never bypass the existing foreground, path, cancellation, or screenshot shields. */
@@ -3494,7 +3753,13 @@ class CollectorService : AccessibilityService() {
             save()
             note(if (index == 0) "Bắt đầu lượt" else "Tiếp tục")
             smartGameEntry = uiPrefs.getBoolean("smartGameEntry", true)
-            preflight(generation)
+            if (m.json.optString("collectionMode") == "event-invite") {
+                // EventInviteRunner owns the entire UID-free logout/login lifecycle and
+                // its own durable account cursor. The normal UID-based preflight must NOT run.
+                handler.post { next(generation) }
+            } else {
+                preflight(generation)
+            }
         } catch (e: Exception) {
             pause("Lỗi macro: ${e.message}")
         }
@@ -3615,14 +3880,19 @@ class CollectorService : AccessibilityService() {
         try {
             val m = readMacro()
             val mode = m.json.optString("collectionMode")
-            if (mode !in setOf("single", "all", "pick", "ranking", "board", "chess", "pro-builds") ||
+            if (mode !in setOf("single", "all", "pick", "ranking", "board", "chess", "pro-builds", "event-invite") ||
                 m.json.optInt("builtinVersion", 1) == BuiltInMacros.VERSION
             ) {
                 return
             }
             val step = if (prefs.getString("hash", "") == m.hash) prefs.getInt("step", 0) else 0
             if (step > 0 && step < m.steps.length() && !prefs.getBoolean("stopped", false)) return
-            if (mode == "pro-builds") {
+            if (mode == "event-invite") {
+                val stepData = m.steps.getJSONObject(0)
+                val jsonKeys = stepData.getJSONArray("accountKeys")
+                val keys = (0 until jsonKeys.length()).map { jsonKeys.getString(it) }
+                MacroStore.current(this).writeText(BuiltInMacros.eventInvite(keys, stepData.getString("codeFingerprint")))
+            } else if (mode == "pro-builds") {
                 MacroStore.current(this).writeText(BuiltInMacros.proBuilds(m.json.optInt("heroCount", BuiltInMacros.ALL)))
             } else if (mode == "chess") {
                 MacroStore.current(this).writeText(BuiltInMacros.chess(BuiltInMacros.chessOptions(m.json)))
@@ -3822,14 +4092,20 @@ class CollectorService : AccessibilityService() {
                     save()
                     note("Hoàn tất · ${clock(elapsed())}")
                     recordTimes(m, m.json.optInt("heroCount", 1))
-                    status("Đã chụp xong · ${photosTaken(m)} ảnh · ${clock(elapsed())}")
+                    status(
+                        if (m.json.optString("collectionMode") == "event-invite") {
+                            progress(m)
+                        } else {
+                            "Đã chụp xong · ${photosTaken(m)} ảnh · ${clock(elapsed())}"
+                        }
+                    )
                     AfterRun.finished(this, runId)
                 }
             }
             return
         }
         val front = foreground()
-        val opening = entryStep(m, index)
+        val opening = entryStep(m, index) || m.json.optString("collectionMode") == "event-invite"
         if (!opening && front != null && front != m.target) {
             // A notification or game booster can hold focus for a moment; only stop when another app stays in front.
             if (away < 3) {
@@ -3901,6 +4177,7 @@ class CollectorService : AccessibilityService() {
                 "board" -> 43_200_000L
                 "chess" -> 43_200_000L
                 "pro-builds" -> 43_200_000L
+                "event-invite" -> 43_200_000L
                 else -> 10000L
             }
             val beganAt = SystemClock.elapsedRealtime()
@@ -3919,7 +4196,7 @@ class CollectorService : AccessibilityService() {
             handler.postDelayed({ checkTimeout() }, limit)
             // Its callbacks see the step finished and stop; a tap already sent still lands.
             if (type in
-                setOf("enter", "skills", "ranking", "board", "chess", "pro-builds", "find")
+                setOf("enter", "skills", "ranking", "board", "chess", "pro-builds", "event-invite", "find")
             ) {
                 cancelStep =
                     {
@@ -3973,6 +4250,12 @@ class CollectorService : AccessibilityService() {
                                 }
                             }, 1000)
                         }
+                    }
+                }
+                "event-invite" -> {
+                    eventInvite(s, { !finished && running && token == generation }) { error ->
+                        if (finished || token != generation) return@eventInvite
+                        done(error == null, error)
                     }
                 }
                 "board" -> {
@@ -4818,6 +5101,9 @@ class CollectorService : AccessibilityService() {
     /** Photos of the run on disk: with skill rows read at run time, the macro alone cannot tell. */
     private fun photosTaken(m: Macro): Int = when {
         !m.photosVary || runId.isEmpty() -> m.photoSteps.size
+        m.json.optString("collectionMode") == "event-invite" -> File(filesDir, "captures/$runId").walk().count {
+            it.isFile && it.extension == "png" && it.name.startsWith("event-")
+        }
         m.json.optString("collectionMode") == "pro-builds" -> File(filesDir, "captures/$runId").walk().count {
             it.isFile && it.extension == "png" && (it.name.contains("-top-") || it.name.endsWith("-empty-pro-list.png"))
         }
@@ -4846,6 +5132,7 @@ class CollectorService : AccessibilityService() {
         alive: () -> Boolean,
         calibrationOnly: Boolean = false,
         preserveScreen: Boolean = false,
+        eventAccount: EventInviteAccounts.Secret? = null,
         finish: (GameEntry.Outcome) -> Unit
     ) {
         val stamp = "%04d".format(index + 1)
@@ -5025,7 +5312,11 @@ class CollectorService : AccessibilityService() {
             }
 
             override fun signIn(then: (Boolean) -> Unit) {
-                if (calibrationOnly) then(false) else signInGarena(then)
+                when {
+                    calibrationOnly -> then(false)
+                    eventAccount != null -> signInGarenaCredentials(eventAccount.username, eventAccount.password, then)
+                    else -> signInGarena(then)
+                }
             }
 
             override fun later(ms: Long, then: () -> Unit) {
@@ -5052,6 +5343,7 @@ class CollectorService : AccessibilityService() {
             smartLobby = if (calibrationOnly) uiPrefs.getBoolean("smartGameEntry", true) else smartGameEntry,
             preserveScreen = preserveScreen,
             readOnlyAccount = calibrationOnly,
+            forceFreshLogin = eventAccount != null,
             finish = finish
         ).start()
     }
@@ -5178,6 +5470,11 @@ class CollectorService : AccessibilityService() {
      */
     private fun signInGarena(then: (Boolean) -> Unit) {
         val account = Accounts.load(this, runAccountId)?.takeIf { it.uid == runAccountUid } ?: return then(false)
+        signInGarenaCredentials(account.user, account.password, then)
+    }
+
+    /** Secrets are never logged, persisted to captures, or filled into an unverified website. */
+    private fun signInGarenaCredentials(username: String, secret: String, then: (Boolean) -> Unit) {
         val root = try {
             rootInActiveWindow
         } catch (_: Exception) {
@@ -5206,7 +5503,7 @@ class CollectorService : AccessibilityService() {
             n.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
             return n.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT, args)
         }
-        if (!type(user, account.user) || !type(password, account.password)) return then(false)
+        if (!type(user, username) || !type(password, secret)) return then(false)
 
         // ACTION_CLICK can return false (or true without a DOM submission) for WebView text nodes.
         // Wait for WebView's change/input event, find the button again and send a real touch instead.
