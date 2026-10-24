@@ -188,6 +188,23 @@ object ProComboScreens {
         }
     }
 
+    /**
+     * A moving/animated UI changes the raw list pixels even when its cards did not scroll.
+     * Compare the identity, all twelve item/rune descriptors AND screen Y of every visible,
+     * complete card. A different card, changed combo or a displaced row is NOT stationary.
+     * This is only motion evidence: a short list also needs the top AND bottom boundaries
+     * plus opposite-direction scroll probes before it may be accepted.
+     */
+    fun rowsStationary(before: List<Entry>, after: List<Entry>): Boolean = before.isNotEmpty() &&
+        before.size == after.size &&
+        before.indices.all { i ->
+            val a = before[i]
+            val b = after[i]
+            a.id == b.id &&
+                abs(a.button.y - b.button.y) < .012 &&
+                matches(a.signature, b.signature)
+        }
+
     /** Fuzzy observations must resolve to one exact frozen descriptor across the whole list, not just top five. */
     fun uniqueMatch(expected: Entry, candidate: Entry, catalog: List<Entry>): Boolean {
         if (candidate.id != expected.id) return false
@@ -277,7 +294,11 @@ class ProComboReader(
     private var returnedFromProbe = false
     private var endProbed = false
     private var shortListProof: List<ProComboScreens.Entry>? = null
+    private var shortListVerified = false
+    private var emptyListProbe = false
     private var previousTopEntries = emptyList<ProComboScreens.Entry>()
+    private var previousDiscoveryEntries = emptyList<ProComboScreens.Entry>()
+    private var stalledTopProbes = 0
     private var discoveryStep = .22
     private var replayPrefix = emptyList<ProComboScreens.Entry>()
     private val chosen = ArrayList<ProComboScreens.Entry>()
@@ -426,6 +447,11 @@ class ProComboReader(
         returnedFromProbe = false
         endProbed = false
         shortListProof = null
+        shortListVerified = false
+        emptyListProbe = false
+        previousTopEntries = emptyList()
+        previousDiscoveryEntries = emptyList()
+        stalledTopProbes = 0
         look { before ->
             if (!ProComboScreens.popup(before.words) || !before.proSelected || ProComboScreens.blocked(before.words)) {
                 before.done("pro-reset-unknown")
@@ -446,7 +472,7 @@ class ProComboReader(
                             fitting &&
                             after.entries.size == originalEntries.size &&
                             after.listBottomClear &&
-                            after.entries.indices.all { same(originalEntries[it], after.entries[it]) }
+                            ProComboScreens.rowsStationary(originalEntries, after.entries)
                     if (!moved &&
                         !explicitSmall &&
                         !(boundary && after.listBottomClear)
@@ -456,8 +482,11 @@ class ProComboReader(
                     }
                     last = after.listSignature
                     previousTopEntries = after.entries
+                    // Raw pixels can change from hero art/animated item glows. The short-list
+                    // candidate is based on anchored, unchanged complete cards instead.
                     returnedFromProbe = !moved && explicitSmall
-                    if (!moved && explicitSmall) shortListProof = originalEntries
+                    if (fitting && explicitSmall) shortListProof = originalEntries
+                    emptyListProbe = empty && ProComboScreens.empty(after.words)
                     after.done(null)
                     drag(true) { scanTop(then) }
                 }
@@ -473,7 +502,26 @@ class ProComboReader(
             l.done("pro-wrong-tab")
             return@look fail("Đã rời tab Đề cử Pro")
         }
+        // The two opposite scrolls have now finished. When both leave the same
+        // complete cards anchored at the top and aligned to the real list bottom,
+        // prove a short list without requiring any background pixels to be static.
         val beforeProof = shortListProof
+        val anchored = l.entries.firstOrNull()?.let { abs(it.button.y - .408) < .03 } == true
+        if (beforeProof != null && anchored && l.listBottomClear &&
+            ProComboScreens.rowsStationary(beforeProof, l.entries)
+        ) {
+            shortListVerified = true
+            previousTopEntries = l.entries
+            l.done(null)
+            screen.say("Đã xác minh danh sách Pro ngắn bằng vị trí combo và hai hướng cuộn; bắt đầu thu thập")
+            then()
+            return
+        }
+        if (emptyListProbe && l.entries.isEmpty() && ProComboScreens.empty(l.words)) {
+            l.done(null)
+            then()
+            return
+        }
         if (beforeProof != null && beforeProof.any { old -> l.entries.any { same(old, it) && abs(old.button.y - it.button.y) > .025 } }) {
             shortListProof = null // The opposite probe moved: this was a longer list parked at its bottom.
             returnedFromProbe = true
@@ -489,7 +537,9 @@ class ProComboReader(
             l.done("pro-short-list-changed")
             return@look fail("Danh sách Pro thay đổi khi kiểm tra hai chiều; chưa xác minh danh sách ngắn")
         }
-        val unchanged = last?.let { ProComboScreens.still(it, l.listSignature) } == true
+        val stationaryRows = ProComboScreens.rowsStationary(previousTopEntries, l.entries)
+        val unchanged = last?.let { ProComboScreens.still(it, l.listSignature) } == true ||
+            (returnedFromProbe && stationaryRows)
         // Tooltip/animation changes are not proof that a scroll moved the list.
         if (previousTopEntries.any { old -> l.entries.any { same(old, it) && it.button.y - old.button.y > .012 } }) {
             returnedFromProbe = true
@@ -497,6 +547,7 @@ class ProComboReader(
         previousTopEntries = l.entries
         val atTop = l.entries.firstOrNull()?.let { abs(it.button.y - .408) < .03 } == true || ProComboScreens.empty(l.words)
         stable = if (unchanged) stable + 1 else 0
+        stalledTopProbes = if (atTop && stationaryRows && !returnedFromProbe) stalledTopProbes + 1 else 0
         last = l.listSignature
         l.done(null)
         if (stable >= 2 && returnedFromProbe && atTop) {
@@ -504,8 +555,10 @@ class ProComboReader(
             stable = 0
             last = null
             then()
+        } else if (stalledTopProbes >= 3) {
+            fail("Danh sách Pro không dịch chuyển dù đã vuốt hai hướng; không tiếp tục vuốt lên vô ích")
         } else if (++moves > 16) {
-            fail("Không xác minh được đầu danh sách Pro")
+            fail("Không xác minh được đầu danh sách Pro; không bấm Dùng combo khi chưa biết thứ hạng")
         } else {
             drag(true) { scanTop(then) }
         }
@@ -589,10 +642,29 @@ class ProComboReader(
             // A replay must not slowly drift frozen signatures through successive fuzzy matches.
             discovered += frozen ?: e
         }
-        val unchanged = last?.let { ProComboScreens.still(it, l.listSignature) } == true
+        val verifiedShort = shortListVerified &&
+            shortListProof?.let { proof ->
+                l.listBottomClear &&
+                    abs(l.entries.firstOrNull()?.button?.y?.minus(.408) ?: 1.0) < .03 &&
+                    ProComboScreens.rowsStationary(proof, l.entries)
+            } == true
+        if (shortListVerified && !verifiedShort) {
+            l.done("pro-short-list-changed")
+            return@look fail("Đề cử Pro thay đổi sau khi kiểm tra hai hướng cuộn; không áp dụng nhầm combo")
+        }
+        // A proven list boundary plus fixed, identifiable rows is stronger scroll
+        // evidence than comparing pixels that can shimmer or animate indefinitely.
+        val unchanged = verifiedShort ||
+            last?.let { ProComboScreens.still(it, l.listSignature) } == true ||
+            (l.listBottomClear && ProComboScreens.rowsStationary(previousDiscoveryEntries, l.entries))
         if (!unchanged) endProbed = false
         stable = if (unchanged) stable + 1 else 0
         last = l.listSignature
+        previousDiscoveryEntries = l.entries
+        if (verifiedShort) {
+            stable = 2
+            endProbed = true // The reset already proved both opposite scrolls did not move content.
+        }
         l.done(null)
         if (stable >= 2 && l.listBottomClear && !endProbed) {
             endProbed = true
