@@ -559,7 +559,7 @@ class ProComboReader(
             last = null
             then()
         } else if (stalledTopProbes >= 3) {
-            fail("Danh sách Pro không dịch chuyển dù đã vuốt hai hướng; không tiếp tục vuốt lên vô ích")
+            fail("Không xác minh được đầu danh sách Pro: các dòng không dịch chuyển dù đã vuốt hai hướng")
         } else if (++moves > 16) {
             fail("Không xác minh được đầu danh sách Pro; không bấm Dùng combo khi chưa biết thứ hạng")
         } else {
