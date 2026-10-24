@@ -213,6 +213,10 @@ class EventInviteRunner(
                     unknowns = 0
                     tap(.722, .185, 700, "Đóng hướng dẫn lần đầu") { inspectEvent() }
                 }
+                EventInviteScreens.Kind.EVENT_GIFT_DONE -> {
+                    unknowns = 0
+                    tap(.796, .227, 720, "Đóng thông báo quà đã nhận") { inspectEvent() }
+                }
                 EventInviteScreens.Kind.EVENT_GIFT -> {
                     unknowns = 0
                     val claim = scene.find("nhan")
@@ -360,7 +364,8 @@ class EventInviteRunner(
                 EventInviteScreens.Kind.REWARD -> {
                     tap(.50, .85, 650, "Đóng bảng quà sau khi đã ghi nhận") { returnLobby() }
                 }
-                EventInviteScreens.Kind.INVITE, EventInviteScreens.Kind.EVENT_GIFT -> {
+                EventInviteScreens.Kind.INVITE, EventInviteScreens.Kind.EVENT_GIFT,
+                EventInviteScreens.Kind.EVENT_GIFT_DONE -> {
                     tap(.796, .198, 620, "Đóng popup sự kiện") { returnLobby() }
                 }
                 EventInviteScreens.Kind.INTRO -> {
