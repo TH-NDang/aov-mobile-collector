@@ -34,12 +34,18 @@ object EventInviteScreens {
         }
 
     private fun used(words: List<GameScreens.Word>): Pair<Int, Int>? {
-        val joined = words.joinToString(" ") { it.plain }
-        val pair = Regex("(?:homnay)?danha?p(\\d+)\\s*/\\s*(\\d+)").find(joined)
-            ?: Regex("(\\d+)\\s*/\\s*(\\d+)mamoi").find(joined)
-        val first = pair?.groupValues?.get(1)?.toIntOrNull()
-        val second = pair?.groupValues?.get(2)?.toIntOrNull()
-        return if (first != null && second != null && second in 1..10 && first in 0..second) first to second else null
+        // GameScreens.plain strips the slash, so inspect the original OCR line FIRST.
+        // A daily-limit badge is not a reward count, and the player's bottom UID is ignored.
+        val original = words.filter { it.y in .46..0.76 }.joinToString(" ") { it.text }
+        val clean = words.filter { it.y in .46..0.76 }.joinToString("") { it.plain }
+        val raw = Regex("(\\d+)\\s*/\\s*(\\d+)").find(original)
+        val fallback = Regex("danhap([01])([1-9])(?:ma|$)").find(clean)
+        val first = (raw ?: fallback)?.groupValues?.get(1)?.toIntOrNull()
+        val second = (raw ?: fallback)?.groupValues?.get(2)?.toIntOrNull()
+        return if (first != null && second != null &&
+            second in 1..10 && first in 0..second &&
+            (clean.contains("danhap") || clean.contains("mamoi"))
+        ) first to second else null
     }
 
     /** Only numbers in the central reward card can count as tickets. Never read the bottom UID. */
