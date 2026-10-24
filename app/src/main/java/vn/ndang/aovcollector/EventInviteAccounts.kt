@@ -149,11 +149,14 @@ object EventInviteAccounts {
         return fingerprint(code)
     }
 
-    fun loadCode(context: Context, expectedFingerprint: String? = null): String? = try {
-        val code = unseal(prefs(context).getString(CODE, null) ?: return null)
-        code.takeIf { validCode(it) && (expectedFingerprint == null || fingerprint(it) == expectedFingerprint) }
-    } catch (_: Exception) {
-        null
+    fun loadCode(context: Context, expectedFingerprint: String? = null): String? {
+        return try {
+            val encrypted = prefs(context).getString(CODE, null) ?: return null
+            val code = unseal(encrypted)
+            code.takeIf { validCode(it) && (expectedFingerprint == null || fingerprint(it) == expectedFingerprint) }
+        } catch (_: Exception) {
+            null
+        }
     }
 
     fun validateSelection(context: Context, keys: List<String>): Boolean =
