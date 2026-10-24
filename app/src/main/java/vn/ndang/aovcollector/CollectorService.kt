@@ -2582,6 +2582,12 @@ class CollectorService : AccessibilityService() {
                                                 bitmap.recycle()
                                             }
                                         }
+
+                                        override fun keep(name: String, then: (Boolean) -> Unit) {
+                                            if (released || !alive) return then(false)
+                                            released = true
+                                            readerStore(bitmap, activeRun, false, isActive, name, then)
+                                        }
                                     })
                                 }
                             }
