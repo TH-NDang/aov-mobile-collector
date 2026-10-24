@@ -18,6 +18,9 @@ class EventInviteRunner(
         val scene: EventInviteScreens.Scene
 
         fun done(keep: String? = null)
+
+        /** Save the SAME screenshot which proved the receipt, never another later frame. */
+        fun keep(name: String, then: (Boolean) -> Unit)
     }
 
     interface Screen {
@@ -319,13 +322,16 @@ class EventInviteRunner(
             val scene = image.scene
             when (scene.kind) {
                 EventInviteScreens.Kind.REWARD -> {
+                    if (scene.words.none { it.plain.contains("venhay") }) {
+                        image.done("non-ticket-reward")
+                        return@look stop("Popup sau mã mời không ghi Vé nhảy; không cộng quà chưa xác minh")
+                    }
                     val tickets = scene.tickets ?: 0
                     val name = "event-%02d-invite-reward".format(accountIndex + 1)
-                    // The reward screenshot must be saved successfully before incrementing the gift count.
-                    image.done()
-                    screen.capture(name) { kept ->
-                        if (!active()) return@capture
-                        if (!kept) return@capture stop("Chưa lưu được bằng chứng quà, không cộng số quà")
+                    // Commit the EXACT recognized screenshot before recording the reward.
+                    image.keep(name) { kept ->
+                        if (!active()) return@keep
+                        if (!kept) return@keep stop("Không lưu được ảnh quà xác minh; không cộng số quà")
                         complete("done", bonuses + 1, tickets)
                     }
                 }
