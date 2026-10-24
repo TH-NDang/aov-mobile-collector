@@ -26,7 +26,7 @@ class Macro(val raw: String) {
     val photosVary: Boolean by lazy {
         (0 until steps.length()).any {
             steps.getJSONObject(it).getString("type") in
-                setOf("skills", "ranking", "board", "chess", "pro-builds")
+                setOf("skills", "ranking", "board", "chess", "pro-builds", "event-invite")
         }
     }
     val hash = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray()).joinToString("") { "%02x".format(it) }
@@ -91,6 +91,21 @@ class Macro(val raw: String) {
                     }
                 }
                 "skills" -> require(s.getString("prefix").matches(Regex("[a-zA-Z0-9_-]{1,40}"))) { "skills: prefix không hợp lệ" }
+                "event-invite" -> {
+                    require(json.optString("collectionMode") == "event-invite" && name == "anniversary-invite") {
+                        "event-invite: chỉ cho phép tác vụ sự kiện tích hợp"
+                    }
+                    require(steps.length() == 1 && i == 0) { "event-invite: chỉ dùng một bước" }
+                    val keys = s.getJSONArray("accountKeys")
+                    require(keys.length() in 1..EventInviteLedger.MAX_ACCOUNTS) { "event-invite: cần tài khoản đã chọn" }
+                    val list = (0 until keys.length()).map { keys.getString(it) }
+                    require(list.distinct().size == list.size && list.all { it.matches(Regex("[a-f0-9]{64}")) }) {
+                        "event-invite: danh sách tài khoản trùng/không hợp lệ"
+                    }
+                    require(s.getString("codeFingerprint").matches(Regex("[a-f0-9]{64}"))) {
+                        "event-invite: mã chương trình không hợp lệ"
+                    }
+                }
                 "pro-builds" -> {
                     require(json.optString("collectionMode") == "pro-builds") { "pro-builds: không đúng chế độ" }
                     require(s.getInt("heroes") in 1..BuiltInMacros.ALL) { "pro-builds: số tướng không hợp lệ" }
@@ -119,10 +134,28 @@ class Macro(val raw: String) {
 /** Coordinates calibrated from the user's 2400x1080 VN hero menu. */
 object BuiltInMacros {
     /** Bump when the generated steps change; selected built-in macros are then regenerated with the same settings. */
-    const val VERSION = 8
+    const val VERSION = 9
 
     /** "Tất cả": more cards than the game has; the run stops at the end of the list. */
     const val ALL = 300
+
+    /** One guarded, checkpointed event invitation run across an ordered list of separate accounts. */
+    fun eventInvite(accountKeys: List<String>, codeFingerprint: String): String {
+        require(accountKeys.isNotEmpty() && accountKeys.size <= EventInviteLedger.MAX_ACCOUNTS &&
+            accountKeys.distinct().size == accountKeys.size &&
+            accountKeys.all { it.matches(Regex("[0-9a-f]{64}")) })
+        require(codeFingerprint.matches(Regex("[0-9a-f]{64}")))
+        val action = JSONObject().put("type", "event-invite")
+            .put("accountKeys", org.json.JSONArray(accountKeys))
+            .put("codeFingerprint", codeFingerprint)
+        return JSONObject().put("name", "anniversary-invite")
+            .put("targetPackage", "com.garena.game.kgvn")
+            .put("orientation", "landscape")
+            .put("collectionMode", "event-invite")
+            .put("accountCount", accountKeys.size)
+            .put("builtinVersion", VERSION)
+            .put("steps", org.json.JSONArray().put(action)).toString(2)
+    }
 
     /** Preparation-only collection. Never launches, signs in, or reads account data. */
     fun proBuilds(heroes: Int = ALL): String {
