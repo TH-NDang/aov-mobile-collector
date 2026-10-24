@@ -25,18 +25,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Format event-task Kotlin and commit to the task branch
-        if: github.ref == 'refs/heads/codex/event-invite-multi-account'
-        run: |
-          set -euo pipefail
-          ./tools/ktlint --format
-          if ! git diff --quiet -- '*.kt' '*.kts'; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -u -- '*.kt' '*.kts'
-            git commit -m "style: format event-invite Kotlin sources"
-            git push origin HEAD:refs/heads/codex/event-invite-multi-account
-          fi
       - name: Check Kotlin formatting
         run: ./tools/ktlint
       - uses: android-actions/setup-android@v4
