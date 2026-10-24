@@ -2,7 +2,7 @@ package vn.ndang.aovcollector
 
 import android.app.AlertDialog
 import android.content.Context
-import android.content.ContextThemeWrapper
+import android.view.ContextThemeWrapper
 import android.text.InputType
 import android.view.WindowManager
 import android.widget.CheckBox
