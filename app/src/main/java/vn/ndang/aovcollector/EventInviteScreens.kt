@@ -9,7 +9,7 @@ import kotlin.math.abs
  */
 object EventInviteScreens {
     enum class Kind {
-        LOBBY, EVENT_LIST, ANNIVERSARY, INVITE, INTRO, EVENT_GIFT,
+        LOBBY, EVENT_LIST, ANNIVERSARY, INVITE, INTRO, EVENT_GIFT, EVENT_GIFT_DONE,
         REWARD, RETURN_EFFECT, UNKNOWN
     }
 
@@ -71,9 +71,10 @@ object EventInviteScreens {
         if (includes(words, "huongdan") && includes(words, "quytac") &&
             !includes(words, "hotrobanbe")
         ) return scene(Kind.INTRO)
-        if (includes(words, "tonghopsukien") &&
-            includes(words, "nhan") && includes(words, "hoathoa10nam")
-        ) return scene(Kind.EVENT_GIFT)
+        if (includes(words, "tonghopsukien") && includes(words, "hoathoa10nam")) {
+            if (includes(words, "danhan")) return scene(Kind.EVENT_GIFT_DONE)
+            if (match(words, "nhan", .34, .67, .60, .83) != null) return scene(Kind.EVENT_GIFT)
+        }
         val anniversary = includes(words, "thapkychungsuc") &&
             (includes(words, "nhapmamoi") || includes(words, "nhaynao") || includes(words, "venhay"))
         if (anniversary) return scene(Kind.ANNIVERSARY)
