@@ -507,7 +507,10 @@ class ProComboReader(
         // prove a short list without requiring any background pixels to be static.
         val beforeProof = shortListProof
         val anchored = l.entries.firstOrNull()?.let { abs(it.button.y - .408) < .03 } == true
-        if (beforeProof != null && anchored && l.listBottomClear &&
+        if (
+            beforeProof != null &&
+            anchored &&
+            l.listBottomClear &&
             ProComboScreens.rowsStationary(beforeProof, l.entries)
         ) {
             shortListVerified = true
@@ -515,12 +518,12 @@ class ProComboReader(
             l.done(null)
             screen.say("Đã xác minh danh sách Pro ngắn bằng vị trí combo và hai hướng cuộn; bắt đầu thu thập")
             then()
-            return
+            return@look
         }
         if (emptyListProbe && l.entries.isEmpty() && ProComboScreens.empty(l.words)) {
             l.done(null)
             then()
-            return
+            return@look
         }
         if (beforeProof != null && beforeProof.any { old -> l.entries.any { same(old, it) && abs(old.button.y - it.button.y) > .025 } }) {
             shortListProof = null // The opposite probe moved: this was a longer list parked at its bottom.
