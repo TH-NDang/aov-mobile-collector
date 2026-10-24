@@ -2562,12 +2562,13 @@ class CollectorService : AccessibilityService() {
                                 null
                             }
                             handler.post {
-                                if (!alive || scene == null || foreground() != GAME) {
+                                val detected = scene
+                                if (!alive || detected == null || foreground() != GAME) {
                                     bitmap.recycle()
                                     then(null)
                                 } else {
                                     then(object : EventInviteRunner.Look {
-                                        override val scene = scene
+                                        override val scene: EventInviteScreens.Scene = detected
                                         private var released = false
 
                                         override fun done(keep: String?) {
