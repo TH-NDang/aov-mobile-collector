@@ -189,11 +189,13 @@ object ProComboScreens {
     }
 
     /**
-     * A moving/animated UI changes the raw list pixels even when its cards did not scroll.
-     * Compare the identity, all twelve item/rune descriptors AND screen Y of every visible,
-     * complete card. A different card, changed combo or a displaced row is NOT stationary.
-     * This is only motion evidence: a short list also needs the top AND bottom boundaries
-     * plus opposite-direction scroll probes before it may be accepted.
+     * Animated background/tooltip/item glows can change pixel snapshots while card positions
+     * remain fixed. This checks motion, NOT whether a Pro combo is still safe to apply:
+     * the latter must continue using strict [matches] and [uniqueMatch].
+     *
+     * Require the same creator, rune, Y, and at least 10/12 unchanged icon regions.
+     * One or two shimmering icon effects cannot force a long series of upward scrolls.
+     * A short list additionally needs top and bottom evidence and BOTH swipe directions.
      */
     fun rowsStationary(before: List<Entry>, after: List<Entry>): Boolean = before.isNotEmpty() &&
         before.size == after.size &&
@@ -202,7 +204,13 @@ object ProComboScreens {
             val b = after[i]
             a.id == b.id &&
                 abs(a.button.y - b.button.y) < .012 &&
-                matches(a.signature, b.signature)
+                a.signature.size == 325 &&
+                b.signature.size == 325 &&
+                a.signature[0] == b.signature[0] &&
+                (0 until 12).count { icon ->
+                    val start = 1 + icon * 27
+                    (start until start + 27).sumOf { abs(a.signature[it] - b.signature[it]) }.toDouble() / 27 < 45.0
+                } >= 10
         }
 
     /** Fuzzy observations must resolve to one exact frozen descriptor across the whole list, not just top five. */
