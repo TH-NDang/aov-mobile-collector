@@ -1725,8 +1725,37 @@ class UiSmoke : Instrumentation() {
                     Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 )
             )
-            waitFor("Collector did not return to landscape after pasting") {
-                targetContext.resources.configuration.orientation == android.content.res.Configuration.ORIENTATION_LANDSCAPE
+            // Application Context.resources may keep its previous portrait Configuration when
+            // Android returns from an external clipboard receiver. The actual game-facing UI
+            // has already rotated; verify the *focused window* and screenshot geometry instead.
+            // This is stronger than trusting either a stale Context or a requested orientation.
+            waitFor("Collector did not show its own focused landscape window after pasting") {
+                automation.windows.any { window ->
+                    if (window.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION ||
+                        !window.isFocused ||
+                        window.root?.packageName?.toString() != targetContext.packageName
+                    ) {
+                        false
+                    } else {
+                        val actual = Rect()
+                        window.getBoundsInScreen(actual)
+                        actual.width() > actual.height() && actual.width() > 0
+                    }
+                }
+            }
+            checkNotNull(automation.takeScreenshot()) { "No display screenshot after returning from clipboard app" }.let { shot ->
+                try {
+                    check(shot.width > shot.height) {
+                        "Physical display stayed portrait after pasting: ${shot.width}x${shot.height}"
+                    }
+                    File(targetContext.filesDir, "smoke/clipboard-landscape.txt").writeText(
+                        "Screen=${shot.width}x${shot.height}; " +
+                            "contextOrientation=${targetContext.resources.configuration.orientation}; " +
+                            "actual focused AOV window is landscape"
+                    )
+                } finally {
+                    shot.recycle()
+                }
             }
             waitForIdleSync()
             SystemClock.sleep(500)

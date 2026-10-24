@@ -59,10 +59,14 @@ class ProCombosTest {
         var emptyOnReplay = false
         var shortenOnReplay = false
         var pixelOnlyMotion = false
+        var animatedBackground = false
+        var looks = 0
         var scrollGestures = 0
         var replayNotices = 0
 
         override fun say(text: String) {
+            // Only a replay notice changes fake replay scenarios; routine progress is just a log.
+            if (!text.startsWith("Đang đọc lại Pro")) return
             replayNotices++
             if (shortenOnReplay) {
                 rows = rows.take(1)
@@ -78,6 +82,7 @@ class ProCombosTest {
         }
 
         override fun look(then: (ProComboReader.Look?) -> Unit) {
+            looks++
             val p = popupOpen
             val visible = if (dropRows) {
                 emptyList()
@@ -112,7 +117,9 @@ class ProCombosTest {
                 override val entries = if (p) observed else emptyList()
                 override val preparationSignature = if (p) null else actual
                 override val listSignature = IntArray(40) {
-                    if (pixelOnlyMotion && scrollGestures > 0) {
+                    if (animatedBackground) {
+                        looks * 40
+                    } else if (pixelOnlyMotion && scrollGestures > 0) {
                         40 + minOf(resetGestures, 2) * 30
                     } else if (geometric) {
                         (scroll * 1000).toInt()
@@ -325,6 +332,55 @@ class ProCombosTest {
         f.cancelOnReplay = true
         f.run()
         assertEquals(1, f.replayNotices)
+        assertEquals(0, f.applies)
+        assertTrue(f.captures.isEmpty())
+    }
+
+    @Test fun stationaryProofToleratesTwoGlowingIconsButNotChangedComboOrScroll() {
+        val original = entry("player", .41, 10)
+        val withGlows = original.signature.copyOf()
+        for (index in 1..54) withGlows[index] = 110
+        val samePlace = original.copy(signature = withGlows)
+        assertFalse(ProComboScreens.matches(original.signature, samePlace.signature))
+        assertTrue(ProComboScreens.rowsStationary(listOf(original), listOf(samePlace)))
+        val tooManyChanges = withGlows.copyOf()
+        for (index in 55..81) tooManyChanges[index] = 110
+        assertFalse(ProComboScreens.rowsStationary(listOf(original), listOf(original.copy(signature = tooManyChanges))))
+        assertFalse(ProComboScreens.rowsStationary(listOf(original), listOf(samePlace.copy(button = word("Dùng combo", .75, .47)))))
+        assertFalse(ProComboScreens.rowsStationary(listOf(original), listOf(samePlace.copy(id = "other"))))
+    }
+
+    @Test fun shortTwoRowProWithConstantAnimationStillCapturesBoth() {
+        val f = Fake(listOf("first", "second"))
+        f.geometric = true
+        f.fullBoundary = true
+        f.ineffectiveScroll = true
+        f.animatedBackground = true
+        f.run()
+        assertEquals(ProComboReader.Outcome.Done(2, false), f.outcome)
+        assertEquals(listOf("top-1", "top-2"), f.captures)
+        assertEquals(3, f.applies)
+        assertTrue("should not need 15 upward attempts", f.resetGestures < 14)
+    }
+
+    @Test fun shortListProofRejectsUnstableComboBeforeAnyApply() {
+        val f = Fake(listOf("first", "second"))
+        f.fullBoundary = true
+        f.ineffectiveScroll = true
+        f.animatedBackground = true
+        f.mutateOnReset = true
+        f.run()
+        assertTrue(f.outcome is ProComboReader.Outcome.Failed)
+        assertEquals(0, f.applies)
+        assertTrue(f.captures.isEmpty())
+    }
+
+    @Test fun animatedLongListWithoutBoundaryStillFailsSafely() {
+        val f = Fake(listOf("a", "b", "c", "d"))
+        f.ineffectiveScroll = true
+        f.animatedBackground = true
+        f.run()
+        assertTrue(f.outcome is ProComboReader.Outcome.Failed)
         assertEquals(0, f.applies)
         assertTrue(f.captures.isEmpty())
     }

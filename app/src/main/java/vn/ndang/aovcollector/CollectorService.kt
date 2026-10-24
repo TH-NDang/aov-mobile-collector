@@ -379,7 +379,8 @@ class CollectorService : AccessibilityService() {
                 }
             },
             closed = { endTeaching("Đã dừng chỉnh từng bước; các điểm đã lưu được giữ lại") },
-            refusal = { calibrationRefusal }
+            refusal = { calibrationRefusal },
+            displayProfile = profile
         )
         calibrationEditor = editor
         editor.shield(debugCaptureHidden)
