@@ -256,8 +256,11 @@ internal object GestureCalibrationSmoke {
             test.waitForIdleSync()
             test.runOnMainSync {
                 val drawing = (checkNotNull(service.calibrationView) as ViewGroup).getChildAt(0)
-                val x = (.4 * (bounds.width() - 1)).toFloat()
-                val y = (.3 * (bounds.height() - 1)).toFloat()
+                // The real editor and gesture dispatch use the verified profile captured at the
+                // start of this pending step. maximumWindowMetrics may disagree with an
+                // AccessibilityService's stale currentWindowMetrics after rotation.
+                val x = (.4 * (profile.width - 1)).toFloat()
+                val y = (.3 * (profile.height - 1)).toFloat()
                 val now = SystemClock.uptimeMillis()
                 for ((kind, px) in listOf(
                     MotionEvent.ACTION_DOWN to x,
@@ -270,7 +273,14 @@ internal object GestureCalibrationSmoke {
                 }
                 click("Lưu")
                 check(dispatched.isEmpty() && service.calibrationView != null)
-                check(CalibrationStore(preferences).resolve(profile, tap).single().x > .4) { "Save did not persist" }
+                val savedPoint = CalibrationStore(preferences).resolve(profile, tap).single()
+                check(savedPoint.x > .4) {
+                    val controls = (checkNotNull(service.calibrationView) as ViewGroup).getChildAt(1) as ViewGroup
+                    val status = (controls.getChildAt(1) as android.widget.TextView).text.toString()
+                    "Save did not persist: saved=$savedPoint profile=$profile live=${service.calibrationProfile()} " +
+                        "current=${wm.currentWindowMetrics.bounds} maximum=${wm.maximumWindowMetrics.bounds} " +
+                        "editorStatus=$status storedKeys=${preferences.all.keys.filter { it.startsWith("gesture_calibration.v1/") }}"
+                }
             }
             val captured = java.util.concurrent.CountDownLatch(1)
             val hasBitmap = java.util.concurrent.atomic.AtomicBoolean(false)
