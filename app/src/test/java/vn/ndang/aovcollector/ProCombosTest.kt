@@ -336,6 +336,20 @@ class ProCombosTest {
         assertTrue(f.captures.isEmpty())
     }
 
+    @Test fun stationaryProofToleratesTwoGlowingIconsButNotChangedComboOrScroll() {
+        val original = entry("player", .41, 10)
+        val withGlows = original.signature.copyOf()
+        for (index in 1..54) withGlows[index] = 110
+        val samePlace = original.copy(signature = withGlows)
+        assertFalse(ProComboScreens.matches(original.signature, samePlace.signature))
+        assertTrue(ProComboScreens.rowsStationary(listOf(original), listOf(samePlace)))
+        val tooManyChanges = withGlows.copyOf()
+        for (index in 55..81) tooManyChanges[index] = 110
+        assertFalse(ProComboScreens.rowsStationary(listOf(original), listOf(original.copy(signature = tooManyChanges))))
+        assertFalse(ProComboScreens.rowsStationary(listOf(original), listOf(samePlace.copy(button = word("Dùng combo", .75, .47)))))
+        assertFalse(ProComboScreens.rowsStationary(listOf(original), listOf(samePlace.copy(id = "other"))))
+    }
+
     @Test fun shortTwoRowProWithConstantAnimationStillCapturesBoth() {
         val f = Fake(listOf("first", "second"))
         f.geometric = true
