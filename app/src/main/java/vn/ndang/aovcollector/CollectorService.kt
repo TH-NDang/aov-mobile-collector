@@ -2455,7 +2455,7 @@ class CollectorService : AccessibilityService() {
      * Its private progress lives in the run folder; credentials and invite code stay in
      * Android Keystore-backed private preferences and never enter the exported ZIP.
      */
-    private fun eventInvite(step: JSONObject, alive: () -> Boolean, finish: (String?) -> Unit) {
+    private fun eventInvite(step: JSONObject, isActive: () -> Boolean, finish: (String?) -> Unit) {
         val refs = step.getJSONArray("accountKeys")
         val keys = (0 until refs.length()).map { refs.getString(it) }
         val fingerprint = step.getString("codeFingerprint")
@@ -2469,7 +2469,7 @@ class CollectorService : AccessibilityService() {
         val journalFile = File(directory, "event-invite-progress.json")
 
         val adapter = object : EventInviteRunner.Screen {
-            override val alive get() = alive() && runId == activeRun
+            override val alive get() = isActive() && runId == activeRun
 
             override fun loadLedger(): JSONObject? = if (journalFile.isFile) {
                 // A corrupted existing ledger must fail closed; do not overwrite it with "new".
@@ -2504,7 +2504,7 @@ class CollectorService : AccessibilityService() {
                     return
                 }
                 entering = true
-                enterGame(toLobby = true, alive = alive, eventAccount = credential) { outcome ->
+                enterGame(toLobby = true, alive = isActive, eventAccount = credential) { outcome ->
                     if (!alive) return@enterGame
                     entering = false
                     when (outcome) {
@@ -2659,7 +2659,7 @@ class CollectorService : AccessibilityService() {
 
             override fun capture(name: String, then: (Boolean) -> Unit) {
                 if (!alive) return then(false)
-                capture(name, activeRun, wait = true, done = then)
+                this@CollectorService.capture(name, activeRun, wait = true, done = then)
             }
 
             override fun later(ms: Long, then: () -> Unit) {
