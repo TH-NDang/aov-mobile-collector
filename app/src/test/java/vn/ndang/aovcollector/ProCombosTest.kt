@@ -59,6 +59,8 @@ class ProCombosTest {
         var emptyOnReplay = false
         var shortenOnReplay = false
         var pixelOnlyMotion = false
+        var animatedBackground = false
+        var looks = 0
         var scrollGestures = 0
         var replayNotices = 0
 
@@ -78,6 +80,7 @@ class ProCombosTest {
         }
 
         override fun look(then: (ProComboReader.Look?) -> Unit) {
+            looks++
             val p = popupOpen
             val visible = if (dropRows) {
                 emptyList()
@@ -112,7 +115,9 @@ class ProCombosTest {
                 override val entries = if (p) observed else emptyList()
                 override val preparationSignature = if (p) null else actual
                 override val listSignature = IntArray(40) {
-                    if (pixelOnlyMotion && scrollGestures > 0) {
+                    if (animatedBackground) {
+                        looks * 40
+                    } else if (pixelOnlyMotion && scrollGestures > 0) {
                         40 + minOf(resetGestures, 2) * 30
                     } else if (geometric) {
                         (scroll * 1000).toInt()
@@ -325,6 +330,41 @@ class ProCombosTest {
         f.cancelOnReplay = true
         f.run()
         assertEquals(1, f.replayNotices)
+        assertEquals(0, f.applies)
+        assertTrue(f.captures.isEmpty())
+    }
+
+    @Test fun shortTwoRowProWithConstantAnimationStillCapturesBoth() {
+        val f = Fake(listOf("first", "second"))
+        f.geometric = true
+        f.fullBoundary = true
+        f.ineffectiveScroll = true
+        f.animatedBackground = true
+        f.run()
+        assertEquals(ProComboReader.Outcome.Done(2, false), f.outcome)
+        assertEquals(listOf("top-1", "top-2"), f.captures)
+        assertEquals(3, f.applies)
+        assertTrue("should not need 15 upward attempts", f.resetGestures < 14)
+    }
+
+    @Test fun shortListProofRejectsUnstableComboBeforeAnyApply() {
+        val f = Fake(listOf("first", "second"))
+        f.fullBoundary = true
+        f.ineffectiveScroll = true
+        f.animatedBackground = true
+        f.mutateOnReset = true
+        f.run()
+        assertTrue(f.outcome is ProComboReader.Outcome.Failed)
+        assertEquals(0, f.applies)
+        assertTrue(f.captures.isEmpty())
+    }
+
+    @Test fun animatedLongListWithoutBoundaryStillFailsSafely() {
+        val f = Fake(listOf("a", "b", "c", "d"))
+        f.ineffectiveScroll = true
+        f.animatedBackground = true
+        f.run()
+        assertTrue(f.outcome is ProComboReader.Outcome.Failed)
         assertEquals(0, f.applies)
         assertTrue(f.captures.isEmpty())
     }
