@@ -16,21 +16,31 @@ class EventInviteRunner(
 ) {
     interface Look {
         val scene: EventInviteScreens.Scene
+
         fun done(keep: String? = null)
     }
 
     interface Screen {
         val alive: Boolean
+
         fun loadLedger(): JSONObject?
+
         fun saveLedger(journal: JSONObject): Boolean
+
         /** Must force an explicit fresh Garena login, not trust the last account already in the lobby. */
         fun login(key: String, then: (Boolean, String?) -> Unit)
+
         fun look(then: (Look?) -> Unit)
+
         fun tap(x: Double, y: Double, then: (Boolean) -> Unit)
+
         fun typeInviteCode(code: String, then: (Boolean) -> Unit)
+
         /** Screenshot is retained only when it contains proof of a received reward or a known failure. */
         fun capture(name: String, then: (Boolean) -> Unit)
+
         fun later(ms: Long, then: () -> Unit)
+
         fun say(message: String)
     }
 
@@ -64,10 +74,12 @@ class EventInviteRunner(
     }
 
     private fun note(message: String) {
-        if (active()) screen.say(
-            "Sự kiện ${accountIndex + 1}/${keys.size} · $message · " +
-                "${ledger.optInt("gifts")} quà · ${ledger.optInt("tickets")} Vé nhảy"
-        )
+        if (active()) {
+            screen.say(
+                "Sự kiện ${accountIndex + 1}/${keys.size} · $message · " +
+                    "${ledger.optInt("gifts")} quà · ${ledger.optInt("tickets")} Vé nhảy"
+            )
+        }
     }
 
     private fun after(ms: Long, then: () -> Unit) = screen.later(ms) {
@@ -93,8 +105,11 @@ class EventInviteRunner(
         note(caption)
         screen.tap(x, y) { ok ->
             if (!active()) return@tap
-            if (!ok) stop("Không chạm được $caption; giữ màn hình để kiểm tra")
-            else after(wait, then)
+            if (!ok) {
+                stop("Không chạm được $caption; giữ màn hình để kiểm tra")
+            } else {
+                after(wait, then)
+            }
         }
     }
 
@@ -225,7 +240,8 @@ class EventInviteRunner(
                     tap(
                         claim?.takeIf { it.x in .37..0.65 && it.y in .59..0.85 }?.x ?: .500,
                         claim?.takeIf { it.x in .37..0.65 && it.y in .59..0.85 }?.y ?: .730,
-                        1050, "Nhận quà giới thiệu sự kiện"
+                        1050,
+                        "Nhận quà giới thiệu sự kiện"
                     ) { inspectEvent() }
                 }
                 EventInviteScreens.Kind.REWARD -> {

@@ -9,8 +9,16 @@ import kotlin.math.abs
  */
 object EventInviteScreens {
     enum class Kind {
-        LOBBY, EVENT_LIST, ANNIVERSARY, INVITE, INTRO, EVENT_GIFT, EVENT_GIFT_DONE,
-        REWARD, RETURN_EFFECT, UNKNOWN
+        LOBBY,
+        EVENT_LIST,
+        ANNIVERSARY,
+        INVITE,
+        INTRO,
+        EVENT_GIFT,
+        EVENT_GIFT_DONE,
+        REWARD,
+        RETURN_EFFECT,
+        UNKNOWN
     }
 
     data class Scene(
@@ -20,18 +28,21 @@ object EventInviteScreens {
         val dailyLimit: Int? = null,
         val tickets: Int? = null
     ) {
-        fun find(vararg queries: String): GameScreens.Word? =
-            words.firstOrNull { word -> queries.any { it in word.plain } }
+        fun find(vararg queries: String): GameScreens.Word? = words.firstOrNull { word -> queries.any { it in word.plain } }
     }
 
-    private fun includes(words: List<GameScreens.Word>, word: String): Boolean =
-        words.any { it.plain.contains(word) }
+    private fun includes(words: List<GameScreens.Word>, word: String): Boolean = words.any { it.plain.contains(word) }
 
-    private fun match(words: List<GameScreens.Word>, needle: String, left: Double = 0.0, right: Double = 1.0,
-                      top: Double = 0.0, bottom: Double = 1.0): GameScreens.Word? =
-        words.firstOrNull {
-            needle in it.plain && it.x in left..right && it.y in top..bottom
-        }
+    private fun match(
+        words: List<GameScreens.Word>,
+        needle: String,
+        left: Double = 0.0,
+        right: Double = 1.0,
+        top: Double = 0.0,
+        bottom: Double = 1.0
+    ): GameScreens.Word? = words.firstOrNull {
+        needle in it.plain && it.x in left..right && it.y in top..bottom
+    }
 
     private fun used(words: List<GameScreens.Word>): Pair<Int, Int>? {
         // GameScreens.plain strips the slash, so inspect the original OCR line FIRST.
@@ -42,10 +53,16 @@ object EventInviteScreens {
         val fallback = Regex("danhap([01])([1-9])(?:ma|$)").find(clean)
         val first = (raw ?: fallback)?.groupValues?.get(1)?.toIntOrNull()
         val second = (raw ?: fallback)?.groupValues?.get(2)?.toIntOrNull()
-        return if (first != null && second != null &&
-            second in 1..10 && first in 0..second &&
+        return if (first != null &&
+            second != null &&
+            second in 1..10 &&
+            first in 0..second &&
             (clean.contains("danhap") || clean.contains("mamoi"))
-        ) first to second else null
+        ) {
+            first to second
+        } else {
+            null
+        }
     }
 
     /** Only numbers in the central reward card can count as tickets. Never read the bottom UID. */
@@ -57,6 +74,7 @@ object EventInviteScreens {
 
     fun classify(words: List<GameScreens.Word>, isLobby: Boolean = false): Scene {
         val day = used(words)
+
         fun scene(kind: Kind, value: Int? = null) = Scene(kind, words, day?.first, day?.second, value)
         val reward = includes(words, "chucmung") &&
             (includes(words, "nhanduoc") || includes(words, "bandanhanduoc"))
@@ -67,10 +85,15 @@ object EventInviteScreens {
         if (includes(words, "kichhoathieuungtrolai")) return scene(Kind.RETURN_EFFECT)
         if (includes(words, "hotrobanbe") &&
             (includes(words, "mamoi") || includes(words, "nhapde") || includes(words, "xacnhan"))
-        ) return scene(Kind.INVITE)
-        if (includes(words, "huongdan") && includes(words, "quytac") &&
+        ) {
+            return scene(Kind.INVITE)
+        }
+        if (includes(words, "huongdan") &&
+            includes(words, "quytac") &&
             !includes(words, "hotrobanbe")
-        ) return scene(Kind.INTRO)
+        ) {
+            return scene(Kind.INTRO)
+        }
         if (includes(words, "tonghopsukien") && includes(words, "hoathoa10nam")) {
             if (includes(words, "danhan")) return scene(Kind.EVENT_GIFT_DONE)
             if (match(words, "nhan", .34, .67, .60, .83) != null) return scene(Kind.EVENT_GIFT)
@@ -81,37 +104,34 @@ object EventInviteScreens {
         if (includes(words, "tonghopsukien") ||
             includes(words, "khobauthoigian") ||
             includes(words, "thapkychungsuc")
-        ) return scene(Kind.EVENT_LIST)
+        ) {
+            return scene(Kind.EVENT_LIST)
+        }
         if (isLobby) return scene(Kind.LOBBY)
         return scene(Kind.UNKNOWN)
     }
 
     /** Dynamic location of the anniversary entry in the sidebar (never the X or a matchmaking button). */
-    fun anniversaryItem(scene: Scene): GameScreens.Word? =
-        match(scene.words, "thapkychungsuc", .075, .265, .11, .94)
+    fun anniversaryItem(scene: Scene): GameScreens.Word? = match(scene.words, "thapkychungsuc", .075, .265, .11, .94)
 
-    fun eventIndex(scene: Scene): GameScreens.Word? =
-        match(scene.words, "tonghopsukien", .075, .27, .09, .45)
+    fun eventIndex(scene: Scene): GameScreens.Word? = match(scene.words, "tonghopsukien", .075, .27, .09, .45)
 
-    fun inviteButton(scene: Scene): GameScreens.Word? =
-        match(scene.words, "nhapmamoi", .53, .78, .77, .96)
+    fun inviteButton(scene: Scene): GameScreens.Word? = match(scene.words, "nhapmamoi", .53, .78, .77, .96)
 
-    fun eventButton(scene: Scene): GameScreens.Word? =
-        scene.words.filter {
-            it.plain.contains("sukien") && it.x in .69..0.96 && it.y in .10..0.48
-        }.minByOrNull { abs(it.x - .835) + abs(it.y - .235) }
+    fun eventButton(scene: Scene): GameScreens.Word? = scene.words.filter {
+        it.plain.contains("sukien") && it.x in .69..0.96 && it.y in .10..0.48
+    }.minByOrNull { abs(it.x - .835) + abs(it.y - .235) }
 
-    fun confirmation(scene: Scene): GameScreens.Word? =
-        match(scene.words, "xacnhan", .36, .66, .59, .82)
+    fun confirmation(scene: Scene): GameScreens.Word? = match(scene.words, "xacnhan", .36, .66, .59, .82)
 
     /** Explicitly reject 1/1 daily limit, even when the field still contains a preset code. */
     fun dailyUsed(scene: Scene): Boolean = scene.used != null &&
-        scene.dailyLimit != null && scene.used >= scene.dailyLimit
+        scene.dailyLimit != null &&
+        scene.used >= scene.dailyLimit
 
-    fun errorMessage(scene: Scene): Boolean =
-        scene.words.any { w ->
-            listOf("mamoi khonghople", "makhonghople", "mohomnay", "loihethong", "thulai", "danhap").any { it in w.plain }
-        }
+    fun errorMessage(scene: Scene): Boolean = scene.words.any { w ->
+        listOf("mamoi khonghople", "makhonghople", "mohomnay", "loihethong", "thulai", "danhap").any { it in w.plain }
+    }
 }
 
 /** Bounded, deterministic journal metadata; never includes login credentials or the plaintext invitation code. */

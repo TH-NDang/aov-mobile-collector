@@ -141,9 +141,12 @@ object BuiltInMacros {
 
     /** One guarded, checkpointed event invitation run across an ordered list of separate accounts. */
     fun eventInvite(accountKeys: List<String>, codeFingerprint: String): String {
-        require(accountKeys.isNotEmpty() && accountKeys.size <= EventInviteLedger.MAX_ACCOUNTS &&
-            accountKeys.distinct().size == accountKeys.size &&
-            accountKeys.all { it.matches(Regex("[0-9a-f]{64}")) })
+        require(
+            accountKeys.isNotEmpty() &&
+                accountKeys.size <= EventInviteLedger.MAX_ACCOUNTS &&
+                accountKeys.distinct().size == accountKeys.size &&
+                accountKeys.all { it.matches(Regex("[0-9a-f]{64}")) }
+        )
         require(codeFingerprint.matches(Regex("[0-9a-f]{64}")))
         val action = JSONObject().put("type", "event-invite")
             .put("accountKeys", org.json.JSONArray(accountKeys))

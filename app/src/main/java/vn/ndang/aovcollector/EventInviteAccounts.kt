@@ -29,6 +29,7 @@ object EventInviteAccounts {
     private const val MAX_ACCOUNTS = 80
 
     data class Saved(val key: String, val label: String)
+
     data class Secret(val key: String, val label: String, val username: String, val password: String)
 
     private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -74,8 +75,7 @@ object EventInviteAccounts {
         return String(cipher.doFinal(Base64.decode(parts[1], Base64.NO_WRAP)), Charsets.UTF_8)
     }
 
-    @Synchronized private fun records(context: Context): JSONArray =
-        JSONArray(prefs(context).getString(RECORDS, "[]") ?: "[]")
+    @Synchronized private fun records(context: Context): JSONArray = JSONArray(prefs(context).getString(RECORDS, "[]") ?: "[]")
 
     @Synchronized fun list(context: Context): List<Saved> = try {
         val array = records(context)
@@ -102,12 +102,7 @@ object EventInviteAccounts {
         null
     }
 
-    @Synchronized fun save(
-        context: Context,
-        username: String,
-        password: String,
-        label: String = ""
-    ): String {
+    @Synchronized fun save(context: Context, username: String, password: String, label: String = ""): String {
         val clean = username.trim()
         require(clean.isNotBlank() && clean.length <= 150) { "Nhập tài khoản Garena" }
         require(password.isNotEmpty() && password.length <= 200) { "Nhập mật khẩu Garena" }
@@ -129,8 +124,10 @@ object EventInviteAccounts {
 
     @Synchronized fun remove(context: Context, accountKey: String) {
         val array = records(context)
-        val remaining = JSONArray((0 until array.length()).map { array.getJSONObject(it) }
-            .filterNot { it.optString("key") == accountKey })
+        val remaining = JSONArray(
+            (0 until array.length()).map { array.getJSONObject(it) }
+                .filterNot { it.optString("key") == accountKey }
+        )
         require(prefs(context).edit().putString(RECORDS, remaining.toString()).commit()) {
             "Không xóa được tài khoản"
         }
@@ -159,7 +156,8 @@ object EventInviteAccounts {
         }
     }
 
-    fun validateSelection(context: Context, keys: List<String>): Boolean =
-        keys.isNotEmpty() && keys.size <= MAX_ACCOUNTS && keys.distinct().size == keys.size &&
-            keys.all { it.matches(Regex("[0-9a-f]{64}")) && load(context, it) != null }
+    fun validateSelection(context: Context, keys: List<String>): Boolean = keys.isNotEmpty() &&
+        keys.size <= MAX_ACCOUNTS &&
+        keys.distinct().size == keys.size &&
+        keys.all { it.matches(Regex("[0-9a-f]{64}")) && load(context, it) != null }
 }

@@ -2,11 +2,10 @@ package vn.ndang.aovcollector
 
 import android.app.AlertDialog
 import android.content.Context
-import android.view.ContextThemeWrapper
 import android.text.InputType
+import android.view.ContextThemeWrapper
 import android.view.WindowManager
 import android.widget.CheckBox
-import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 
@@ -14,10 +13,7 @@ import android.widget.ScrollView
  * Standalone event account picker, intentionally not tied to Accounts/UID.
  * Passwords are entered in a masked field and passed only to the Android Keystore store.
  */
-internal class EventInviteDialog(
-    private val service: CollectorService,
-    private val selectTask: (String) -> Boolean
-) {
+internal class EventInviteDialog(private val service: CollectorService, private val selectTask: (String) -> Boolean) {
     private val c: Context = ContextThemeWrapper(service, Ui.windowTheme(service))
     private var codeDraft: String = EventInviteAccounts.loadCode(service).orEmpty()
 
@@ -32,7 +28,13 @@ internal class EventInviteDialog(
         val body = Ui.stack(c).apply {
             setPadding(Ui.dp(c, 16), Ui.dp(c, 6), Ui.dp(c, 16), Ui.dp(c, 8))
         }
-        body.addView(Ui.text(c, "Tài khoản dùng RIÊNG cho sự kiện; không cần UID/UUID, không dùng danh sách tài khoản thu thập tướng. Thông tin đăng nhập được mã hóa trên điện thoại.", 13f))
+        body.addView(
+            Ui.text(
+                c,
+                "Tài khoản dùng RIÊNG cho sự kiện; không cần UID/UUID, không dùng danh sách tài khoản thu thập tướng. Thông tin đăng nhập được mã hóa trên điện thoại.",
+                13f
+            )
+        )
         body.addView(Ui.section(c, "Mã mời dùng chung"))
         val code = Ui.field(c, "Nhập mã mời của chương trình", codeDraft)
         code.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
@@ -50,20 +52,30 @@ internal class EventInviteDialog(
             }.also { body.addView(it) }
         }
         val buttons = LinearLayout(c)
-        buttons.addView(Ui.button(c, "Chọn tất cả") {
-            checked.values.forEach { it.isChecked = true }
-        }, LinearLayout.LayoutParams(0, Ui.dp(c, 42), 1f))
-        buttons.addView(Ui.button(c, "Bỏ chọn") {
-            checked.values.forEach { it.isChecked = false }
-        }, LinearLayout.LayoutParams(0, Ui.dp(c, 42), 1f))
+        buttons.addView(
+            Ui.button(c, "Chọn tất cả") {
+                checked.values.forEach { it.isChecked = true }
+            },
+            LinearLayout.LayoutParams(0, Ui.dp(c, 42), 1f)
+        )
+        buttons.addView(
+            Ui.button(c, "Bỏ chọn") {
+                checked.values.forEach { it.isChecked = false }
+            },
+            LinearLayout.LayoutParams(0, Ui.dp(c, 42), 1f)
+        )
         body.addView(buttons)
         val edit = Ui.button(c, "Thêm / sửa / xóa tài khoản sự kiện") {}
         body.addView(edit)
-        body.addView(Ui.text(c,
-            "Mỗi tài khoản: đăng xuất → đăng nhập Garena → Sự kiện → Tổng hợp sự kiện → Thập kỷ chung sức → Nhập mã mời. " +
-                "Xóa mã có sẵn rồi nhập mã đã lưu; chỉ tính quà khi thấy và lưu được kết quả. Tự dừng nếu trạng thái không rõ.",
-            12f, Ui.muted
-        ))
+        body.addView(
+            Ui.text(
+                c,
+                "Mỗi tài khoản: đăng xuất → đăng nhập Garena → Sự kiện → Tổng hợp sự kiện → Thập kỷ chung sức → Nhập mã mời. " +
+                    "Xóa mã có sẵn rồi nhập mã đã lưu; chỉ tính quà khi thấy và lưu được kết quả. Tự dừng nếu trạng thái không rõ.",
+                12f,
+                Ui.muted
+            )
+        )
         val dialog = AlertDialog.Builder(c).setTitle("Nhiệm vụ mã mời · Nhiều tài khoản")
             .setView(ScrollView(c).apply { addView(body) })
             .setPositiveButton("Chọn tác vụ", null).setNegativeButton("Hủy", null).create()
@@ -81,7 +93,11 @@ internal class EventInviteDialog(
             }
             val ids = checked.filterValues { it.isChecked }.keys.toList()
             if (!EventInviteAccounts.validateSelection(service, ids)) {
-                android.widget.Toast.makeText(c, "Chọn ít nhất một tài khoản đã lưu và còn mật khẩu hợp lệ", android.widget.Toast.LENGTH_LONG).show()
+                android.widget.Toast.makeText(
+                    c,
+                    "Chọn ít nhất một tài khoản đã lưu và còn mật khẩu hợp lệ",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
                 return@setOnClickListener
             }
             try {
@@ -155,10 +171,14 @@ internal class EventInviteDialog(
         val password = Ui.field(c, "Mật khẩu").apply {
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }.also { body.addView(it) }
-        body.addView(Ui.text(c,
-            "Mật khẩu chỉ lưu đã mã hóa trong Android Keystore; không xuất ra ZIP hoặc nhật ký.",
-            12f, Ui.muted
-        ))
+        body.addView(
+            Ui.text(
+                c,
+                "Mật khẩu chỉ lưu đã mã hóa trong Android Keystore; không xuất ra ZIP hoặc nhật ký.",
+                12f,
+                Ui.muted
+            )
+        )
         val dialog = AlertDialog.Builder(c).setTitle(if (previous == null) "Thêm tài khoản" else "Sửa tài khoản")
             .setView(ScrollView(c).apply { addView(body) })
             .setPositiveButton("Lưu", null).setNegativeButton("Quay lại") { _, _ -> manage() }.create()

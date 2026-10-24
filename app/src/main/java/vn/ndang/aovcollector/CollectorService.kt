@@ -509,8 +509,11 @@ class CollectorService : AccessibilityService() {
     }
 
     private fun eventInviteProgress(): JSONObject? = try {
-        if (runId.isBlank()) null
-        else JSONObject(File(filesDir, "captures/$runId/event-invite-progress.json").readText())
+        if (runId.isBlank()) {
+            null
+        } else {
+            JSONObject(File(filesDir, "captures/$runId/event-invite-progress.json").readText())
+        }
     } catch (_: Exception) {
         null
     }
@@ -2595,7 +2598,8 @@ class CollectorService : AccessibilityService() {
             }
 
             override fun typeInviteCode(code: String, then: (Boolean) -> Unit) {
-                if (!alive || foreground() != GAME ||
+                if (!alive ||
+                    foreground() != GAME ||
                     !EventInviteAccounts.validCode(code)
                 ) {
                     then(false)
@@ -2659,9 +2663,10 @@ class CollectorService : AccessibilityService() {
                             } catch (_: Exception) {
                                 null
                             }
-                            val confirmed = current != null && nodes(current).any {
-                                it.isEditable && !it.isPassword && it.text?.toString() == code
-                            }
+                            val confirmed = current != null &&
+                                nodes(current).any {
+                                    it.isEditable && !it.isPassword && it.text?.toString() == code
+                                }
                             if (confirmed &&
                                 wm.currentWindowMetrics.windowInsets.isVisible(WindowInsets.Type.ime())
                             ) {
@@ -4080,11 +4085,13 @@ class CollectorService : AccessibilityService() {
                     save()
                     note("Hoàn tất · ${clock(elapsed())}")
                     recordTimes(m, m.json.optInt("heroCount", 1))
-                    status(if (m.json.optString("collectionMode") == "event-invite") {
-                        progress(m)
-                    } else {
-                        "Đã chụp xong · ${photosTaken(m)} ảnh · ${clock(elapsed())}"
-                    })
+                    status(
+                        if (m.json.optString("collectionMode") == "event-invite") {
+                            progress(m)
+                        } else {
+                            "Đã chụp xong · ${photosTaken(m)} ảnh · ${clock(elapsed())}"
+                        }
+                    )
                     AfterRun.finished(this, runId)
                 }
             }

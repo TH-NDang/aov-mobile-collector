@@ -28,9 +28,11 @@ class EventInviteScreensTest {
         assertFalse(EventInviteScreens.dailyUsed(open))
         assertNotNull(EventInviteScreens.confirmation(open))
 
-        val used = EventInviteScreens.classify(modal.map {
-            if (it.text.startsWith("Hôm nay")) word("Hôm nay đã nhập 1/1 mã", .52, .56) else it
-        })
+        val used = EventInviteScreens.classify(
+            modal.map {
+                if (it.text.startsWith("Hôm nay")) word("Hôm nay đã nhập 1/1 mã", .52, .56) else it
+            }
+        )
         assertEquals(1, used.used)
         assertTrue(EventInviteScreens.dailyUsed(used))
     }
@@ -55,11 +57,13 @@ class EventInviteScreensTest {
         )
         assertEquals(EventInviteScreens.Kind.EVENT_GIFT, welcome.kind)
         assertNull(welcome.tickets)
-        val already = EventInviteScreens.classify(listOf(
-            word("Tổng hợp sự kiện", .49, .30),
-            word("Hoạt họa 10 năm", .52, .55),
-            word("Đã nhận", .50, .72)
-        ))
+        val already = EventInviteScreens.classify(
+            listOf(
+                word("Tổng hợp sự kiện", .49, .30),
+                word("Hoạt họa 10 năm", .52, .55),
+                word("Đã nhận", .50, .72)
+            )
+        )
         assertEquals(EventInviteScreens.Kind.EVENT_GIFT_DONE, already.kind)
     }
 
@@ -89,9 +93,11 @@ class EventInviteScreensTest {
     @Test fun didNotCountAnUnknownOrAlreadyUsedEventAsReward() {
         assertEquals(EventInviteScreens.Kind.UNKNOWN, EventInviteScreens.classify(listOf(word("Cửa hàng", .2, .5))).kind)
         assertEquals(EventInviteScreens.Kind.LOBBY, EventInviteScreens.classify(listOf(word("Sự kiện", .82, .23)), true).kind)
-        val used = EventInviteScreens.classify(modal.map {
-            if (it.text.startsWith("Hôm nay")) word("Hôm nay đã nhập 1/1 mã", .52, .56) else it
-        })
+        val used = EventInviteScreens.classify(
+            modal.map {
+                if (it.text.startsWith("Hôm nay")) word("Hôm nay đã nhập 1/1 mã", .52, .56) else it
+            }
+        )
         assertTrue(EventInviteScreens.dailyUsed(used))
         assertNull(used.tickets)
     }

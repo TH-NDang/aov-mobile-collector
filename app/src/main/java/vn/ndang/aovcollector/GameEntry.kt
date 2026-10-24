@@ -935,15 +935,21 @@ class GameEntry(
             // We have no account UID by design. Prove account selection through a fresh
             // credential submission instead of silently reusing whichever account is logged in.
             if (leftOnce) {
-                return stop(s, "entry-event-login",
+                return stop(
+                    s,
+                    "entry-event-login",
                     "Đã đăng xuất nhưng game tự vào lại tài khoản cũ; cần mở màn đăng nhập Garena trước khi tiếp tục."
                 )
             }
             leftOnce = true
             phase = Phase.LOGOUT
             lobbySince = -1
-            return tap(s, "Sự kiện: mở Cài đặt để đăng xuất tài khoản đang dùng",
-                GameScreens.SETTINGS_X to GameScreens.SETTINGS_Y, 2500)
+            return tap(
+                s,
+                "Sự kiện: mở Cài đặt để đăng xuất tài khoản đang dùng",
+                GameScreens.SETTINGS_X to GameScreens.SETTINGS_Y,
+                2500
+            )
         }
         // The hero statistics start from the lobby.
         if (toLobby) {

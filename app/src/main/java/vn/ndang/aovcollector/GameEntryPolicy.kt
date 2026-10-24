@@ -5,12 +5,13 @@ object GameEntryPolicy {
     enum class Destination { LOBBY, LIST, CURRENT }
 
     /** A legacy/imported flag cannot opt out of the shared account requirement. */
-    fun requiresAccount(macro: Macro): Boolean =
-        macro.target == "com.garena.game.kgvn" &&
-            !(macro.json.optString("collectionMode") == "event-invite" &&
+    fun requiresAccount(macro: Macro): Boolean = macro.target == "com.garena.game.kgvn" &&
+        !(
+            macro.json.optString("collectionMode") == "event-invite" &&
                 macro.name == "anniversary-invite" &&
                 macro.steps.length() == 1 &&
-                macro.steps.getJSONObject(0).optString("type") == "event-invite")
+                macro.steps.getJSONObject(0).optString("type") == "event-invite"
+            )
 
     fun destination(macro: Macro, index: Int): Destination {
         // A resumed coordinate cursor must never be replayed after an implicit navigation.
