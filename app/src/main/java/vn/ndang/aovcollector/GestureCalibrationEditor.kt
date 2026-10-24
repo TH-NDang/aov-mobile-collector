@@ -29,7 +29,9 @@ internal class GestureCalibrationEditor(
     private val reset: () -> Boolean,
     private val test: (CalibrationAction, List<CalibrationPoint>, (Boolean) -> Unit) -> Unit,
     private val closed: () -> Unit,
-    private val refusal: () -> CalibrationRefusal? = { null }
+    private val refusal: () -> CalibrationRefusal? = { null },
+    /** Frozen geometry of the game window when this edit begins; a service can report stale metrics after rotation. */
+    private val displayProfile: CalibrationProfile? = null
 ) {
     companion object {
         // Keep the user's panel position when the runner presents its next actual gesture.
@@ -43,7 +45,7 @@ internal class GestureCalibrationEditor(
     private var testing = false
     private var hidden = false
     private var action = step.action
-    private val drawing = Handles(context, initial)
+    private val drawing = Handles(context, initial, displayProfile)
     internal val view: View? get() = root
 
     fun show(): Boolean {
@@ -311,14 +313,17 @@ internal class GestureCalibrationEditor(
         if (notify) closed()
     }
 
-    private class Handles(context: Context, initial: List<CalibrationPoint>) : View(context) {
+    private class Handles(context: Context, initial: List<CalibrationPoint>, private val profile: CalibrationProfile?) : View(context) {
         var points = initial.toList()
         private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
         private var dragging = -1
         private val origin = IntArray(2)
         private val radius = 22 * resources.displayMetrics.density
 
-        private fun bounds() = (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).currentWindowMetrics.bounds
+        /** Use the same screen geometry that will dispatch the gesture, never a stale portrait window. */
+        private fun bounds(): android.graphics.Rect = profile?.takeIf { it.valid() }?.let {
+            android.graphics.Rect(0, 0, it.width, it.height)
+        } ?: (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).currentWindowMetrics.bounds
 
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas)
