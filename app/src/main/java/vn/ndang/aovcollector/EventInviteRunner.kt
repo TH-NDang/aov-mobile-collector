@@ -115,7 +115,7 @@ class EventInviteRunner(
         }
         accountIndex = ledger.optInt("next", 0)
         if (ledger.optBoolean("complete")) {
-            stop(nullMessage())
+            success()
             return
         }
         if (ledger.optString("phase") == "submit_pending") {
@@ -129,14 +129,21 @@ class EventInviteRunner(
         }
     }
 
-    private fun nullMessage(): String =
+    private fun summary(): String =
         "Hoàn thành ${keys.size} tài khoản · ${ledger.optInt("gifts")} quà · ${ledger.optInt("tickets")} Vé nhảy"
+
+    private fun success() {
+        if (ended) return
+        screen.say(summary())
+        ended = true
+        finish(null)
+    }
 
     private fun startAccount() {
         if (!active()) return
         accountIndex = ledger.optInt("next", 0)
         if (accountIndex >= keys.size) {
-            stop(nullMessage())
+            success()
             return
         }
         actions = 0
@@ -334,7 +341,7 @@ class EventInviteRunner(
         if (!save()) return
         note("Đã ghi nhận tài khoản; quà thực nhận $gifts, Vé nhảy $tickets")
         if (ledger.optBoolean("complete")) {
-            stop(nullMessage())
+            success()
         } else {
             backSteps = 0
             after(700) { returnLobby() }
