@@ -65,6 +65,8 @@ class ProCombosTest {
         var replayNotices = 0
 
         override fun say(text: String) {
+            // Only a replay notice changes fake replay scenarios; routine progress is just a log.
+            if (!text.startsWith("Đang đọc lại Pro")) return
             replayNotices++
             if (shortenOnReplay) {
                 rows = rows.take(1)
