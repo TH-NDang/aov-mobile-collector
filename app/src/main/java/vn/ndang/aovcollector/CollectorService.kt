@@ -1513,7 +1513,8 @@ class CollectorService : AccessibilityService() {
                 "Thống kê tướng" to "Bảng xếp hạng tướng trong Cộng đồng",
                 "Chiến khu" to "Bảng xếp hạng người chơi của từng tướng",
                 "Cờ Liên Quân · Bách khoa" to "Chọn từng mục, tab, chi tiết; cuộn hết trang và lưu theo thư mục",
-                "Đề cử Pro · Combo tướng" to "Tất cả tướng · tối đa 5 combo · kết thúc giữ top 1"
+                "Đề cử Pro · Combo tướng" to "Tất cả tướng · tối đa 5 combo · kết thúc giữ top 1",
+                "Sự kiện · Mã mời nhiều tài khoản" to "Tài khoản Garena riêng, không UID/UUID · Thập kỷ chung sức · đếm quà"
             ) +
                 saved.map { it.name to "Macro đã nhập" }
         var visible = choices.indices.toList()
@@ -1576,7 +1577,8 @@ class CollectorService : AccessibilityService() {
                     2 -> boardForm()
                     3 -> chessForm()
                     4 -> proBuildsForm()
-                    else -> selectMacro(saved[i - 5].raw)
+                    5 -> EventInviteDialog(this@CollectorService) { raw -> selectMacro(raw) }.show()
+                    else -> selectMacro(saved[i - 6].raw)
                 }
             }
         }
@@ -3494,7 +3496,13 @@ class CollectorService : AccessibilityService() {
             save()
             note(if (index == 0) "Bắt đầu lượt" else "Tiếp tục")
             smartGameEntry = uiPrefs.getBoolean("smartGameEntry", true)
-            preflight(generation)
+            if (m.json.optString("collectionMode") == "event-invite") {
+                // EventInviteRunner owns the entire UID-free logout/login lifecycle and
+                // its own durable account cursor. The normal UID-based preflight must NOT run.
+                handler.post { next(generation) }
+            } else {
+                preflight(generation)
+            }
         } catch (e: Exception) {
             pause("Lỗi macro: ${e.message}")
         }
@@ -3615,14 +3623,19 @@ class CollectorService : AccessibilityService() {
         try {
             val m = readMacro()
             val mode = m.json.optString("collectionMode")
-            if (mode !in setOf("single", "all", "pick", "ranking", "board", "chess", "pro-builds") ||
+            if (mode !in setOf("single", "all", "pick", "ranking", "board", "chess", "pro-builds", "event-invite") ||
                 m.json.optInt("builtinVersion", 1) == BuiltInMacros.VERSION
             ) {
                 return
             }
             val step = if (prefs.getString("hash", "") == m.hash) prefs.getInt("step", 0) else 0
             if (step > 0 && step < m.steps.length() && !prefs.getBoolean("stopped", false)) return
-            if (mode == "pro-builds") {
+            if (mode == "event-invite") {
+                val stepData = m.steps.getJSONObject(0)
+                val jsonKeys = stepData.getJSONArray("accountKeys")
+                val keys = (0 until jsonKeys.length()).map { jsonKeys.getString(it) }
+                MacroStore.current(this).writeText(BuiltInMacros.eventInvite(keys, stepData.getString("codeFingerprint")))
+            } else if (mode == "pro-builds") {
                 MacroStore.current(this).writeText(BuiltInMacros.proBuilds(m.json.optInt("heroCount", BuiltInMacros.ALL)))
             } else if (mode == "chess") {
                 MacroStore.current(this).writeText(BuiltInMacros.chess(BuiltInMacros.chessOptions(m.json)))
@@ -3829,7 +3842,7 @@ class CollectorService : AccessibilityService() {
             return
         }
         val front = foreground()
-        val opening = entryStep(m, index)
+        val opening = entryStep(m, index) || m.json.optString("collectionMode") == "event-invite"
         if (!opening && front != null && front != m.target) {
             // A notification or game booster can hold focus for a moment; only stop when another app stays in front.
             if (away < 3) {
@@ -3901,6 +3914,7 @@ class CollectorService : AccessibilityService() {
                 "board" -> 43_200_000L
                 "chess" -> 43_200_000L
                 "pro-builds" -> 43_200_000L
+                "event-invite" -> 43_200_000L
                 else -> 10000L
             }
             val beganAt = SystemClock.elapsedRealtime()
@@ -3919,7 +3933,7 @@ class CollectorService : AccessibilityService() {
             handler.postDelayed({ checkTimeout() }, limit)
             // Its callbacks see the step finished and stop; a tap already sent still lands.
             if (type in
-                setOf("enter", "skills", "ranking", "board", "chess", "pro-builds", "find")
+                setOf("enter", "skills", "ranking", "board", "chess", "pro-builds", "event-invite", "find")
             ) {
                 cancelStep =
                     {
@@ -3973,6 +3987,12 @@ class CollectorService : AccessibilityService() {
                                 }
                             }, 1000)
                         }
+                    }
+                }
+                "event-invite" -> {
+                    eventInvite(s, { !finished && running && token == generation }) { error ->
+                        if (finished || token != generation) return@eventInvite
+                        done(error == null, error)
                     }
                 }
                 "board" -> {
@@ -4818,6 +4838,9 @@ class CollectorService : AccessibilityService() {
     /** Photos of the run on disk: with skill rows read at run time, the macro alone cannot tell. */
     private fun photosTaken(m: Macro): Int = when {
         !m.photosVary || runId.isEmpty() -> m.photoSteps.size
+        m.json.optString("collectionMode") == "event-invite" -> File(filesDir, "captures/$runId").walk().count {
+            it.isFile && it.extension == "png" && it.name.startsWith("event-")
+        }
         m.json.optString("collectionMode") == "pro-builds" -> File(filesDir, "captures/$runId").walk().count {
             it.isFile && it.extension == "png" && (it.name.contains("-top-") || it.name.endsWith("-empty-pro-list.png"))
         }
@@ -4846,6 +4869,7 @@ class CollectorService : AccessibilityService() {
         alive: () -> Boolean,
         calibrationOnly: Boolean = false,
         preserveScreen: Boolean = false,
+        eventAccount: EventInviteAccounts.Secret? = null,
         finish: (GameEntry.Outcome) -> Unit
     ) {
         val stamp = "%04d".format(index + 1)
@@ -5025,7 +5049,11 @@ class CollectorService : AccessibilityService() {
             }
 
             override fun signIn(then: (Boolean) -> Unit) {
-                if (calibrationOnly) then(false) else signInGarena(then)
+                when {
+                    calibrationOnly -> then(false)
+                    eventAccount != null -> signInGarenaCredentials(eventAccount.username, eventAccount.password, then)
+                    else -> signInGarena(then)
+                }
             }
 
             override fun later(ms: Long, then: () -> Unit) {
@@ -5052,6 +5080,7 @@ class CollectorService : AccessibilityService() {
             smartLobby = if (calibrationOnly) uiPrefs.getBoolean("smartGameEntry", true) else smartGameEntry,
             preserveScreen = preserveScreen,
             readOnlyAccount = calibrationOnly,
+            forceFreshLogin = eventAccount != null,
             finish = finish
         ).start()
     }
@@ -5178,6 +5207,11 @@ class CollectorService : AccessibilityService() {
      */
     private fun signInGarena(then: (Boolean) -> Unit) {
         val account = Accounts.load(this, runAccountId)?.takeIf { it.uid == runAccountUid } ?: return then(false)
+        signInGarenaCredentials(account.user, account.password, then)
+    }
+
+    /** Secrets are never logged, persisted to captures, or filled into an unverified website. */
+    private fun signInGarenaCredentials(username: String, secret: String, then: (Boolean) -> Unit) {
         val root = try {
             rootInActiveWindow
         } catch (_: Exception) {
@@ -5206,7 +5240,7 @@ class CollectorService : AccessibilityService() {
             n.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
             return n.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT, args)
         }
-        if (!type(user, account.user) || !type(password, account.password)) return then(false)
+        if (!type(user, username) || !type(password, secret)) return then(false)
 
         // ACTION_CLICK can return false (or true without a DOM submission) for WebView text nodes.
         // Wait for WebView's change/input event, find the button again and send a real touch instead.
