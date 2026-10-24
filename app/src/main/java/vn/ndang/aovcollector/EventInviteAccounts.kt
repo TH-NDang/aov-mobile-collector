@@ -87,15 +87,15 @@ object EventInviteAccounts {
         emptyList()
     }
 
-    @Synchronized fun load(context: Context, accountKey: String): Secret? = try {
+    @Synchronized fun load(context: Context, keyId: String): Secret? = try {
         val array = records(context)
         (0 until array.length()).asSequence().map { array.getJSONObject(it) }
-            .firstOrNull { it.getString("key") == accountKey }
+            .firstOrNull { it.getString("key") == keyId }
             ?.let { row ->
                 val user = unseal(row.getString("username"))
                 val pass = unseal(row.getString("password"))
-                Secret(accountKey, row.optString("label"), user, pass).takeIf {
-                    it.password.isNotEmpty() && accountKey(it.username) == accountKey
+                Secret(keyId, row.optString("label"), user, pass).takeIf {
+                    it.password.isNotEmpty() && accountKey(it.username) == keyId
                 }
             }
     } catch (_: Exception) {
