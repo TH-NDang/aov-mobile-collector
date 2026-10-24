@@ -55,6 +55,12 @@ class EventInviteScreensTest {
         )
         assertEquals(EventInviteScreens.Kind.EVENT_GIFT, welcome.kind)
         assertNull(welcome.tickets)
+        val already = EventInviteScreens.classify(listOf(
+            word("Tổng hợp sự kiện", .49, .30),
+            word("Hoạt họa 10 năm", .52, .55),
+            word("Đã nhận", .50, .72)
+        ))
+        assertEquals(EventInviteScreens.Kind.EVENT_GIFT_DONE, already.kind)
     }
 
     @Test fun eventNavigationChoosesActualAnniversarySidebar() {
