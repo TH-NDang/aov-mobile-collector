@@ -243,6 +243,7 @@ object MacroStore {
         "ranking" -> "Thống kê tướng"
         "board" -> "Chiến khu"
         "chess" -> "Cờ Liên Quân · Bách khoa"
+        "event-invite" -> "Sự kiện · Nhập mã mời nhiều tài khoản"
         else -> m.name // Imported macro: show its real name, not the generic "Macro đã nhập".
     }
 
@@ -262,6 +263,7 @@ object MacroStore {
                 (if (m.json.optBoolean("openGame")) " · tự vào game" else "")
         "ranking" -> "Bảng xếp hạng tướng · ${BuiltInMacros.rankCombos(m.json).size}/${RankScreens.COMBOS.size} bảng" +
             (if (m.json.optBoolean("openGame")) " · tự vào game" else "")
+        "event-invite" -> "${m.json.optInt("accountCount",0)} tài khoản riêng · Thập kỷ chung sức · đếm quà"
         "chess" -> "${m.json.optJSONArray("chessTopics")?.length() ?: 0} tab đã chọn · luôn chụp đến cuối" +
             (m.json.optJSONArray("chessNativeGroups")?.length()?.let { if (it > 0) " · tải $it nhóm ảnh gốc" else "" } ?: "") +
             (if (m.json.optBoolean("openGame")) " · tự vào game" else "")
@@ -290,7 +292,9 @@ object MacroStore {
         else -> m.name
     }
 
-    fun instruction(m: Macro): String = if (m.json.optString("collectionMode") == "chess") {
+    fun instruction(m: Macro): String = if (m.json.optString("collectionMode") == "event-invite") {
+        "Từ sảnh Liên Quân, tự đăng xuất/đăng nhập từng tài khoản sự kiện; vào Thập kỷ chung sức, làm sạch và nhập mã, ghi số quà thực nhận."
+    } else if (m.json.optString("collectionMode") == "chess") {
         (
             if (m.json.optBoolean("openGame")) {
                 "Bấm Chạy: app tự vào sảnh rồi Chế độ giải trí → Cờ Liên Quân → Trang chủ → Bách khoa."
