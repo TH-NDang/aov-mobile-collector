@@ -25,19 +25,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      # Branch-only formatting bootstrap; remove after it commits formatting.
-      - name: Format new warzone picker Kotlin in dedicated branch
-        if: github.ref == 'refs/heads/codex/fix-warzone-picker-full-roster'
-        run: |
-          set -euo pipefail
-          ./tools/ktlint --format
-          if ! git diff --quiet -- '*.kt' '*.kts'; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -u -- '*.kt' '*.kts'
-            git commit -m "style: ktlint warzone picker"
-            git push origin HEAD:refs/heads/codex/fix-warzone-picker-full-roster
-          fi
       - name: Check Kotlin formatting
         run: ./tools/ktlint
       - uses: android-actions/setup-android@v4
