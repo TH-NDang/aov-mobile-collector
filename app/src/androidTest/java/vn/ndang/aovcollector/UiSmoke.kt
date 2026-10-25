@@ -727,8 +727,16 @@ class UiSmoke : Instrumentation() {
             waitForIdleSync()
             val deleteOne = awaitCleanupCount(1)
             check(deleteOne.isEnabled) { "Cleanup selection did not enable deletion" }
-            val selectedPhoto = cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Chọn xóa ảnh nguồn") }
-                .first { it.contentDescription?.toString() == photoDescription && it.isChecked }
+            val checkedDeadline = SystemClock.uptimeMillis() + 10_000
+            var selectedPhoto: AccessibilityNodeInfo? = null
+            while (selectedPhoto == null && SystemClock.uptimeMillis() < checkedDeadline) {
+                selectedPhoto = cleanupNodes().flatMap { it.findAccessibilityNodeInfosByText("Chọn xóa ảnh nguồn") }
+                    .firstOrNull {
+                        it.refresh() && it.contentDescription?.toString() == photoDescription && it.isChecked
+                    }
+                if (selectedPhoto == null) SystemClock.sleep(100)
+            }
+            checkNotNull(selectedPhoto) { "Cleanup count reached 1 but the selected checkbox did not become checked" }
             check(selectedPhoto.performAction(AccessibilityNodeInfo.ACTION_CLICK))
             waitForIdleSync()
             val deleteUnselected = awaitCleanupCount(0)
