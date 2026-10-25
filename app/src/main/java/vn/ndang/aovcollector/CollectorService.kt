@@ -3065,9 +3065,13 @@ class CollectorService : AccessibilityService() {
                         moveTo((x * (b.width() - 1)).toFloat(), (y * (b.height() - 1)).toFloat())
                     }
                     val hold = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(point, 0, 850L)).build()
-                    // One short transaction, rather than flashing the panels after each gesture/scan.
-                    // The normal screenshot and tap leases still apply, including their settling delays.
+                    // Keep the overlay hidden during the fast gesture/confirmation burst,
+                    // but do not make Stop/Pause untouchable during long Pictures/OCR work.
+                    // Each grab()/touchGame() has its own short shield, so it remains safe
+                    // to release this outer lease if the transaction takes over 8 seconds.
                     val transaction = captureShield.acquire()
+                    val watchdog = NativeSaveWatchdog(SystemClock::uptimeMillis)
+                    var outerShieldReleased = false
                     var ended = false
                     var timeout: Runnable? = null
                     var resolving = false
@@ -3076,31 +3080,45 @@ class CollectorService : AccessibilityService() {
 
                     fun finishNative(result: NativeResult, reason: String? = null) {
                         if (ended) return
-                        if (result == NativeResult.FAILED && reason != null) note("Native Save Photo failed: $reason")
+                        if (result == NativeResult.FAILED && reason != null) {
+                            note("Native Save Photo failed: $reason")
+                        }
                         ended = true
                         timeout?.let { handler.removeCallbacks(it) }
                         captureShield.release(transaction)
-                        // Consecutive skill saves otherwise hide again in the same frame. Give Stop/Pause
-                        // a real visible, touchable interval between individual native images.
+                        // The reader's normal failure handler pauses with its full name/step,
+                        // AFTER this callback; do not forcibly pause before releasing shields.
                         if (currentRun()) handler.postDelayed({ if (currentRun()) then(result) }, 400L)
                     }
 
                     fun active(): Boolean {
                         if (ended) return false
-                        if (!currentRun() || !captureShield.contains(transaction)) {
+                        if (!currentRun() || (!outerShieldReleased && !captureShield.contains(transaction))) {
                             finishNative(NativeResult.FAILED)
                             return false
                         }
                         return true
                     }
-                    // A stalled OCR callback must not hide Stop/Pause for the whole chess run.
-                    timeout = Runnable {
-                        if (active()) {
-                            pause("Lưu ảnh gốc quá 15 giây. Kiểm tra Save Photo rồi bấm Tiếp tục.")
-                            finishNative(NativeResult.FAILED, "transaction timed out after 15 seconds")
+
+                    // Poll only the watchdog clock. Scheduling a timer never counts as progress.
+                    // Slow OCR/Pictures work may take >15 seconds but has a bounded idle and
+                    // absolute limit; if either expires, no long-press or Sure is retried.
+                    fun watch() {
+                        if (!active()) return
+                        val expired = watchdog.expired()
+                        if (expired != null) {
+                            finishNative(NativeResult.FAILED, watchdog.explain(expired))
+                            return
                         }
+                        if (!outerShieldReleased && watchdog.elapsedMs > 8_000L) {
+                            outerShieldReleased = true
+                            captureShield.release(transaction)
+                            screen.say("Cờ: đang đối chiếu ảnh gốc; nút Dừng/Tiếp tục vẫn dùng được")
+                        }
+                        handler.postDelayed(timeout!!, 1_500L)
                     }
-                    handler.postDelayed(timeout!!, 15_000L)
+                    timeout = Runnable { watch() }
+                    handler.postDelayed(timeout!!, 1_500L)
 
                     fun later(ms: Long, action: () -> Unit) {
                         handler.postDelayed({ if (active()) action() }, ms)
