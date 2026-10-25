@@ -3125,7 +3125,7 @@ class CollectorService : AccessibilityService() {
                     }
 
                     fun tapNative(x: Double, y: Double, done: (Boolean) -> Unit) {
-                        if (active()) touchGame(tapAt(x, y), true) { if (active()) done(it) }
+                        if (active()) touchGame(tapAt(x, y), true) { if (active()) { if (it) watchdog.advanced(NativeSaveWatchdog.Stage.SURE_PRESSED); done(it) } }
                     }
 
                     fun readPrompt(done: (Pair<List<GameScreens.Word>, NativeSaveEvidence.Scene>?) -> Unit) {
@@ -3175,6 +3175,7 @@ class CollectorService : AccessibilityService() {
                                     }
                                     handler.post {
                                         if (active()) {
+                                            watchdog.advanced(NativeSaveWatchdog.Stage.PROMPT_READ)
                                             lastScene = evidence?.second ?: NativeSaveEvidence.Scene.UNKNOWN
                                             lastReferenceUnchanged = referenceUnchanged
                                             done(evidence)
@@ -3193,6 +3194,7 @@ class CollectorService : AccessibilityService() {
                         if (attempt == null) return finishNative(result, reason)
                         if (!active() || resolving) return
                         resolving = true
+                        watchdog.advanced(NativeSaveWatchdog.Stage.INDEXING_PICTURES)
 
                         // Storage evidence is independent of OCR. Never repeat a gesture to obtain it.
                         fun reconcile(remaining: Int) {
@@ -3207,6 +3209,7 @@ class CollectorService : AccessibilityService() {
                                     }
                                     handler.post {
                                         if (!active()) return@post
+                                        watchdog.advanced(NativeSaveWatchdog.Stage.INDEXING_PICTURES)
                                         if (receipt?.status == GamePhotoSession.ReceiptStatus.RECEIPT) {
                                             GamePhotoSync.request(this@CollectorService)
                                             note("Đã xác minh ảnh gốc trong Pictures: " + item + "; không tải lại.")
@@ -3291,9 +3294,11 @@ class CollectorService : AccessibilityService() {
                     }
 
                     fun holdIcon() {
+                        watchdog.advanced(NativeSaveWatchdog.Stage.LONG_PRESS)
                         touchGame(hold, false) { pushed ->
                             if (!active()) return@touchGame
                             if (!pushed) return@touchGame complete(NativeResult.FAILED, "long-press rejected")
+                            watchdog.advanced(NativeSaveWatchdog.Stage.PROMPT_READ)
                             settledPrompt("after long-press", 1000, {
                                 ChessWiki.nativeConfirm(it.first) != null || preserveDetail && it.second == NativeSaveEvidence.Scene.DETAIL
                             }) { words, scene ->
@@ -3335,6 +3340,7 @@ class CollectorService : AccessibilityService() {
                                 } else {
                                     tapNative(answer.first, answer.second) { pressed ->
                                         if (!pressed) return@tapNative complete(NativeResult.FAILED, "Sure tap rejected")
+                                        watchdog.advanced(NativeSaveWatchdog.Stage.SURE_PRESSED)
                                         settledPrompt("after Sure", 1150, {
                                             it.second ==
                                                 if (preserveDetail) NativeSaveEvidence.Scene.DETAIL else NativeSaveEvidence.Scene.PAGE
@@ -3377,6 +3383,7 @@ class CollectorService : AccessibilityService() {
                                                         }
                                                         handler.post {
                                                             if (active()) {
+                                                                watchdog.advanced(NativeSaveWatchdog.Stage.VERIFYING_GAME)
                                                                 complete(
                                                                     if (marked) NativeResult.SAVED else NativeResult.FAILED,
                                                                     "save mark write failed"
@@ -3417,6 +3424,7 @@ class CollectorService : AccessibilityService() {
                                             handler.post {
                                                 if (active()) {
                                                     if (armed) {
+                                                        watchdog.advanced(NativeSaveWatchdog.Stage.LONG_PRESS)
                                                         holdIcon()
                                                     } else {
                                                         finishNative(
