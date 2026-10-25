@@ -44,25 +44,61 @@ object EventInviteScreens {
         needle in it.plain && it.x in left..right && it.y in top..bottom
     }
 
-    private fun used(words: List<GameScreens.Word>): Pair<Int, Int>? {
-        // GameScreens.plain strips the slash, so inspect the original OCR line FIRST.
-        // A daily-limit badge is not a reward count, and the player's bottom UID is ignored.
-        val original = words.filter { it.y in .46..0.76 }.joinToString(" ") { it.text }
-        val clean = words.filter { it.y in .46..0.76 }.joinToString("") { it.plain }
-        val raw = Regex("(\\d+)\\s*/\\s*(\\d+)").find(original)
-        val fallback = Regex("danhap([01])([1-9])(?:ma|$)").find(clean)
-        val first = (raw ?: fallback)?.groupValues?.get(1)?.toIntOrNull()
-        val second = (raw ?: fallback)?.groupValues?.get(2)?.toIntOrNull()
-        return if (first != null &&
-            second != null &&
-            second in 1..10 &&
-            first in 0..second &&
-            (clean.contains("danhap") || clean.contains("mamoi"))
-        ) {
-            first to second
-        } else {
-            null
+    /**
+     * Tiny 0/1 or 1/1 label of the "Hỗ trợ bạn bè" popup, centred near y=0.55.
+     * The game renders "Hôm nay đã nhập 0/1 mã" in small differently-coloured
+     * glyphs. Whole-screen half-resolution OCR may return:
+     *   "0/1", "0 / 1", "O/I", or "Hôm nay đã nhập" + "0" + "/" + "1".
+     *
+     * We accept only evidence in this narrow region of a VERIFIED invite modal.
+     * No other number anywhere on the event or game may control a submission.
+     */
+    fun isQuotaWord(word: GameScreens.Word): Boolean = word.x in 0.36..0.70 && word.y in 0.505..0.605
+
+    fun quota(words: List<GameScreens.Word>): Pair<Int, Int>? {
+        val lane = words.filter(::isQuotaWord)
+        if (lane.isEmpty()) return null
+
+        fun digit(char: Char): Int? = when (char) {
+            '0', 'O', 'o' -> 0
+            '1', 'I', 'i', 'l', 'L' -> 1
+            else -> null
         }
+
+        // Check each OCR line first: its layout is more reliable than the order in which
+        // ML Kit and accessibility visit their text blocks.
+        val ratio = Regex("""(?i)(?<!\d)([01oIlL])\s*[/／|:]\s*([1iIlL])(?=$|[^\d])""")
+
+        fun direct(text: String): List<Pair<Int, Int>> = ratio.findAll(text).mapNotNull {
+            val a = digit(it.groupValues[1][0])
+            val b = digit(it.groupValues[2][0])
+            if (a != null && b == 1) a to b else null
+        }.toList()
+
+        val fromLines = lane.flatMap { direct(it.text) }.distinct()
+        if (fromLines.size > 1) return null
+        if (fromLines.size == 1) return fromLines.single()
+
+        // Fragments may be separate OCR words: join them only if they lie on the
+        // same baseline, in physical left-to-right order.
+        val rows = mutableListOf<MutableList<GameScreens.Word>>()
+        for (word in lane.sortedWith(compareBy<GameScreens.Word> { it.y }.thenBy { it.x })) {
+            val row = rows.firstOrNull { kotlin.math.abs(it.first().y - word.y) < .017 }
+            if (row != null) row.add(word) else rows.add(mutableListOf(word))
+        }
+        val joined = rows.map { row -> row.sortedBy { it.x }.joinToString(" ") { it.text } }
+        val splitRatio = joined.flatMap(::direct).distinct()
+        if (splitRatio.size > 1) return null
+        if (splitRatio.size == 1) return splitRatio.single()
+
+        // ML Kit occasionally drops the slash. "01" alone is ambiguous, so a
+        // slashless value requires the explicit "đã nhập ... mã" sentence.
+        val compact = Regex("""danhap([01])1(?:ma|$)""")
+        val fromSentence = (lane.map { it.text } + joined).mapNotNull { text ->
+            val normalized = GameScreens.plain(text)
+            compact.find(normalized)?.groupValues?.get(1)?.toIntOrNull()?.let { it to 1 }
+        }.distinct()
+        return fromSentence.singleOrNull()
     }
 
     /** Only numbers in the central reward card can count as tickets. Never read the bottom UID. */
@@ -73,9 +109,10 @@ object EventInviteScreens {
         .firstOrNull()
 
     fun classify(words: List<GameScreens.Word>, isLobby: Boolean = false): Scene {
-        val day = used(words)
-
-        fun scene(kind: Kind, value: Int? = null) = Scene(kind, words, day?.first, day?.second, value)
+        fun scene(kind: Kind, value: Int? = null): Scene {
+            val day = if (kind == Kind.INVITE) quota(words) else null
+            return Scene(kind, words, day?.first, day?.second, value)
+        }
         val reward = includes(words, "chucmung") &&
             (includes(words, "nhanduoc") || includes(words, "bandanhanduoc"))
         val rewardTicket = includes(words, "venhay")

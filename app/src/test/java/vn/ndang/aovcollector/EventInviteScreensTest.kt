@@ -37,6 +37,60 @@ class EventInviteScreensTest {
         assertTrue(EventInviteScreens.dailyUsed(used))
     }
 
+    @Test fun realPopupQuotaSurvivesSplitAndConfusableOcr() {
+        val title = listOf(
+            word("Hỗ trợ bạn bè", .5, .25),
+            word("Nhấn để nhập mã mời", .51, .46),
+            word("Xác nhận", .50, .68)
+        )
+
+        // ML Kit often keeps the coloured 0/1 as an element separate from its caption.
+        val separated = title + listOf(
+            word("Hôm nay đã nhập", .47, .55),
+            word("0", .52, .55),
+            word("/", .54, .55),
+            word("1", .56, .55),
+            word("mã", .59, .55)
+        )
+        val split = EventInviteScreens.classify(separated)
+        assertEquals(EventInviteScreens.Kind.INVITE, split.kind)
+        assertEquals(0, split.used)
+        assertEquals(1, split.dailyLimit)
+
+        // Whole-screen downscaling may recognize the magenta zero as an "O"
+        // and the yellow one as an uppercase I or lowercase l.
+        for (raw in listOf("O/I", "0 / l", "O | 1", "0/1", "Hôm nay đã nhập 0/1 mã")) {
+            val recognized = EventInviteScreens.classify(title + word(raw, .54, .545))
+            assertEquals("Must read available quota: $raw", 0, recognized.used)
+            assertEquals(1, recognized.dailyLimit)
+        }
+        val consumed = EventInviteScreens.classify(title + word("Hôm nay đã nhập 1 / 1 mã", .52, .55))
+        assertEquals(1, consumed.used)
+        assertTrue(EventInviteScreens.dailyUsed(consumed))
+    }
+
+    @Test fun quotaParserDoesNotGuessWhenUncertainOrOutsideTheVerifiedStrip() {
+        val base = listOf(
+            word("Hỗ trợ bạn bè", .5, .25),
+            word("Nhấn để nhập mã mời", .51, .46),
+            word("Xác nhận", .50, .68)
+        )
+        assertNull(EventInviteScreens.quota(listOf(word("0/1", .2, .55))))
+        assertNull(EventInviteScreens.quota(listOf(word("0/1", .5, .85))))
+        assertNull(EventInviteScreens.classify(base + word("Hôm nay đã nhập mã", .5, .55)).used)
+        assertNull(EventInviteScreens.quota(listOf(word("0/1", .50, .55), word("1/1", .56, .55))))
+
+        // A "01" without a slash can be decoded only with its quota sentence.
+        assertNull(EventInviteScreens.quota(listOf(word("01", .53, .55))))
+        assertEquals(0, EventInviteScreens.quota(listOf(word("Hôm nay đã nhập 01 mã", .52, .55)))?.first)
+        assertEquals(1, EventInviteScreens.quota(listOf(word("Hôm nay đã nhập 11 mã", .52, .55)))?.first)
+
+        val unknown = EventInviteScreens.classify(base + word("1/1", .2, .55))
+        assertNull(unknown.used)
+        assertFalse(EventInviteScreens.dailyUsed(unknown))
+        assertNull(EventInviteScreens.classify(listOf(word("0/1", .51, .55))).used)
+    }
+
     @Test fun classifyRewardSeparatelyFromWelcomeGift() {
         val reward = EventInviteScreens.classify(
             listOf(

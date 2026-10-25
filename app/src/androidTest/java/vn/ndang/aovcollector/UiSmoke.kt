@@ -161,6 +161,58 @@ class UiSmoke : Instrumentation() {
             )
             val name = HeroNames.read(image)
             check(name != null && HeroNames.slug(name) == "elandorr") { "OCR returned $name" }
+
+            // Real user screenshots from 25/10/2026. Tiny pink/gold 0 and 1 are
+            // completely absent from ML Kit OCR even after 3x enlargement.
+            // These privacy-cropped strips contain NO UID, credentials or invite code.
+            fun checkRealQuota(asset: String, expected: Int) {
+                val compressed = context.assets.open(asset).bufferedReader().use {
+                    android.util.Base64.decode(it.readText().trim(), android.util.Base64.DEFAULT)
+                }
+                val strip = checkNotNull(BitmapFactory.decodeByteArray(compressed, 0, compressed.size)) {
+                    "Cannot decode real event quota pixel fixture: $asset"
+                }
+                val frame = Bitmap.createBitmap(1536, 691, Bitmap.Config.ARGB_8888)
+                Canvas(frame).apply {
+                    drawColor(Color.rgb(116, 83, 219))
+                    drawBitmap(strip, 663f, 358f, null)
+                }
+                strip.recycle()
+                val words = GameText.eventInviteQuota(frame)
+                val textQuota = EventInviteScreens.quota(words)
+                val caption = words.any { word ->
+                    EventInviteScreens.isQuotaWord(word) &&
+                        (word.plain.contains("homnay") || word.plain.contains("danhap"))
+                }
+                val pixelEvidence = if (caption) {
+                    EventInviteQuotaPixels.read(frame.width, frame.height) { x, y -> frame.getPixel(x, y) }
+                } else {
+                    null
+                }
+                frame.recycle()
+                val pixelQuota = pixelEvidence?.let { it.used to it.dailyLimit }
+                val decision = if (textQuota != null && pixelQuota != null && textQuota != pixelQuota) {
+                    null
+                } else {
+                    textQuota ?: pixelQuota
+                }
+                File(targetContext.filesDir, "smoke/event-invite-quota-$expected.txt").apply {
+                    parentFile?.mkdirs()
+                    writeText(
+                        "textQuota=$textQuota; pixelQuota=$pixelQuota; evidence=$pixelEvidence; final=$decision\n" +
+                            words.joinToString("\n") { word ->
+                                "%.3f %.3f %s".format(word.x, word.y, word.text)
+                            }
+                    )
+                }
+                check(decision == (expected to 1)) {
+                    "Real user image quota $expected/1 not verified: text=$textQuota; " +
+                        "pixels=$pixelEvidence; caption=$caption; words=" + words.map { it.text }
+                }
+            }
+
+            checkRealQuota("invite-quota-0of1.webp.b64", 0)
+            checkRealQuota("invite-quota-1of1.webp.b64", 1)
             // Qi's name region from a real run, where ML Kit read nothing.
             val qi = Bitmap.createBitmap(2400, 1080, Bitmap.Config.ARGB_8888)
             context.assets.open("qi-name.png").use { BitmapFactory.decodeStream(it) }.let {
@@ -1725,12 +1777,22 @@ class UiSmoke : Instrumentation() {
                     Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 )
             )
-            // Application Context.resources may keep its previous portrait Configuration when
-            // Android returns from an external clipboard receiver. The actual game-facing UI
-            // has already rotated; verify the *focused window* and screenshot geometry instead.
-            // This is stronger than trusting either a stale Context or a requested orientation.
-            waitFor("Collector did not show its own focused landscape window after pasting") {
-                automation.windows.any { window ->
+            // The external clipboard fixture uses the phone's natural portrait orientation.
+            // Returning to a multi-orientation app does NOT promise automatic landscape.
+            // This smoke suite needs landscape again to exercise a large game screenshot,
+            // so explicitly request it from the same Activity under test. A request alone
+            // is NOT proof: also require the focused window AND physical screenshot to
+            // become landscape before continuing.
+            runOnMainSync {
+                check(!activity.isDestroyed && !activity.isFinishing) {
+                    "The original collector Activity was destroyed during clipboard handoff"
+                }
+                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            }
+            var actualWidth = 0
+            var actualHeight = 0
+            waitFor("Collector did not restore a focused landscape display after clipboard handoff") {
+                val ownWindow = automation.windows.any { window ->
                     if (window.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION ||
                         !window.isFocused ||
                         window.root?.packageName?.toString() != targetContext.packageName
@@ -1742,21 +1804,28 @@ class UiSmoke : Instrumentation() {
                         actual.width() > actual.height() && actual.width() > 0
                     }
                 }
-            }
-            checkNotNull(automation.takeScreenshot()) { "No display screenshot after returning from clipboard app" }.let { shot ->
-                try {
-                    check(shot.width > shot.height) {
-                        "Physical display stayed portrait after pasting: ${shot.width}x${shot.height}"
+                if (!ownWindow) {
+                    false
+                } else {
+                    val shot = automation.takeScreenshot()
+                    if (shot == null) {
+                        false
+                    } else {
+                        try {
+                            actualWidth = shot.width
+                            actualHeight = shot.height
+                            shot.width > shot.height
+                        } finally {
+                            shot.recycle()
+                        }
                     }
-                    File(targetContext.filesDir, "smoke/clipboard-landscape.txt").writeText(
-                        "Screen=${shot.width}x${shot.height}; " +
-                            "contextOrientation=${targetContext.resources.configuration.orientation}; " +
-                            "actual focused AOV window is landscape"
-                    )
-                } finally {
-                    shot.recycle()
                 }
             }
+            File(targetContext.filesDir, "smoke/clipboard-landscape.txt").writeText(
+                "Physical=${actualWidth}x$actualHeight; " +
+                    "contextOrientation=${targetContext.resources.configuration.orientation}; " +
+                    "requested=${activity.requestedOrientation}; focused collector window landscape=true"
+            )
             waitForIdleSync()
             SystemClock.sleep(500)
             // The receiving app can rotate the device; rotation intentionally closes the large preview.

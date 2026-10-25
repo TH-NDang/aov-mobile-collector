@@ -44,6 +44,79 @@ object GameText {
     fun rankingHeader(screen: Bitmap) =
         rankingCrop(screen, RankScreens.LINK_LEFT, RankScreens.LINK_TOP, RankScreens.LINK_RIGHT, RankScreens.LINK_BOTTOM)
 
+    /**
+     * Native-resolution recovery for the small "Hôm nay đã nhập 0/1 mã" text.
+     * Called ONLY after whole-screen OCR has verified an "Hỗ trợ bạn bè" modal.
+     * Crops the quota line rather than scanning player UID or the user's stored code.
+     *
+     * First try 3x enlarged colour pixels; if its ratio is unresolved, retry with
+     * a high-contrast mask preserving both white label text and pink/yellow digits.
+     */
+    fun eventInviteQuota(screen: Bitmap): List<GameScreens.Word> {
+        if (screen.width <= screen.height) return emptyList()
+        val x0 = (screen.width * .375).toInt()
+        val y0 = (screen.height * .497).toInt()
+        val x1 = (screen.width * .670).toInt()
+        val y1 = (screen.height * .612).toInt()
+        val width = x1 - x0
+        val height = y1 - y0
+        if (width <= 0 || height <= 0) return emptyList()
+        val crop = Bitmap.createBitmap(screen, x0, y0, width, height)
+
+        fun read(source: Bitmap): List<GameScreens.Word> {
+            val scale = 3
+            val enlarged = Bitmap.createScaledBitmap(source, width * scale, height * scale, true)
+            val text = ocr(enlarged) ?: return emptyList()
+
+            fun located(value: String, box: android.graphics.Rect) = GameScreens.Word(
+                value,
+                (x0 + box.left.toDouble() / scale) / screen.width,
+                (y0 + box.top.toDouble() / scale) / screen.height,
+                (x0 + box.right.toDouble() / scale) / screen.width,
+                (y0 + box.bottom.toDouble() / scale) / screen.height
+            )
+            return text.textBlocks.flatMap { it.lines }.flatMap { line ->
+                buildList {
+                    line.boundingBox?.let { add(located(line.text, it)) }
+                    line.elements.forEach { element ->
+                        element.boundingBox?.let { add(located(element.text, it)) }
+                    }
+                }
+            }
+        }
+
+        return try {
+            val normal = read(crop)
+            if (EventInviteScreens.quota(normal) != null) {
+                normal
+            } else {
+                // The purple modal and its white and orange/pink lettering have similar
+                // luminance after resizing. Use hue as well as brightness: only
+                // letter-shaped pixels that are light, white, or red-gold become ink.
+                val pixels = IntArray(width * height)
+                crop.getPixels(pixels, 0, width, 0, 0, width, height)
+                val ink = IntArray(pixels.size) { i ->
+                    val r = Color.red(pixels[i])
+                    val g = Color.green(pixels[i])
+                    val b = Color.blue(pixels[i])
+                    val letter = r > 155 && (r - b >= 25 || (g > 120 && r * 100 >= b * 88))
+                    if (letter) Color.BLACK else Color.WHITE
+                }
+                val contrasted = Bitmap.createBitmap(ink, width, height, Bitmap.Config.ARGB_8888)
+                try {
+                    val cleaned = read(contrasted)
+                    // Do not let a spurious low-resolution first pass override a
+                    // newly resolved quota. A conflict still fails closed in quota().
+                    if (EventInviteScreens.quota(cleaned) != null) cleaned else normal + cleaned
+                } finally {
+                    contrasted.recycle()
+                }
+            }
+        } finally {
+            crop.recycle()
+        }
+    }
+
     private fun rankingCrop(screen: Bitmap, left: Double, top: Double, right: Double, bottom: Double): List<GameScreens.Word> {
         if (screen.width <= screen.height) return emptyList()
         val x0 = (screen.width * left).toInt()
