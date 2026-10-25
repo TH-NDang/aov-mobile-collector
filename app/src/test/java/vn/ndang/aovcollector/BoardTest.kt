@@ -235,7 +235,9 @@ class BoardTest {
         val ownedHeroes: Int = 14,
         val ignoreFilterTaps: Boolean = false,
         val ownedOnReopen: Boolean = false,
-        val ignorePickerTaps: Boolean = false
+        val ignorePickerTaps: Boolean = false,
+        var allSelected: Boolean = true,
+        val reselectOtherTab: Boolean = false
     ) : BoardReader.Screen {
         var looks = 0
         var outcome: BoardReader.Outcome? = null
@@ -247,6 +249,7 @@ class BoardTest {
         val pending = ArrayDeque<() -> Unit>()
         var filterTaps = 0
         var gridDrags = 0
+        var allTaps = 0
         override val alive get() = outcome == null && looks < cut
 
         // The season's review: its screens in turn, the trailer showing no words.
@@ -346,6 +349,40 @@ class BoardTest {
 
         private fun rowAt(y: Double) = floor((y - rowZero + gridScroll) / BoardScreens.ROW_PITCH).toInt()
 
+        /**
+         * Different heroes have different RGB artwork, even though every card's border and
+         * vertical pitch are identical. A profile made only from row geometry would repeat.
+         * This synthetic scrollable artwork shifts by the ACTUAL clamped gridScroll.
+         */
+        private fun portraits(): FloatArray {
+            val h = 540
+            val y0 = (BoardScreens.VIEW_TOP * h).toInt()
+            val y1 = (BoardScreens.VIEW_BOTTOM * h).toInt()
+            val out = FloatArray((y1 - y0) * 15)
+            for (y in y0 until y1) {
+                val world = y + gridScroll * h
+                val relative = world - rowZero * h
+                val rowId = floor(relative / (BoardScreens.ROW_PITCH * h)).toInt()
+                val local = relative - rowId * BoardScreens.ROW_PITCH * h
+                for (col in 0..4) {
+                    val portrait = rowId >= 0 && rowId < rowCount &&
+                        rowId * 8 + col < visibleHeroes &&
+                        local >= 0.0 && local < BoardScreens.CARD * h
+                    for (channel in 0..2) {
+                        val at = (y - y0) * 15 + col * 3 + channel
+                        out[at] = if (!portrait) {
+                            43.0f + channel * 6
+                        } else {
+                            val seed = (rowId * 53 + col * 83 + channel * 41) % 125
+                            (65.0 + seed + 18.0 * kotlin.math.sin(local / 13 + col + channel) +
+                                7.0 * kotlin.math.cos(local / 23 + channel)).toFloat()
+                        }
+                    }
+                }
+            }
+            return out
+        }
+
         override fun look(words: Boolean, grid: Boolean, then: (BoardReader.Look?) -> Unit) {
             looks++
             val shown = if (words) words() else emptyList()
@@ -357,6 +394,9 @@ class BoardTest {
                 override val signature = signature
                 override val rows = bands
                 override val ownedFilter = if (page == Page.PICKER) owned?.let { BoardScreens.OwnedFilter(it, .814, .229) } else null
+                override val allSelected = page == Page.PICKER && this@Game.allSelected
+                override val pickerProfile = if (page == Page.PICKER) portraits() else FloatArray(0)
+                override val pickerHeight = 540
 
                 override fun card(col: Int, top: Double, bottom: Double) = rowAt((top + bottom) / 2) * 8 + col < visibleHeroes
 
@@ -407,9 +447,9 @@ class BoardTest {
                     abs(x - BoardScreens.SWAP_X) < .01 && abs(y - BoardScreens.SWAP_Y) < .01 -> if (!ignorePickerTaps) {
                         page = Page.PICKER
                         if (ownedOnReopen) {
-                            owned =
-                                true
+                            owned = true
                         }
+                        if (reselectOtherTab) allSelected = false
                     }
                     abs(y - BoardScreens.TAB_Y) < .01 -> {
                         tab = Tab.values().indexOfFirst { abs(it.x - x) < .01 }
@@ -427,6 +467,11 @@ class BoardTest {
                     }
                 }
                 Page.PICKER -> when {
+                    abs(x - .215) < .02 && abs(y - .227) < .02 -> {
+                        allSelected = true
+                        allTaps++
+                        gridScroll = 0.0
+                    }
                     abs(x - BoardScreens.PICKER_CLOSE_X) < .01 && abs(y - BoardScreens.PICKER_CLOSE_Y) < .01 -> page = Page.BOARD
                     abs(x - .814) < .01 && abs(y - .229) < .01 -> {
                         filterTaps++
