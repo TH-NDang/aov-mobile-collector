@@ -40,6 +40,27 @@ internal object EventInviteImePolicy {
         gameWindowBehind &&
         !focusedForeignApp
 
+    data class EditorWindow(val index: Int, val packageName: String, val inputMethod: Boolean, val focused: Boolean, val nodes: List<Node>)
+
+    fun editorWindow(windows: List<EditorWindow>, imePackage: String, gamePackage: String): Int? {
+        val candidates = windows.filter { window ->
+            val editor = editor(window.nodes)?.let { index -> window.nodes.first { it.index == index } }
+                ?: return@filter false
+            if (window.inputMethod) {
+                window.packageName == imePackage
+            } else {
+                val ok = okButton(window.nodes)?.let { index -> window.nodes.first { it.index == index } }
+                window.packageName == gamePackage &&
+                    window.focused &&
+                    editor.focused &&
+                    ok != null &&
+                    editor.right <= ok.left + .02 &&
+                    kotlin.math.abs(editor.centerY - ok.centerY) <= .06
+            }
+        }
+        return candidates.singleOrNull()?.index
+    }
+
     fun editor(nodes: List<Node>): Int? {
         val possible = nodes.filter {
             it.visible &&

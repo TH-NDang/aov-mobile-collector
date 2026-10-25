@@ -16,8 +16,8 @@ import android.view.accessibility.AccessibilityWindowInfo
  * Completes Unity's native landscape input flow:
  * game popup -> Android fullscreen IME extract editor -> IME "OK" -> game popup.
  *
- * Important: the white editor ABOVE the keyboard belongs to the currently
- * selected IME, not necessarily to the game or to rootInActiveWindow. It may
+ * The white editor ABOVE the keys can belong to either the selected IME
+ * or Unity's focused native dialog; each owner is verified separately. It may
  * appear well after the game tap and the game's confirm button is still visible
  * behind it. No global Back and no game "Xác nhận" gesture are sent here.
  */
@@ -28,6 +28,8 @@ internal class EventInviteImeInput(
     private val code: String,
     private val active: () -> Boolean,
     private val open: ((Boolean) -> Unit) -> Unit,
+    private val holdInputShield: () -> (() -> Unit),
+    private val prepareInput: (() -> Unit) -> Unit,
     private val visualOk: ((Pair<Double, Double>?) -> Unit) -> Unit,
     private val verifyGameCode: ((Boolean) -> Unit) -> Unit,
     private val finish: (Boolean, String?) -> Unit
@@ -48,7 +50,7 @@ internal class EventInviteImeInput(
         val metadata: List<EventInviteImePolicy.Node>,
         val editorIndex: Int?,
         val okIndex: Int?,
-        val keyboard: AccessibilityWindowInfo,
+        val owner: AccessibilityWindowInfo,
         val packageName: String
     ) {
         val editor get() = editorIndex?.let(nodes::get)
@@ -64,7 +66,7 @@ internal class EventInviteImeInput(
     private fun valid(): Boolean = !finished && active()
 
     private fun later(ms: Long, then: () -> Unit) {
-        handler.postDelayed({ if (valid()) then() }, ms)
+        handler.postDelayed({ if (valid()) prepareInput { if (valid()) then() } }, ms)
     }
 
     fun start() {
@@ -95,7 +97,7 @@ internal class EventInviteImeInput(
         return result
     }
 
-    /** Finds ONLY the active keyboard's TYPE_INPUT_METHOD window, not a foreign app's edit box. */
+    /** Unity may own the native input dialog while the selected IME owns only the keys. */
     private fun keyboardFrame(): Frame? {
         val windows = try {
             service.windows.orEmpty()
@@ -126,32 +128,51 @@ internal class EventInviteImeInput(
         }
         val bounds = windowManager.maximumWindowMetrics.bounds
         if (bounds.width() < 500 || bounds.height() < 300 || bounds.width() <= bounds.height()) return null
-        val nodes = collectNodes(root)
-        val meta = nodes.mapIndexed { index, node ->
-            val rect = Rect()
-            node.getBoundsInScreen(rect)
-            EventInviteImePolicy.Node(
-                index = index,
-                label = (node.text ?: node.contentDescription)?.toString().orEmpty(),
-                className = node.className?.toString().orEmpty(),
-                editable = node.isEditable,
-                password = node.isPassword,
-                focused = node.isFocused,
-                visible = node.isVisibleToUser,
-                enabled = node.isEnabled,
-                left = rect.left.toDouble() / bounds.width(),
-                top = rect.top.toDouble() / bounds.height(),
-                right = rect.right.toDouble() / bounds.width(),
-                bottom = rect.bottom.toDouble() / bounds.height()
+        val owners = windows.filter {
+            it.id == ime.id ||
+                (it.type == AccessibilityWindowInfo.TYPE_APPLICATION && it.root?.packageName?.toString() == gamePackage)
+        }
+        val collected = owners.map { owner ->
+            owner.root?.let(::collectNodes).orEmpty()
+        }
+        val candidates = owners.mapIndexed { index, owner ->
+            EventInviteImePolicy.EditorWindow(
+                index,
+                owner.root?.packageName?.toString().orEmpty(),
+                owner.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD,
+                owner.isFocused,
+                nodeMetadata(collected[index], bounds)
             )
         }
+        val selected = EventInviteImePolicy.editorWindow(candidates, actualPackage, gamePackage)
+            ?: return null
+        val meta = candidates[selected].nodes
         return Frame(
-            nodes,
+            collected[selected],
             meta,
             EventInviteImePolicy.editor(meta),
             EventInviteImePolicy.okButton(meta),
-            ime,
-            actualPackage
+            owners[selected],
+            candidates[selected].packageName
+        )
+    }
+
+    private fun nodeMetadata(nodes: List<AccessibilityNodeInfo>, bounds: Rect) = nodes.mapIndexed { index, node ->
+        val rect = Rect()
+        node.getBoundsInScreen(rect)
+        EventInviteImePolicy.Node(
+            index = index,
+            label = (node.text ?: node.contentDescription)?.toString().orEmpty(),
+            className = node.className?.toString().orEmpty(),
+            editable = node.isEditable,
+            password = node.isPassword,
+            focused = node.isFocused,
+            visible = node.isVisibleToUser,
+            enabled = node.isEnabled,
+            left = (rect.left - bounds.left).toDouble() / bounds.width(),
+            top = (rect.top - bounds.top).toDouble() / bounds.height(),
+            right = (rect.right - bounds.left).toDouble() / bounds.width(),
+            bottom = (rect.bottom - bounds.top).toDouble() / bounds.height()
         )
     }
 
@@ -164,7 +185,7 @@ internal class EventInviteImeInput(
             stableEditor = 0
         }
         if (retries >= 20 || SystemClock.uptimeMillis() - began > 14_000) {
-            return done(false, "Bàn phím đã mở nhưng không tìm thấy thanh nhập trắng phía trên; chưa nhập mã")
+            return done(false, "Không xác minh được ô nhập phía trên bàn phím trong cửa sổ game hoặc bàn phím; chưa nhập mã")
         }
         later(380) { awaitEditor(retries + 1) }
     }
@@ -255,8 +276,8 @@ internal class EventInviteImeInput(
             target?.getBoundsInScreen(area)
             val display = windowManager.maximumWindowMetrics.bounds
             val safeParent = target != null &&
-                area.centerX().toDouble() / display.width() in 0.77..0.985 &&
-                area.centerY().toDouble() / display.height() in 0.08..0.51
+                (area.centerX() - display.left).toDouble() / display.width() in 0.77..0.985 &&
+                (area.centerY() - display.top).toDouble() / display.height() in 0.08..0.51
             if (safeParent &&
                 target?.isEnabled == true &&
                 target.isVisibleToUser &&
@@ -278,7 +299,7 @@ internal class EventInviteImeInput(
             if (point == null || updated?.editor?.text?.toString() != code) {
                 done(false, "Không xác nhận được nút OK của bàn phím; mã chưa được gửi vào game")
             } else {
-                tapVerifiedImeOk(point.first, point.second)
+                prepareInput { if (valid()) tapVerifiedImeOk(point.first, point.second) }
             }
         }
     }
@@ -307,12 +328,12 @@ internal class EventInviteImeInput(
             return done(false, "Không thấy nút OK đúng vị trí trên thanh bàn phím")
         }
         val rect = Rect()
-        frame.keyboard.getBoundsInScreen(rect)
+        frame.owner.getBoundsInScreen(rect)
         val display = windowManager.maximumWindowMetrics.bounds
-        val px = (display.width() * x).toFloat()
-        val py = (display.height() * y).toFloat()
+        val px = (display.left + display.width() * x).toFloat()
+        val py = (display.top + display.height() * y).toFloat()
         if (!rect.contains(px.toInt(), py.toInt())) {
-            return done(false, "Nút OK nằm ngoài vùng của bàn phím đã xác minh")
+            return done(false, "Nút OK nằm ngoài cửa sổ nhập mã đã xác minh")
         }
         val gesture = GestureDescription.Builder().addStroke(
             GestureDescription.StrokeDescription(
@@ -321,20 +342,43 @@ internal class EventInviteImeInput(
                 90
             )
         ).build()
+        val release = holdInputShield()
+        var completed = false
+        val timeout = Runnable {
+            if (!completed) {
+                completed = true
+                release()
+                if (valid()) done(false, "Chưa xác minh được thao tác OK đã kết thúc; không tự bấm lại")
+            }
+        }
+        handler.postDelayed(timeout, 3_000L)
+
+        fun finishGesture(ok: Boolean) {
+            if (completed) return
+            completed = true
+            handler.removeCallbacks(timeout)
+            release()
+            if (!valid()) return
+            if (ok) {
+                later(650) { awaitKeyboardClosed(0) }
+            } else {
+                done(false, "Android hủy cú chạm OK của bàn phím")
+            }
+        }
         val sent = service.dispatchGesture(
             gesture,
             object : AccessibilityService.GestureResultCallback() {
                 override fun onCompleted(gestureDescription: GestureDescription?) {
-                    later(650) { awaitKeyboardClosed(0) }
+                    finishGesture(true)
                 }
 
                 override fun onCancelled(gestureDescription: GestureDescription?) {
-                    done(false, "Android hủy cú chạm OK của bàn phím")
+                    finishGesture(false)
                 }
             },
             handler
         )
-        if (!sent) done(false, "Android không nhận thao tác nhấn OK của bàn phím")
+        if (!sent) finishGesture(false)
     }
 
     private fun awaitKeyboardClosed(retries: Int) {

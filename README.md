@@ -1,4 +1,8 @@
-# AOV Mobile Collector — v0.13.20
+# AOV Mobile Collector — v0.13.28
+
+## v0.13.28: nhận đúng cửa sổ nhập mã mời
+
+Luồng nhập mã nhận cả thanh nhập do bàn phím quản lý và hộp nhập native do Unity/game quản lý. Nhánh game phải có ô đang nhận tiêu điểm và nút OK cùng cửa sổ, đúng vị trí; cửa sổ bàn phím đang chọn vẫn phải được xác minh. Bảng nổi được ẩn trong các đoạn đọc/ghi ngắn và tới khi thao tác OK kết thúc, không ẩn toàn bộ lượt chờ. Giữ xóa sạch mã cũ, đọc lại mã mới và xác minh bàn phím đóng trước khi gửi trong game. Xem [phạm vi kiểm thử và giới hạn](docs/INVITATION_INPUT.md).
 
 ## v0.13.20: đọc lại phần chồng lặp Pro có kiểm chứng
 

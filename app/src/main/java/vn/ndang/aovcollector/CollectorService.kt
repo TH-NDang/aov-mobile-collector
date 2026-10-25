@@ -2654,10 +2654,8 @@ class CollectorService : AccessibilityService() {
                     return then(false, "Chưa xác minh được màn hình game trước khi mở bàn phím nhập mã")
                 }
 
-                // The Android landscape IME shows a WHITE extract editor ABOVE its keys.
-                // It belongs to the selected keyboard package, not necessarily to the game.
-                // Keep the foreign-window watcher inactive only for this bounded input flow;
-                // every write is still restricted to a verified TYPE_INPUT_METHOD window.
+                // The native editor may belong to Unity or the selected IME.
+                // The input adapter verifies both owners while this watcher is suspended.
                 entering = true
                 val input = EventInviteImeInput(
                     service = this@CollectorService,
@@ -2667,6 +2665,21 @@ class CollectorService : AccessibilityService() {
                     active = { alive },
                     open = { cb ->
                         touchGame(tapAt(.506, .464), true, cb)
+                    },
+                    holdInputShield = {
+                        val lease = captureShield.acquire()
+                        val release: () -> Unit = { captureShield.release(lease) }
+                        release
+                    },
+                    prepareInput = { action ->
+                        val lease = captureShield.acquire()
+                        handler.postDelayed({
+                            try {
+                                if (alive && captureShield.contains(lease)) action()
+                            } finally {
+                                captureShield.release(lease)
+                            }
+                        }, 240L)
                     },
                     visualOk = { cb ->
                         // Some OEM IMEs draw OK on a Canvas without an accessible button.

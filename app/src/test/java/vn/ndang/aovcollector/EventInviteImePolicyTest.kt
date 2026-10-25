@@ -89,6 +89,55 @@ class EventInviteImePolicyTest {
         assertNull(EventInviteImePolicy.okButton(unrelatedButtons))
     }
 
+    private fun window(
+        id: Int,
+        owner: String = "game",
+        ime: Boolean = false,
+        focused: Boolean = true,
+        nodes: List<EventInviteImePolicy.Node> = nativeDialog()
+    ) = EventInviteImePolicy.EditorWindow(id, owner, ime, focused, nodes)
+
+    private fun nativeDialog() = listOf(
+        node(0, className = "android.widget.EditText", editable = true, focused = true, left = .04, right = .82),
+        node(1, "OK", left = .86, right = .93)
+    )
+
+    @Test fun unityOwnsEditorWhileSelectedKeyboardOwnsOnlyKeys() {
+        val keyboard = window(0, "keyboard", ime = true, nodes = listOf(node(0, "q", top = .62, bottom = .74)))
+        assertEquals(1, EventInviteImePolicy.editorWindow(listOf(keyboard, window(1)), "keyboard", "game"))
+    }
+
+    @Test fun selectedImeExtractEditorRemainsSupported() {
+        val keyboard = window(0, "keyboard", ime = true, nodes = nativeDialog().take(1))
+        val game = window(1, nodes = emptyList())
+        assertEquals(0, EventInviteImePolicy.editorWindow(listOf(keyboard, game), "keyboard", "game"))
+    }
+
+    @Test fun rejectForeignUnfocusedUnpairedAndMisalignedGameEditors() {
+        for (candidate in listOf(
+            window(0, owner = "foreign"),
+            window(0, focused = false),
+            window(0, nodes = nativeDialog().take(1)),
+            window(0, nodes = listOf(nativeDialog()[0], node(1, "OK", left = .86, right = .93, top = .44, bottom = .50))),
+            window(0, nodes = listOf(nativeDialog()[0].copy(focused = false), nativeDialog()[1])),
+            window(0, "foreign", ime = true)
+        )) {
+            assertNull(EventInviteImePolicy.editorWindow(listOf(candidate), "keyboard", "game"))
+        }
+    }
+
+    @Test fun ambiguousOwnersAndRootlessWindowsNeverAuthorizeInput() {
+        assertNull(EventInviteImePolicy.editorWindow(listOf(window(0), window(1)), "keyboard", "game"))
+        assertNull(EventInviteImePolicy.editorWindow(listOf(window(0, nodes = emptyList())), "keyboard", "game"))
+        assertNull(
+            EventInviteImePolicy.editorWindow(
+                listOf(window(0), window(1, "keyboard", ime = true)),
+                "keyboard",
+                "game"
+            )
+        )
+    }
+
     @Test fun anImeStillOpenCanNeverAuthorizeGameSubmit() {
         assertFalse(EventInviteImePolicy.gameReady(true, true, true))
         assertFalse(EventInviteImePolicy.gameReady(false, false, true))
