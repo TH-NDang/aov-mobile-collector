@@ -138,10 +138,19 @@ class EventInviteRunner(
             return
         }
         if (ledger.optString("phase") == "submit_pending") {
-            // The button may already have succeeded while the app was killed. Do NOT log out,
-            // log in again or press Xác nhận until its result is reconciled on this very screen.
+            // A legacy run may have saved submit_pending even though it was
+            // interacting with the IME's extract editor instead of game confirm.
+            // Never silently reset/retry that irreversible checkpoint.
+            if (ledger.optString("imeVerifiedFor") != keys[accountIndex]) {
+                return stop(
+                    "Lượt cũ ghi submit_pending nhưng chưa có bằng chứng đã bấm OK bàn phím. " +
+                        "Hãy kiểm tra thủ công 0/1 hay 1/1 trong game; nếu chưa gửi mã, " +
+                        "chọn Dừng rồi Tạo lượt mới. Không tự nhập lại mã."
+                )
+            }
+            // The button may already have succeeded while the app was killed.
             submittedThisSession = true
-            note("Đang kiểm tra lượt nhập mã gián đoạn, không nhập lại")
+            note("Đang kiểm tra lượt xác nhận gián đoạn, không nhập lại")
             inspectSubmission(0)
         } else {
             startAccount()
@@ -174,6 +183,7 @@ class EventInviteRunner(
         bonusPending = false
         navigating = false
         submittedThisSession = false
+        ledger.remove("imeVerifiedFor")
         ledger.put("active", keys[accountIndex]).put("phase", "login")
         if (!save()) return
         note("Đang đăng xuất tài khoản cũ và đăng nhập Garena")
@@ -296,8 +306,11 @@ class EventInviteRunner(
                     reason ?: "Chưa nhập được mã qua thanh trắng của bàn phím; chưa bấm Xác nhận"
                 )
             }
-            // The IME action can finish asynchronously; wait for the game
-            // to settle before locating its separate yellow Xác nhận button.
+            // Durable marker proves keyboard OK was verified and the exact
+            // code appeared in the game. A crash before game confirmation must
+            // still never be confused with a completed reward.
+            ledger.put("imeVerifiedFor", keys[accountIndex])
+            if (!save()) return@typeInviteCode
             after(1050) { confirmInvite(0) }
         }
     }
@@ -316,6 +329,9 @@ class EventInviteRunner(
             }
             val confirm = EventInviteScreens.confirmation(scene)
             if (confirm == null) return@look after(700) { confirmInvite(recheck + 1) }
+            if (ledger.optString("imeVerifiedFor") != keys[accountIndex]) {
+                return@look stop("Thiếu bằng chứng bấm OK trên bàn phím; không gửi mã vào sự kiện")
+            }
             // Commit BEFORE the irreversible confirmation. If process dies, inspect; never repeat.
             ledger.put("phase", "submit_pending")
             if (!save()) return@look
