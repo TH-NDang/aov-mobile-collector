@@ -2556,7 +2556,41 @@ class CollectorService : AccessibilityService() {
                                     bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
                                 }
                                 val words = hierarchy + GameText.words(bitmap)
-                                EventInviteScreens.classify(words, pixels.kind == GameScreens.Kind.LOBBY)
+                                val first = EventInviteScreens.classify(words, pixels.kind == GameScreens.Kind.LOBBY)
+                                if (first.kind != EventInviteScreens.Kind.INVITE) {
+                                    first
+                                } else {
+                                    // Full-screen OCR is half-sized and the 0/1 label is tiny.
+                                    // Re-read ONLY the quota band from this SAME verified modal,
+                                    // at native resolution with a colour-aware contrast fallback.
+                                    val focused = GameText.eventInviteQuota(bitmap)
+                                    val freshQuota = EventInviteScreens.quota(focused)
+                                    val firstQuota = if (first.used != null && first.dailyLimit != null) {
+                                        first.used to first.dailyLimit
+                                    } else {
+                                        null
+                                    }
+                                    when {
+                                        focused.isEmpty() -> first
+                                        freshQuota != null && firstQuota != null && freshQuota != firstQuota -> {
+                                            // Conflicting observations: never submit, or skip an
+                                            // account as "1/1", until another clear frame exists.
+                                            first.copy(
+                                                words = words + focused,
+                                                used = null,
+                                                dailyLimit = null
+                                            )
+                                        }
+                                        freshQuota != null -> {
+                                            // Drop the small original OCR fragments, which can
+                                            // duplicate or scramble the same quota text.
+                                            EventInviteScreens.classify(
+                                                words.filterNot(EventInviteScreens::isQuotaWord) + focused
+                                            )
+                                        }
+                                        else -> EventInviteScreens.classify(words + focused)
+                                    }
+                                }
                             } catch (e: Throwable) {
                                 CrashLog.record(this@CollectorService, "Không đọc được popup sự kiện", e)
                                 null
