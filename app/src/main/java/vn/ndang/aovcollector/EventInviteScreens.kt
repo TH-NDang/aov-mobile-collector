@@ -219,6 +219,7 @@ object EventInviteLedger {
         journal.put("tickets", journal.getInt("tickets") + tickets)
         journal.put("next", journal.getInt("next") + 1)
         journal.put("phase", "pending")
+        journal.remove("imeVerifiedFor")
         journal.remove("active")
         journal.put("complete", journal.getInt("next") == journal.getJSONArray("accounts").length())
     }
