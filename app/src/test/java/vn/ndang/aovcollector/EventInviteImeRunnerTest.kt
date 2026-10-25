@@ -75,7 +75,7 @@ class EventInviteImeRunnerTest {
     }
 
     private val key = "a".repeat(64)
-    private val code = "PnkpMF8ugv"
+    private val code = "ExampleCode91"
 
     @Test fun keyboardFailureCannotCreateSubmittedCheckpointOrSendAnyGameConfirm() {
         val fake = Fake(false)
