@@ -2649,86 +2649,98 @@ class CollectorService : AccessibilityService() {
                 touchGame(tapAt(x, y), true, then)
             }
 
-            override fun typeInviteCode(code: String, then: (Boolean) -> Unit) {
-                if (!alive ||
-                    foreground() != GAME ||
-                    !EventInviteAccounts.validCode(code)
-                ) {
-                    then(false)
-                    return
+            override fun typeInviteCode(code: String, then: (Boolean, String?) -> Unit) {
+                if (!alive || foreground() != GAME || !EventInviteAccounts.validCode(code)) {
+                    return then(false, "Chưa xác minh được màn hình game trước khi mở bàn phím nhập mã")
                 }
-                // Only here, after a freshly recognized "Hỗ trợ bạn bè" popup,
-                // is the code-entry box allowed to receive focus.
-                touchGame(tapAt(.506, .464), true) { focused ->
-                    if (!alive || !focused) return@touchGame then(false)
-                    handler.postDelayed({
-                        if (!alive) return@postDelayed then(false)
-                        val root = try {
-                            rootInActiveWindow
-                        } catch (_: Exception) {
-                            null
-                        }
-                        if (root == null || root.packageName == packageName) {
-                            then(false)
-                            return@postDelayed
-                        }
-                        val bounds = screen()
-                        val editable = nodes(root).filter { it.isEditable && !it.isPassword }
-                        val field = editable.filter { node ->
-                            val b = android.graphics.Rect()
-                            node.getBoundsInScreen(b)
-                            val x = b.centerX().toDouble() / bounds.width()
-                            val y = b.centerY().toDouble() / bounds.height()
-                            x in .30..0.73 && y in .27..0.70
-                        }.singleOrNull() ?: editable.singleOrNull()
-                        if (field == null) {
-                            then(false)
-                            return@postDelayed
-                        }
 
-                        fun write(value: String): Boolean {
-                            val args = android.os.Bundle().apply {
-                                putCharSequence(
-                                    android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                                    value
-                                )
+                // The Android landscape IME shows a WHITE extract editor ABOVE its keys.
+                // It belongs to the selected keyboard package, not necessarily to the game.
+                // Keep the foreign-window watcher inactive only for this bounded input flow;
+                // every write is still restricted to a verified TYPE_INPUT_METHOD window.
+                entering = true
+                val input = EventInviteImeInput(
+                    service = this@CollectorService,
+                    handler = handler,
+                    gamePackage = GAME,
+                    code = code,
+                    active = { alive },
+                    open = { cb ->
+                        touchGame(tapAt(.506, .464), true, cb)
+                    },
+                    visualOk = { cb ->
+                        // Some OEM IMEs draw OK on a Canvas without an accessible button.
+                        // OCR only its right-hand action region. The plaintext code in the
+                        // left editor is never recorded or passed to OCR here.
+                        grab(anyApp = true) { bitmap ->
+                            if (bitmap == null || !alive) {
+                                bitmap?.recycle()
+                                cb(null)
+                                return@grab
                             }
-                            return field.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_TEXT, args)
-                        }
-                        val oldLength = field.text?.length ?: 0
-                        val selection = android.os.Bundle().apply {
-                            putInt(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
-                            putInt(android.view.accessibility.AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, oldLength)
-                        }
-                        // Explicit select all + clear, even if the game prefilled a code for the last account.
-                        field.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_SET_SELECTION, selection)
-                        val cleaned = write("")
-                        val entered = cleaned && write(code)
-                        if (!entered) {
-                            then(false)
-                            return@postDelayed
-                        }
-                        handler.postDelayed({
-                            if (!alive) return@postDelayed then(false)
-                            val current = try {
-                                rootInActiveWindow
-                            } catch (_: Exception) {
-                                null
-                            }
-                            val confirmed = current != null &&
-                                nodes(current).any {
-                                    it.isEditable && !it.isPassword && it.text?.toString() == code
+                            try {
+                                io.execute {
+                                    val point = try {
+                                        GameText.eventInviteKeyboardOk(bitmap)
+                                    } catch (e: Exception) {
+                                        CrashLog.record(this@CollectorService, "Không nhận diện được nút OK bàn phím", e)
+                                        null
+                                    } finally {
+                                        bitmap.recycle()
+                                    }
+                                    handler.post { cb(if (alive) point else null) }
                                 }
-                            if (confirmed &&
-                                wm.currentWindowMetrics.windowInsets.isVisible(WindowInsets.Type.ime())
-                            ) {
-                                performGlobalAction(GLOBAL_ACTION_BACK)
+                            } catch (_: Exception) {
+                                bitmap.recycle()
+                                cb(null)
                             }
-                            // Never log the code or keep a screenshot of its plaintext.
-                            then(confirmed)
-                        }, 380)
-                    }, 520)
-                }
+                        }
+                    },
+                    verifyGameCode = { cb ->
+                        if (!alive || foreground() != GAME) {
+                            cb(false)
+                        } else {
+                            grab { bitmap ->
+                                if (bitmap == null || !alive) {
+                                    bitmap?.recycle()
+                                    cb(false)
+                                    return@grab
+                                }
+                                try {
+                                    io.execute {
+                                        val matches = try {
+                                            val pixels = GameScreens.read(bitmap.width, bitmap.height) { y, row ->
+                                                bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
+                                            }
+                                            val recognized = EventInviteScreens.classify(
+                                                GameText.words(bitmap),
+                                                pixels.kind == GameScreens.Kind.LOBBY
+                                            )
+                                            recognized.kind == EventInviteScreens.Kind.INVITE &&
+                                                GameText.eventInviteEnteredCode(bitmap, code)
+                                        } catch (e: Exception) {
+                                            CrashLog.record(this@CollectorService, "Không kiểm chứng được mã trong game", e)
+                                            false
+                                        } finally {
+                                            bitmap.recycle()
+                                        }
+                                        handler.post { cb(alive && matches && foreground() == GAME) }
+                                    }
+                                } catch (_: Exception) {
+                                    bitmap.recycle()
+                                    cb(false)
+                                }
+                            }
+                        }
+                    },
+                    finish = { ok, reason ->
+                        entering = false
+                        if (alive) {
+                            then(ok, reason)
+                        }
+                    }
+                )
+                input.start()
             }
 
             override fun capture(name: String, then: (Boolean) -> Unit) {
