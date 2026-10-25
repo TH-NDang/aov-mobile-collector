@@ -162,6 +162,39 @@ class UiSmoke : Instrumentation() {
             val name = HeroNames.read(image)
             check(name != null && HeroNames.slug(name) == "elandorr") { "OCR returned $name" }
 
+            // Unity in landscape opens the Android IME's white extract bar above
+            // its keyboard. The real phone places OK at the upper right, separate
+            // from the game's yellow "Xác nhận" button. Test this OCR-only
+            // fallback on a synthetic image that contains NO invitation code.
+            val keyboardMock = Bitmap.createBitmap(2048, 921, Bitmap.Config.ARGB_8888)
+            Canvas(keyboardMock).apply {
+                drawColor(Color.rgb(39, 39, 67))
+                drawRect(
+                    1638f,
+                    210f,
+                    1985f,
+                    365f,
+                    Paint().apply { color = Color.WHITE }
+                )
+                drawText(
+                    "OK",
+                    1765f,
+                    321f,
+                    Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.BLACK
+                        textSize = 66f
+                    }
+                )
+            }
+            val action = try {
+                GameText.eventInviteKeyboardOk(keyboardMock)
+            } finally {
+                keyboardMock.recycle()
+            }
+            check(action != null && action.first in 0.77..0.985 && action.second in 0.1..0.51) {
+                "Landscape IME keyboard OK action was not located in the white extract bar: $action"
+            }
+
             // Real user screenshots from 25/10/2026. Tiny pink/gold 0 and 1 are
             // completely absent from ML Kit OCR even after 3x enlargement.
             // These privacy-cropped strips contain NO UID, credentials or invite code.

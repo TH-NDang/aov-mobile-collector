@@ -1,7 +1,7 @@
 name: Build APK
 on:
   push:
-    branches: [main, codex/chess-encyclopedia-collector, codex/chess-hero-row-capture-fix, codex/chess-verified-title-progress, codex/fix-statistics-warzone-filter, codex/pro-builds-compatible-upgrade, codex/fix-pro-short-list-scroll-proof, codex/event-invite-multi-account, codex/fix-event-invite-quota-ocr]
+    branches: [main, codex/chess-encyclopedia-collector, codex/chess-hero-row-capture-fix, codex/chess-verified-title-progress, codex/fix-statistics-warzone-filter, codex/pro-builds-compatible-upgrade, codex/fix-pro-short-list-scroll-proof, codex/event-invite-multi-account, codex/fix-event-invite-quota-ocr, codex/fix-event-invite-ime-extract-input]
   workflow_dispatch:
     inputs:
       metrics_probe:
@@ -49,7 +49,7 @@ jobs:
             echo "Validating $APK"
             test -s "$APK"
             "$AAPT" dump badging "$APK" > /tmp/collector-badging.txt
-            grep -q "package: name='vn.ndang.aovcollector' versionCode='55' versionName='0.13.24'" /tmp/collector-badging.txt
+            grep -q "package: name='vn.ndang.aovcollector' versionCode='56' versionName='0.13.25'" /tmp/collector-badging.txt
             grep -q "application-icon-" /tmp/collector-badging.txt
             grep -q "ic_launcher" /tmp/collector-badging.txt
             "$SIGNER" verify --print-certs "$APK"
