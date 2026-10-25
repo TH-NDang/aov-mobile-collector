@@ -53,8 +53,7 @@ object EventInviteScreens {
      * We accept only evidence in this narrow region of a VERIFIED invite modal.
      * No other number anywhere on the event or game may control a submission.
      */
-    fun isQuotaWord(word: GameScreens.Word): Boolean =
-        word.x in .36.. .70 && word.y in .505.. .605
+    fun isQuotaWord(word: GameScreens.Word): Boolean = word.x in .36...70 && word.y in .505...605
 
     fun quota(words: List<GameScreens.Word>): Pair<Int, Int>? {
         val lane = words.filter(::isQuotaWord)
@@ -69,6 +68,7 @@ object EventInviteScreens {
         // Check each OCR line first: its layout is more reliable than the order in which
         // ML Kit and accessibility visit their text blocks.
         val ratio = Regex("""(?i)(?<!\d)([01oIlL])\s*[/／|:]\s*([1iIlL])(?=$|[^\d])""")
+
         fun direct(text: String): List<Pair<Int, Int>> = ratio.findAll(text).mapNotNull {
             val a = digit(it.groupValues[1][0])
             val b = digit(it.groupValues[2][0])
