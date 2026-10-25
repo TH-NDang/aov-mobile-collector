@@ -32,6 +32,10 @@ internal object BoardPickerMotion {
      */
     fun displacement(before: FloatArray, after: FloatArray, height: Int, direction: Int): Double? {
         if (height < 400 || before.isEmpty() || before.size != after.size || direction !in -1..1) return null
+        // Most successive heroes reopen the same list viewport: comparing the five
+        // RGB portrait bands at unchanged coordinates is enough and avoids doing
+        // a costly full displacement search for each of 100+ heroes.
+        if (sameViewport(before, after)) return 0.0
         val match = HeroGrid.shift(before, after)
         if (!match.reliable || abs(match.px) > height * .34) return null
         if (direction > 0 && match.px < -3) return null
