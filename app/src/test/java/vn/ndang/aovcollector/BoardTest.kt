@@ -668,6 +668,17 @@ class BoardTest {
         assertEquals(false, game.owned)
     }
 
+    @Test fun fullFinalRowOf128HeroesEndsOnlyAfterTwoVerifiedScrollProbes() {
+        val game = Game(page = Page.BOARD, heroes = 128, owned = false).run(
+            heroesWanted = 300,
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3))
+        )
+        assertTrue("outcome=${game.outcome}", game.outcome is BoardReader.Outcome.Done)
+        assertEquals((0 until 128).toList(), game.chosen)
+        assertEquals(128, (game.outcome as BoardReader.Outcome.Done).heroes)
+        assertEquals("hero-128-quoc-gia-01", game.kept.last())
+    }
+
     @Test fun collectsComplete129HeroRosterIncludingSingleLastCard() {
         val game = Game(page = Page.BOARD, heroes = 129, owned = false).run(
             heroesWanted = 300,
