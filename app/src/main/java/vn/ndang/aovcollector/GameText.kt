@@ -117,6 +117,39 @@ object GameText {
         }
     }
 
+    /**
+     * The native landscape keyboard shows a white extract editor with a separate
+     * upper-right OK button. Read ONLY that right corner, never the editor containing
+     * the invitation code, and never store the screenshot.
+     */
+    fun eventInviteKeyboardOk(screen: Bitmap): Pair<Double, Double>? {
+        if (screen.width <= screen.height) return null
+        val words = rankingCrop(screen, .775, .175, .987, .485)
+        val buttons = words.filter {
+            GameScreens.plain(it.text) == "ok" &&
+                it.x in 0.77..0.985 &&
+                it.y in 0.10..0.51
+        }
+        if (buttons.isEmpty()) return null
+        val first = buttons.first()
+        if (buttons.any { kotlin.math.abs(it.x - first.x) > .035 || kotlin.math.abs(it.y - first.y) > .045 }) {
+            return null
+        }
+        return first.x to first.y
+    }
+
+    /** Reads the filled invitation text on the game popup AFTER the IME's OK closes. */
+    fun eventInviteEnteredCode(screen: Bitmap, expected: String): Boolean {
+        if (screen.width <= screen.height || expected.isBlank()) return false
+        val codeOnly = rankingCrop(screen, .342, .406, .673, .518)
+        val target = GameScreens.plain(expected)
+        return codeOnly.any {
+            it.x in 0.36..0.67 &&
+                it.y in 0.40..0.53 &&
+                GameScreens.plain(it.text) == target
+        }
+    }
+
     private fun rankingCrop(screen: Bitmap, left: Double, top: Double, right: Double, bottom: Double): List<GameScreens.Word> {
         if (screen.width <= screen.height) return emptyList()
         val x0 = (screen.width * left).toInt()
