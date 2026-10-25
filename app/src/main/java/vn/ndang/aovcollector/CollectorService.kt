@@ -3065,9 +3065,13 @@ class CollectorService : AccessibilityService() {
                         moveTo((x * (b.width() - 1)).toFloat(), (y * (b.height() - 1)).toFloat())
                     }
                     val hold = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(point, 0, 850L)).build()
-                    // One short transaction, rather than flashing the panels after each gesture/scan.
-                    // The normal screenshot and tap leases still apply, including their settling delays.
+                    // Keep the overlay hidden during the fast gesture/confirmation burst,
+                    // but do not make Stop/Pause untouchable during long Pictures/OCR work.
+                    // Each grab()/touchGame() has its own short shield, so it remains safe
+                    // to release this outer lease if the transaction takes over 8 seconds.
                     val transaction = captureShield.acquire()
+                    val watchdog = NativeSaveWatchdog(SystemClock::uptimeMillis)
+                    var outerShieldReleased = false
                     var ended = false
                     var timeout: Runnable? = null
                     var resolving = false
@@ -3076,38 +3080,59 @@ class CollectorService : AccessibilityService() {
 
                     fun finishNative(result: NativeResult, reason: String? = null) {
                         if (ended) return
-                        if (result == NativeResult.FAILED && reason != null) note("Native Save Photo failed: $reason")
+                        if (result == NativeResult.FAILED && reason != null) {
+                            note("Native Save Photo failed: $reason")
+                        }
                         ended = true
                         timeout?.let { handler.removeCallbacks(it) }
                         captureShield.release(transaction)
-                        // Consecutive skill saves otherwise hide again in the same frame. Give Stop/Pause
-                        // a real visible, touchable interval between individual native images.
+                        // The reader's normal failure handler pauses with its full name/step,
+                        // AFTER this callback; do not forcibly pause before releasing shields.
                         if (currentRun()) handler.postDelayed({ if (currentRun()) then(result) }, 400L)
                     }
 
                     fun active(): Boolean {
                         if (ended) return false
-                        if (!currentRun() || !captureShield.contains(transaction)) {
+                        if (!currentRun() || (!outerShieldReleased && !captureShield.contains(transaction))) {
                             finishNative(NativeResult.FAILED)
                             return false
                         }
                         return true
                     }
-                    // A stalled OCR callback must not hide Stop/Pause for the whole chess run.
-                    timeout = Runnable {
-                        if (active()) {
-                            pause("Lưu ảnh gốc quá 15 giây. Kiểm tra Save Photo rồi bấm Tiếp tục.")
-                            finishNative(NativeResult.FAILED, "transaction timed out after 15 seconds")
+
+                    // Poll only the watchdog clock. Scheduling a timer never counts as progress.
+                    // Slow OCR/Pictures work may take >15 seconds but has a bounded idle and
+                    // absolute limit; if either expires, no long-press or Sure is retried.
+                    fun watch() {
+                        if (!active()) return
+                        val expired = watchdog.expired()
+                        if (expired != null) {
+                            finishNative(NativeResult.FAILED, watchdog.explain(expired))
+                            return
                         }
+                        if (!outerShieldReleased && watchdog.elapsedMs > 8_000L) {
+                            outerShieldReleased = true
+                            captureShield.release(transaction)
+                            say("Cờ: đang đối chiếu ảnh gốc; nút Dừng/Tiếp tục vẫn dùng được")
+                        }
+                        handler.postDelayed(timeout!!, 1_500L)
                     }
-                    handler.postDelayed(timeout!!, 15_000L)
+                    timeout = Runnable { watch() }
+                    handler.postDelayed(timeout!!, 1_500L)
 
                     fun later(ms: Long, action: () -> Unit) {
                         handler.postDelayed({ if (active()) action() }, ms)
                     }
 
                     fun tapNative(x: Double, y: Double, done: (Boolean) -> Unit) {
-                        if (active()) touchGame(tapAt(x, y), true) { if (active()) done(it) }
+                        if (active()) {
+                            touchGame(tapAt(x, y), true) {
+                                if (active()) {
+                                    if (it) watchdog.advanced(NativeSaveWatchdog.Stage.SURE_PRESSED)
+                                    done(it)
+                                }
+                            }
+                        }
                     }
 
                     fun readPrompt(done: (Pair<List<GameScreens.Word>, NativeSaveEvidence.Scene>?) -> Unit) {
@@ -3157,6 +3182,7 @@ class CollectorService : AccessibilityService() {
                                     }
                                     handler.post {
                                         if (active()) {
+                                            watchdog.advanced(NativeSaveWatchdog.Stage.PROMPT_READ)
                                             lastScene = evidence?.second ?: NativeSaveEvidence.Scene.UNKNOWN
                                             lastReferenceUnchanged = referenceUnchanged
                                             done(evidence)
@@ -3175,6 +3201,7 @@ class CollectorService : AccessibilityService() {
                         if (attempt == null) return finishNative(result, reason)
                         if (!active() || resolving) return
                         resolving = true
+                        watchdog.advanced(NativeSaveWatchdog.Stage.INDEXING_PICTURES)
 
                         // Storage evidence is independent of OCR. Never repeat a gesture to obtain it.
                         fun reconcile(remaining: Int) {
@@ -3189,6 +3216,7 @@ class CollectorService : AccessibilityService() {
                                     }
                                     handler.post {
                                         if (!active()) return@post
+                                        watchdog.advanced(NativeSaveWatchdog.Stage.INDEXING_PICTURES)
                                         if (receipt?.status == GamePhotoSession.ReceiptStatus.RECEIPT) {
                                             GamePhotoSync.request(this@CollectorService)
                                             note("Đã xác minh ảnh gốc trong Pictures: " + item + "; không tải lại.")
@@ -3273,9 +3301,11 @@ class CollectorService : AccessibilityService() {
                     }
 
                     fun holdIcon() {
+                        watchdog.advanced(NativeSaveWatchdog.Stage.LONG_PRESS)
                         touchGame(hold, false) { pushed ->
                             if (!active()) return@touchGame
                             if (!pushed) return@touchGame complete(NativeResult.FAILED, "long-press rejected")
+                            watchdog.advanced(NativeSaveWatchdog.Stage.PROMPT_READ)
                             settledPrompt("after long-press", 1000, {
                                 ChessWiki.nativeConfirm(it.first) != null || preserveDetail && it.second == NativeSaveEvidence.Scene.DETAIL
                             }) { words, scene ->
@@ -3317,6 +3347,7 @@ class CollectorService : AccessibilityService() {
                                 } else {
                                     tapNative(answer.first, answer.second) { pressed ->
                                         if (!pressed) return@tapNative complete(NativeResult.FAILED, "Sure tap rejected")
+                                        watchdog.advanced(NativeSaveWatchdog.Stage.SURE_PRESSED)
                                         settledPrompt("after Sure", 1150, {
                                             it.second ==
                                                 if (preserveDetail) NativeSaveEvidence.Scene.DETAIL else NativeSaveEvidence.Scene.PAGE
@@ -3359,6 +3390,7 @@ class CollectorService : AccessibilityService() {
                                                         }
                                                         handler.post {
                                                             if (active()) {
+                                                                watchdog.advanced(NativeSaveWatchdog.Stage.VERIFYING_GAME)
                                                                 complete(
                                                                     if (marked) NativeResult.SAVED else NativeResult.FAILED,
                                                                     "save mark write failed"
@@ -3399,6 +3431,7 @@ class CollectorService : AccessibilityService() {
                                             handler.post {
                                                 if (active()) {
                                                     if (armed) {
+                                                        watchdog.advanced(NativeSaveWatchdog.Stage.LONG_PRESS)
                                                         holdIcon()
                                                     } else {
                                                         finishNative(
