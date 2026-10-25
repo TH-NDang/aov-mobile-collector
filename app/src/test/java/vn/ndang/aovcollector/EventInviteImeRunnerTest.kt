@@ -46,9 +46,9 @@ class EventInviteImeRunnerTest {
         override fun login(key: String, then: (Boolean, String?) -> Unit) = then(true, null)
 
         override fun look(then: (EventInviteRunner.Look?) -> Unit) {
-            val scene = if (gameConfirmTaps > 0) nextScene ?: invite else invite
+            val observed = if (gameConfirmTaps > 0) nextScene ?: invite else invite
             then(object : EventInviteRunner.Look {
-                override val scene = scene
+                override val scene: EventInviteScreens.Scene = observed
 
                 override fun done(keep: String?) {}
 
