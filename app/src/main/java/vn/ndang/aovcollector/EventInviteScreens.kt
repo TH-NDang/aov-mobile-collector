@@ -53,7 +53,7 @@ object EventInviteScreens {
      * We accept only evidence in this narrow region of a VERIFIED invite modal.
      * No other number anywhere on the event or game may control a submission.
      */
-    fun isQuotaWord(word: GameScreens.Word): Boolean = word.x in .36...70 && word.y in .505...605
+    fun isQuotaWord(word: GameScreens.Word): Boolean = word.x in 0.36..0.70 && word.y in 0.505..0.605
 
     fun quota(words: List<GameScreens.Word>): Pair<Int, Int>? {
         val lane = words.filter(::isQuotaWord)
