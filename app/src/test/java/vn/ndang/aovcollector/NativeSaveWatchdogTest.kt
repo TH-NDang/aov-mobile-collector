@@ -31,7 +31,7 @@ class NativeSaveWatchdogTest {
         time = 36_000L
         assertEquals(NativeSaveWatchdog.Expiration.IDLE, watchdog.expired())
         assertTrue(watchdog.explain(NativeSaveWatchdog.Expiration.IDLE).contains("PROMPT_READ"))
-        assertTrue(watchdog.explain(NativeSaveWatchdog.Expiration.IDLE).contains("không tự"))
+        assertTrue(watchdog.explain(NativeSaveWatchdog.Expiration.IDLE).lowercase().contains("không tự"))
     }
 
     @Test fun waitingForPicturesIndexGetsMoreTimeButNotForever() {
