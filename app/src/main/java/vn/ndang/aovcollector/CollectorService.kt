@@ -5070,10 +5070,14 @@ class CollectorService : AccessibilityService() {
                         io.execute {
                             val rows = { y: Int, line: IntArray -> b.getPixels(line, 0, b.width, 0, y, b.width, 1) }
                             var owned: BoardScreens.OwnedFilter? = null
+                            var allSelected = false
+                            var pickerProfile = FloatArray(0)
                             val read: Pair<Triple<List<GameScreens.Word>, Boolean, IntArray>, List<Pair<Double, Double>>>? = try {
                                 val lobby = words && GameScreens.read(b.width, b.height, rows).kind == GameScreens.Kind.LOBBY
                                 val text = if (words) nodes + GameText.words(b) else nodes
                                 owned = if (words) BoardScreens.ownedFilter(b.width, b.height, text, rows) else null
+                                allSelected = if (words && grid) ProHeroPicker.allSelected(b.width, b.height, text, rows) else false
+                                pickerProfile = if (grid) BoardPickerMotion.profile(b.width, b.height, rows) else FloatArray(0)
                                 Triple(text, lobby, BoardScreens.signature(b.width, b.height, rows)) to
                                     (if (grid) BoardScreens.rows(b.width, b.height, rows) else emptyList())
                             } catch (e: Throwable) {
@@ -5091,6 +5095,9 @@ class CollectorService : AccessibilityService() {
                                         override val signature = read.first.third
                                         override val rows = read.second
                                         override val ownedFilter = owned
+                                        override val allSelected = allSelected
+                                        override val pickerProfile = pickerProfile
+                                        override val pickerHeight = b.height
 
                                         override fun card(col: Int, top: Double, bottom: Double) =
                                             BoardScreens.card(b.width, b.height, col, top, bottom, rows)
