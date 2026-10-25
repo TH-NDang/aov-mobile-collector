@@ -96,7 +96,10 @@ class EventInviteImeRunnerTest {
     }
 
     @Test fun gameCanOnlySubmitAfterConfirmedKeyboardAndReceipt() {
-        val fake = Fake().apply { typed = true; nextScene = reward }
+        val fake = Fake().apply {
+            typed = true
+            nextScene = reward
+        }
         var callbackCalled = false
         var error: String? = "not delivered"
         EventInviteRunner(listOf(key), code, "b".repeat(64), fake) {
