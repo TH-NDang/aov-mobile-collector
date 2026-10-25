@@ -1,7 +1,7 @@
 name: Build APK
 on:
   push:
-    branches: [main, codex/chess-encyclopedia-collector, codex/chess-hero-row-capture-fix, codex/chess-verified-title-progress, codex/fix-statistics-warzone-filter, codex/pro-builds-compatible-upgrade, codex/fix-pro-short-list-scroll-proof, codex/event-invite-multi-account, codex/fix-event-invite-quota-ocr]
+    branches: [main, codex/chess-encyclopedia-collector, codex/chess-hero-row-capture-fix, codex/chess-verified-title-progress, codex/fix-statistics-warzone-filter, codex/pro-builds-compatible-upgrade, codex/fix-pro-short-list-scroll-proof, codex/event-invite-multi-account, codex/fix-event-invite-quota-ocr, codex/fix-event-invite-ime-extract-input]
   workflow_dispatch:
     inputs:
       metrics_probe:
@@ -25,6 +25,20 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      # Temporary, branch-scoped formatter for newly added Kotlin files.
+      # Remove after its separate formatting commit; read-only ktlint is always run next.
+      - name: Format native IME Kotlin on dedicated fix branch
+        if: github.ref == 'refs/heads/codex/fix-event-invite-ime-extract-input'
+        run: |
+          set -euo pipefail
+          ./tools/ktlint --format
+          if ! git diff --quiet -- '*.kt' '*.kts'; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -u -- '*.kt' '*.kts'
+            git commit -m "style: ktlint native IME input fix"
+            git push origin HEAD:refs/heads/codex/fix-event-invite-ime-extract-input
+          fi
       - name: Check Kotlin formatting
         run: ./tools/ktlint
       - uses: android-actions/setup-android@v4
@@ -49,7 +63,7 @@ jobs:
             echo "Validating $APK"
             test -s "$APK"
             "$AAPT" dump badging "$APK" > /tmp/collector-badging.txt
-            grep -q "package: name='vn.ndang.aovcollector' versionCode='55' versionName='0.13.24'" /tmp/collector-badging.txt
+            grep -q "package: name='vn.ndang.aovcollector' versionCode='56' versionName='0.13.25'" /tmp/collector-badging.txt
             grep -q "application-icon-" /tmp/collector-badging.txt
             grep -q "ic_launcher" /tmp/collector-badging.txt
             "$SIGNER" verify --print-certs "$APK"
