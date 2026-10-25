@@ -60,7 +60,7 @@ internal class NativeSaveWatchdog(
     fun explain(reason: Expiration): String = when (reason) {
         Expiration.IDLE ->
             "Không có tiến triển trong thao tác ảnh gốc; giai đoạn $stage, chờ ${idleMs / 1000}s. " +
-                "Đã giữ tiến độ; cần kiểm tra Save Photo/Pictures trước khi thử lại."
+                "Không tự bấm lưu lại; đã giữ tiến độ, cần kiểm tra Save Photo/Pictures trước khi thử lại."
         Expiration.TOTAL ->
             "Thao tác ảnh gốc vượt giới hạn kiểm tra ${maxTotalMs / 1000}s; " +
                 "giai đoạn $stage. Không tự bấm lưu lại để tránh trùng ảnh."
