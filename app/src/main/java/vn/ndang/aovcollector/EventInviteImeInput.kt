@@ -187,10 +187,17 @@ internal class EventInviteImeInput(
         }
         // Explicit select-all, clear, and fresh re-read. Never append to a preset game code.
         editor.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selection)
-        if (!setText(editor, "")) {
-            return done(false, "Bàn phím không cho phép xóa mã mặc định bằng Accessibility")
+        // Selection and focus can invalidate a Unity/IME extract node immediately.
+        // Re-query it after the keyboard has settled, then send the clear action.
+        later(350) {
+            val fresh = keyboardFrame()?.editor
+                ?: return@later done(false, "Bàn phím đóng trước khi xóa mã mặc định")
+            if (!setText(fresh, "")) {
+                done(false, "Bàn phím không cho phép xóa mã mặc định bằng Accessibility")
+            } else {
+                later(380) { awaitClear(0) }
+            }
         }
-        later(370) { awaitClear(0) }
     }
 
     private fun awaitClear(retries: Int) {
@@ -244,7 +251,14 @@ internal class EventInviteImeInput(
             while (target != null && !target.isClickable && steps++ < 3) {
                 target = target.parent
             }
-            if (target?.isEnabled == true &&
+            val area = Rect()
+            target?.getBoundsInScreen(area)
+            val display = windowManager.maximumWindowMetrics.bounds
+            val safeParent = target != null &&
+                area.centerX().toDouble() / display.width() in 0.77..0.985 &&
+                area.centerY().toDouble() / display.height() in 0.08..0.51
+            if (safeParent &&
+                target?.isEnabled == true &&
                 target.isVisibleToUser &&
                 target.performAction(AccessibilityNodeInfo.ACTION_CLICK)
             ) {
@@ -325,7 +339,16 @@ internal class EventInviteImeInput(
 
     private fun awaitKeyboardClosed(retries: Int) {
         if (!valid()) return
-        val imeStillVisible = keyboardFrame() != null
+        // Do not mistake an inaccessible or temporarily rootless IME for a
+        // closed keyboard: it may still cover the game's confirm button.
+        val imeStillVisible = try {
+            service.windows.orEmpty().any {
+                it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD &&
+                    (it.isFocused || it.isActive || it.root?.isVisibleToUser == true)
+            }
+        } catch (_: Exception) {
+            true
+        }
         if (!imeStillVisible) {
             if (++stableClosed >= 2) {
                 return later(600) {
