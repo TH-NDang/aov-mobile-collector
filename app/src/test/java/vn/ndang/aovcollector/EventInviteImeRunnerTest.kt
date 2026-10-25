@@ -2,15 +2,13 @@ package vn.ndang.aovcollector
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EventInviteImeRunnerTest {
-    private fun word(label: String, x: Double, y: Double) =
-        GameScreens.Word(label, x - .08, y - .022, x + .08, y + .022)
+    private fun word(label: String, x: Double, y: Double) = GameScreens.Word(label, x - .08, y - .022, x + .08, y + .022)
 
     private val invite = EventInviteScreens.Scene(
         EventInviteScreens.Kind.INVITE,
@@ -51,7 +49,9 @@ class EventInviteImeRunnerTest {
             val scene = if (gameConfirmTaps > 0) nextScene ?: invite else invite
             then(object : EventInviteRunner.Look {
                 override val scene = scene
+
                 override fun done(keep: String?) {}
+
                 override fun keep(name: String, then: (Boolean) -> Unit) {
                     savedReceipt = true
                     then(true)
@@ -70,8 +70,12 @@ class EventInviteImeRunnerTest {
         }
 
         override fun capture(name: String, then: (Boolean) -> Unit) = then(true)
+
         override fun later(ms: Long, then: () -> Unit) = then()
-        override fun say(message: String) { output = message }
+
+        override fun say(message: String) {
+            output = message
+        }
     }
 
     private val key = "a".repeat(64)

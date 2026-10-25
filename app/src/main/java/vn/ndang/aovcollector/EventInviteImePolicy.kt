@@ -35,11 +35,10 @@ internal object EventInviteImePolicy {
         actualImePackage: String?,
         gameWindowBehind: Boolean,
         focusedForeignApp: Boolean
-    ): Boolean =
-        !selectedImePackage.isNullOrBlank() &&
-            selectedImePackage == actualImePackage &&
-            gameWindowBehind &&
-            !focusedForeignApp
+    ): Boolean = !selectedImePackage.isNullOrBlank() &&
+        selectedImePackage == actualImePackage &&
+        gameWindowBehind &&
+        !focusedForeignApp
 
     fun editor(nodes: List<Node>): Int? {
         val possible = nodes.filter {
@@ -85,12 +84,8 @@ internal object EventInviteImePolicy {
         return possible.minByOrNull { it.width }?.index
     }
 
-    fun gameReady(
-        imeStillVisible: Boolean,
-        focusedGame: Boolean,
-        verifiedRenderedCode: Boolean
-    ): Boolean = !imeStillVisible && focusedGame && verifiedRenderedCode
+    fun gameReady(imeStillVisible: Boolean, focusedGame: Boolean, verifiedRenderedCode: Boolean): Boolean =
+        !imeStillVisible && focusedGame && verifiedRenderedCode
 
-    private fun normalize(text: String): String =
-        GameScreens.plain(text.trim()).lowercase(java.util.Locale.ROOT)
+    private fun normalize(text: String): String = GameScreens.plain(text.trim()).lowercase(java.util.Locale.ROOT)
 }
