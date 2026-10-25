@@ -47,8 +47,8 @@ internal object EventInviteImePolicy {
                 it.enabled &&
                 it.editable &&
                 !it.password &&
-                it.centerY in .08.. .51 &&
-                it.centerX in .06.. .89 &&
+                it.centerY in 0.08..0.51 &&
+                it.centerX in 0.06..0.89 &&
                 it.width > .12
         }
         val focused = possible.filter { it.focused }
@@ -67,8 +67,8 @@ internal object EventInviteImePolicy {
             it.visible &&
                 it.enabled &&
                 !it.editable &&
-                it.centerX in .77.. .985 &&
-                it.centerY in .08.. .51 &&
+                it.centerX in 0.77..0.985 &&
+                it.centerY in 0.08..0.51 &&
                 normalize(it.label) in setOf("ok", "done", "xong", "hoantat")
         }
         // A text node and its clickable parent may both advertise "OK". As long
