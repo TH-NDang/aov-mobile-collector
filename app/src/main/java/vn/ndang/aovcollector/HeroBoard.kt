@@ -381,6 +381,11 @@ class BoardReader(
         val signature: IntArray
         val rows: List<Pair<Double, Double>>
         val ownedFilter: BoardScreens.OwnedFilter?
+        /** The selected category must be Tất cả, independently of the Đã nhận checkbox. */
+        val allSelected: Boolean
+        /** Five RGB portrait columns over the scrollable region, never static row borders. */
+        val pickerProfile: FloatArray
+        val pickerHeight: Int
 
         fun card(col: Int, top: Double, bottom: Double): Boolean
 
@@ -442,6 +447,10 @@ class BoardReader(
 
     /** Top of the grid's first row when it is scrolled to the top, measured each time the grid is opened. */
     private var rowZero = .3426
+    private var pickerOffset = 0.0
+    private var savedProfile: FloatArray? = null
+    private var savedProfileHeight = 0
+    private var lastPickedName: String? = null
 
     fun start() = navigate()
 
