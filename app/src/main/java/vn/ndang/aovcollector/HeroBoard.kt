@@ -246,45 +246,52 @@ object BoardScreens {
     const val VIEW_TOP = .285
     const val VIEW_BOTTOM = .891
 
-    /** Bands of rows of cards on screen, as (top, bottom) fractions: cut ones at the window's edges too. */
+    /**
+     * Detect row bands from the FIRST portrait column, not a majority of all eight.
+     * The old "more than half of eight" rule erased the last row whenever it had
+     * 1–4 heroes and silently marked the roster finished too soon.
+     *
+     * A short sliver near either clipping edge is allowed here; seeking a card
+     * separately requires an entire measured row.
+     */
     fun rows(width: Int, height: Int, readRow: (Int, IntArray) -> Unit): List<Pair<Double, Double>> {
-        val y0 = (VIEW_TOP * height).toInt()
-        val y1 = (VIEW_BOTTOM * height).toInt()
-        val line = IntArray(width)
+        if (height < 400 || width <= height) return emptyList()
+        val top = (VIEW_TOP * height).toInt()
+        val bottom = (VIEW_BOTTOM * height).toInt()
+        val center = (COLUMNS[0] * width).toInt()
         val half = (.022 * width).toInt()
-        val bands = ArrayList<Pair<Double, Double>>()
+        val row = IntArray(width)
+        val result = ArrayList<Pair<Double, Double>>()
         var start = -1
-        for (y in y0..y1) {
-            readRow(y, line)
-            // The background between the columns, which shades from top to bottom.
-            val bg = listOf(.2615, .6605).map { line[(it * width).toInt()] }
-            var off = 0
-            var all = 0
-            for (c in COLUMNS) {
-                val cx = (c * width).toInt()
-                var x = cx - half
-                while (x <= cx + half) {
-                    val p = line[x]
-                    all++
-                    if (bg.minOf { b ->
-                            abs((p shr 16 and 255) - (b shr 16 and 255)) + abs((p shr 8 and 255) - (b shr 8 and 255)) +
-                                abs((p and 255) - (b and 255))
-                        } >
-                        60
-                    ) {
-                        off++
-                    }
-                    x += 2
+        var lastHit = -1
+        for (y in top..bottom) {
+            readRow(y, row)
+            val bg = row[(.2615 * width).toInt()]
+            var changed = 0
+            var total = 0
+            for (x in center - half..center + half step 2) {
+                val p = row[x]
+                if (abs((p shr 16 and 255) - (bg shr 16 and 255)) +
+                    abs((p shr 8 and 255) - (bg shr 8 and 255)) +
+                    abs((p and 255) - (bg and 255)) > 60
+                ) {
+                    changed++
                 }
+                total++
             }
-            val card = off > .5 * all && y < y1
-            if (card && start < 0) start = y
-            if (!card && start >= 0) {
-                if (y - start > .02 * height) bands.add(start.toDouble() / height to y.toDouble() / height)
+            val occupied = changed > total * .5 && y < bottom
+            if (occupied) {
+                if (start < 0) start = y
+                lastHit = y
+            }
+            if (start >= 0 && ((!occupied && y - lastHit > height * .008) || y == bottom)) {
+                if (lastHit - start >= height * .020) {
+                    result += start.toDouble() / height to (lastHit + 1).toDouble() / height
+                }
                 start = -1
             }
         }
-        return bands
+        return result
     }
 
     /** Whether the card at [col] of the band [top]–[bottom] is there: the last row may be short. */
@@ -375,6 +382,13 @@ class BoardReader(
         val rows: List<Pair<Double, Double>>
         val ownedFilter: BoardScreens.OwnedFilter?
 
+        /** The selected category must be Tất cả, independently of the Đã nhận checkbox. */
+        val allSelected: Boolean
+
+        /** Five RGB portrait columns over the scrollable region, never static row borders. */
+        val pickerProfile: FloatArray
+        val pickerHeight: Int
+
         fun card(col: Int, top: Double, bottom: Double): Boolean
 
         fun done(keep: String?)
@@ -435,6 +449,10 @@ class BoardReader(
 
     /** Top of the grid's first row when it is scrolled to the top, measured each time the grid is opened. */
     private var rowZero = .3426
+    private var pickerOffset = 0.0
+    private var savedProfile: FloatArray? = null
+    private var savedProfileHeight = 0
+    private var lastPickedName: String? = null
 
     fun start() = navigate()
 
@@ -614,131 +632,277 @@ class BoardReader(
         allHeroes(l, 0, 0)
     }
 
-    /** Recheck every opening and every resume, before measuring or indexing any hero cards. */
-    private fun allHeroes(l: Look, reads: Int, taps: Int) {
+    /** Recheck Tất cả and Đã nhận EACH time the chooser opens, even after a resume. */
+    private fun allHeroes(l: Look, reads: Int, taps: Int, allTaps: Int = 0) {
         if (BoardScreens.page(l.words, l.lobby) != BoardScreens.Page.PICKER) {
-            l.done("board-filter")
-            return fail("Chọn tướng đã đóng khi kiểm tra Đã nhận. Mở Chiến khu rồi bấm Tiếp tục.")
+            l.done("board-picker")
+            return fail("Mất popup Chọn tướng. Mở Chiến khu rồi bấm Tiếp tục.")
+        }
+        if (!l.allSelected) {
+            val all = ProHeroPicker.allButton(l.words)
+            l.done(if (all == null && reads >= FILTER_READS) "board-picker-all" else null)
+            if (allTaps >= 2 || (all == null && reads >= FILTER_READS)) {
+                return fail("Không xác minh được tab Tất cả của Chọn tướng; chưa chọn tướng.")
+            }
+            if (all == null) {
+                return screen.later(700) {
+                    look(true, true) { allHeroes(it, reads + 1, taps, allTaps) }
+                }
+            }
+            return tap(all.x, all.y, 900, "picker.all", true) {
+                look(true, true) { allHeroes(it, 0, taps, allTaps + 1) }
+            }
         }
         val filter = l.ownedFilter
         if (filter != null && !filter.checked) {
-            l.done(null)
-            return toTop(0, null)
-        }
-        // After a tap, let old frames settle before deciding it was ignored. Never toggle an OFF box.
-        if (filter == null || (taps > 0 && reads < FILTER_READS)) {
-            if (reads >=
-                FILTER_READS
-            ) {
-                l.done("board-filter")
-                return fail(
-                    "Không đọc được trạng thái Đã nhận trong Chọn tướng. Kiểm tra ô này rồi bấm Tiếp tục; chưa chọn tướng để tránh lấy thiếu."
-                )
+            val old = savedProfile
+            if (old != null && savedProfileHeight == l.pickerHeight && validPicker(l)) {
+                val delta = BoardPickerMotion.displacement(old, l.pickerProfile, l.pickerHeight, 0)
+                if (delta != null) {
+                    val position = pickerOffset + delta
+                    val targetTop = rowZero + index / 8 * BoardScreens.ROW_PITCH - position
+                    if (targetTop >= BoardScreens.VIEW_TOP - .005) {
+                        screen.note("Chiến khu: giữ vị trí tướng đã xác minh, không vuốt về đầu lại")
+                        return seek(l, position, 0)
+                    }
+                }
             }
-            l.done(null)
-            return screen.later(800) { look(true, true) { allHeroes(it, reads + 1, taps) } }
+            return probeReset(l)
         }
-        if (taps >=
-            MAX_FILTER_TAPS
-        ) {
+        // A just-cleared checkbox can report a stale ON state during animations.
+        if (filter == null || (taps > 0 && reads < FILTER_READS)) {
+            l.done(if (reads >= FILTER_READS) "board-filter" else null)
+            if (reads >= FILTER_READS) {
+                return fail("Không đọc rõ Đã nhận trong Chọn tướng; chưa chọn tướng để tránh lấy thiếu.")
+            }
+            return screen.later(800) {
+                look(true, true) { allHeroes(it, reads + 1, taps, allTaps) }
+            }
+        }
+        if (taps >= MAX_FILTER_TAPS) {
             l.done("board-filter")
-            return fail("Không tắt được Đã nhận trong Chọn tướng. Bỏ tick ô này rồi bấm Tiếp tục để lấy đủ tướng.")
+            return fail("Đã nhận vẫn bật sau khi bỏ tích; chưa thu thập tướng để tránh bỏ sót.")
         }
         l.done(null)
-        screen.note("Chọn tướng: tắt Đã nhận để lấy cả tướng chưa sở hữu")
-        tap(filter.x, filter.y, 1200, "picker.owned-filter", true) { look(true, true) { allHeroes(it, 0, taps + 1) } }
+        screen.note("Chọn tướng: bỏ Đã nhận để lấy cả tướng chưa sở hữu")
+        tap(filter.x, filter.y, 1200, "picker.owned-filter", true) {
+            look(true, true) { allHeroes(it, 0, taps + 1, allTaps) }
+        }
     }
 
-    private fun toTop(flings: Int, last: List<Pair<Double, Double>>?) {
-        drag(.5, .40, .85, true, 800, "picker.scroll.reset") {
-            look(false, true) { l ->
-                l.done(null)
-                val rows = l.rows
-                if (flings < 8 &&
-                    (last == null || rows.firstOrNull()?.first != last.firstOrNull()?.first)
-                ) {
-                    return@look toTop(flings + 1, rows)
+    private fun validPicker(l: Look): Boolean = l.rows.isNotEmpty() &&
+        l.pickerProfile.isNotEmpty() &&
+        l.pickerHeight >= 400
+
+    /** A fourth row might appear as a sliver below the whole-row detector. */
+    private fun bottomSliver(l: Look): Boolean = l.card(0, BoardScreens.VIEW_BOTTOM - .025, BoardScreens.VIEW_BOTTOM)
+
+    /**
+     * Probe a small downward scroll to prove the viewport moves before resetting.
+     * With a truly short, fully visible list the probe may not move at all.
+     */
+    private fun probeReset(before: Look) {
+        if (!validPicker(before)) {
+            before.done("board-picker-grid")
+            return fail("Không nhận dạng được lưới tướng; chưa thể kết luận hết danh sách.")
+        }
+        val profile = before.pickerProfile
+        val height = before.pickerHeight
+        before.done(null)
+        drag(.62, .78, .66, false, 820, "picker.scroll.probe") {
+            look(false, true) { after ->
+                if (!validPicker(after) || after.pickerHeight != height) {
+                    after.done("board-picker-probe")
+                    return@look fail("Mất lưới tướng khi kiểm tra chiều cuộn.")
                 }
-                rows.firstOrNull()?.let { rowZero = it.first }
-                seek(0.0, 0)
+                // A previously saved list position can be outside the newly expanded
+                // roster's scroll bounds after toggling the Đã nhận/All filters.
+                // Its first probe may SNAP slightly in the opposite direction.
+                // Any *measured* motion is safe here: the next stage resets to top.
+                val moved = BoardPickerMotion.displacement(profile, after.pickerProfile, height, 0)
+                if (moved == null || abs(moved) > .22) {
+                    after.done("board-picker-probe")
+                    return@look fail("Không đo được thay đổi vị trí lưới tướng sau khi đổi bộ lọc.")
+                }
+                resetToTop(after, 0, 0, resetMoved = false, probeMoved = abs(moved) > .004)
             }
         }
     }
 
     /**
-     * The grid is [scrolled] screen heights down from its top. Drags it, two rows at a time, until the row of hero
-     * [index] is fully on screen, then taps the hero.
+     * Fling upward until the actual portrait artwork stops moving. Repeating row
+     * boundaries are NOT a top indicator: each grid row has the same geometry.
      */
-    private fun seek(scrolled: Double, moves: Int): Unit = look(false, true) { l ->
+    private fun resetToTop(before: Look, attempts: Int, still: Int, resetMoved: Boolean, probeMoved: Boolean) {
+        if (!validPicker(before)) {
+            before.done("board-picker-grid")
+            return fail("Không còn ảnh lưới tướng khi tìm đầu danh sách.")
+        }
+        if (attempts >= 25) {
+            before.done("board-picker-top")
+            return fail("Không xác minh được đầu danh sách tướng sau 25 lần kéo; dừng an toàn.")
+        }
+        val prior = before.pickerProfile
+        val height = before.pickerHeight
+        before.done(null)
+        drag(.62, .40, .85, true, 850, "picker.scroll.reset") {
+            look(false, true) { after ->
+                if (!validPicker(after) || after.pickerHeight != height) {
+                    after.done("board-picker-grid")
+                    return@look fail("Lưới tướng thay đổi khi tìm đầu danh sách.")
+                }
+                val same = BoardPickerMotion.sameViewport(prior, after.pickerProfile)
+                val stable = if (same) still + 1 else 0
+                val movedBack = resetMoved || !same
+                if (stable >= 2) {
+                    val fullyVisibleShortList = BoardPickerMotion.validTop(after.rows) &&
+                        BoardPickerMotion.clearLastRow(after.rows) &&
+                        !bottomSliver(after)
+                    if (!movedBack && !probeMoved && !fullyVisibleShortList) {
+                        after.done("board-picker-top")
+                        return@look fail("Cuộn không dịch chuyển và chưa chứng minh được đầu danh sách; không chọn nhầm tướng.")
+                    }
+                    if (!movedBack && probeMoved) {
+                        after.done("board-picker-top")
+                        return@look fail("Đã cuộn xuống nhưng thao tác quay về đầu không di chuyển.")
+                    }
+                    if (!BoardPickerMotion.validTop(after.rows)) {
+                        after.done("board-picker-top")
+                        return@look fail("Chưa thấy hàng đầu đủ ảnh tại vị trí chuẩn; chưa xác minh đầu danh sách.")
+                    }
+                    rowZero = after.rows.first().first
+                    pickerOffset = 0.0
+                    screen.note("Chiến khu: đã xác minh đầu danh sách bằng ảnh tướng, không dựa vào viền hàng")
+                    seek(after, 0.0, 0)
+                } else {
+                    resetToTop(after, attempts + 1, stable, movedBack, probeMoved)
+                }
+            }
+        }
+    }
+
+    /**
+     * Use the actual image-registered displacement of portrait artwork, including
+     * the short final drag. If registration is uncertain, FAIL rather than Done.
+     */
+    private fun seek(l: Look, scrolled: Double, moves: Int) {
+        if (!validPicker(l)) {
+            l.done("board-picker-grid")
+            return fail("Mất lưới Chọn tướng trong khi tìm, không coi là đã hết tướng.")
+        }
         val row = index / 8
         val col = index % 8
         val top = rowZero + row * BoardScreens.ROW_PITCH - scrolled
         val bottom = top + BoardScreens.CARD
-        val band = l.rows.firstOrNull { abs(it.first - top) < .03 }
-        when {
-            top >= BoardScreens.VIEW_TOP - .005 && bottom <= BoardScreens.VIEW_BOTTOM + .005 -> {
-                // The row is on screen: no band there, or no card in its column, is the end of the grid.
-                if (band == null ||
-                    !l.card(col, band.first, band.second)
-                ) {
-                    l.done(null)
-                    screen.note("Hết danh sách tướng ở ô ${index + 1}")
-                    return@look closeAndEnd()
-                }
-                l.done(null)
-                screen.say("Tướng ${index + 1}: chọn")
-                tap(BoardScreens.COLUMNS[col], (band.first + band.second) / 2, 2500, "picker.card", true) { picked(0) }
+        val band = l.rows.firstOrNull {
+            abs(it.first - top) < .052 &&
+                it.second - it.first >= BoardScreens.CARD - .018
+        }
+
+        if (top >= BoardScreens.VIEW_TOP - .005 && bottom <= BoardScreens.VIEW_BOTTOM + .005) {
+            if (band == null) {
+                l.done("board-picker-row")
+                return fail("Không khớp hàng tướng đã đo với ảnh; không tự coi là hết danh sách.")
             }
-            moves > 40 -> {
-                l.done("board-grid")
-                fail("Không cuộn được tới tướng ${index + 1} trong Chọn tướng.")
-            }
-            else -> {
-                // Two rows up per drag, or what is left; the grid's real move is measured from its rows.
-                val want = minOf(2 * BoardScreens.ROW_PITCH, bottom - (BoardScreens.VIEW_BOTTOM - .02))
-                val before = l.rows
+            val adjusted = scrolled + top - band.first
+            if (l.card(col, band.first, band.second)) {
+                val y = (band.first + band.second) / 2
+                savedProfile = l.pickerProfile
+                savedProfileHeight = l.pickerHeight
+                pickerOffset = adjusted
                 l.done(null)
-                drag(.5, .80, .80 - want, false, 900, "picker.scroll.next") {
-                    look(false, true) { after ->
-                        after.done(null)
-                        val moved = shift(before, after.rows, want)
-                        if (moved < .01) {
-                            screen.note("Hết danh sách tướng ở ô ${index + 1}")
-                            closeAndEnd()
-                        } else {
-                            seek(scrolled + moved, moves + 1)
-                        }
-                    }
+                screen.say("Tướng ${index + 1}: chọn ô ${col + 1}/8 của hàng ${row + 1}")
+                return tap(BoardScreens.COLUMNS[col], y, 2500, "picker.card", true) { picked(0) }
+            }
+            // Only contiguous final partial rows are permitted to end. A dark/
+            // unloaded middle card or a missing detected row is not end-of-list.
+            val occupied = (0..7).map { l.card(it, band.first, band.second) }
+            val prefix = BoardPickerMotion.occupiedPrefix(occupied)
+            if (prefix != null &&
+                col >= prefix &&
+                l.rows.last() == band &&
+                BoardPickerMotion.clearLastRow(l.rows)
+            ) {
+                return confirmEnd(l, 0)
+            }
+            l.done("board-picker-missing-card")
+            return fail("Một ô tướng chưa rõ hình hoặc có khoảng trống giữa hàng; chưa kết luận hết danh sách.")
+        }
+
+        if (top < BoardScreens.VIEW_TOP - .005 || moves >= 160) {
+            l.done("board-picker-seek")
+            return fail("Vị trí tướng nằm ngoài phạm vi đo hoặc vượt 160 lần cuộn; không chọn lại hàng cũ.")
+        }
+        val distance = minOf(.24, maxOf(.075, bottom - (BoardScreens.VIEW_BOTTOM - .025)))
+        val profile = l.pickerProfile
+        val height = l.pickerHeight
+        l.done(null)
+        drag(.62, .80, .80 - distance, false, 850, "picker.scroll.next") {
+            look(false, true) { after ->
+                if (!validPicker(after) || after.pickerHeight != height) {
+                    after.done("board-picker-grid")
+                    return@look fail("Mất lưới tướng sau khi cuộn.")
                 }
+                val delta = BoardPickerMotion.displacement(profile, after.pickerProfile, height, 1)
+                if (delta == null) {
+                    after.done("board-picker-shift")
+                    return@look fail("Không đo được khoảng cuộn bằng ảnh tướng; không kết luận đã hết danh sách.")
+                }
+                if (delta <= .004) {
+                    // An ineffective gesture ALONE is never enough to finish a roster.
+                    return@look confirmEnd(after, 0)
+                }
+                seek(after, scrolled + delta, moves + 1)
             }
         }
     }
 
-    /** How far the grid moved between two looks: the shift of its bands nearest to what the drag asked for. */
-    private fun shift(before: List<Pair<Double, Double>>, after: List<Pair<Double, Double>>, asked: Double): Double {
-        // Bands cut at the window's edges are not measured.
-        fun whole(b: List<Pair<Double, Double>>) = b.filter { it.second - it.first > BoardScreens.CARD - .01 }
-        var best = 0.0
-        var gap = Double.MAX_VALUE
-        for (a in whole(before)) {
-            for (b in whole(after)) {
-                val s =
-                    a.first - b.first
-                if (s >= -.005 && abs(s - asked) < gap) {
-                    gap = abs(s - asked)
-                    best = s
+    /** Prove the end by two independent stationary downward probes with a whole last row. */
+    private fun confirmEnd(l: Look, still: Int) {
+        if (!validPicker(l) || !BoardPickerMotion.clearLastRow(l.rows) || bottomSliver(l)) {
+            l.done("board-picker-end")
+            return fail("Danh sách không cuộn nhưng chưa thấy hàng cuối đầy đủ và khoảng trống phía dưới.")
+        }
+        if (still >= 2) {
+            l.done(null)
+            screen.note("Đã xác minh hàng cuối và 2 lần cuộn không di chuyển: hết tướng ở ô ${index + 1}")
+            return closeAndEnd()
+        }
+        val profile = l.pickerProfile
+        val height = l.pickerHeight
+        l.done(null)
+        drag(.62, .79, .63, false, 900, "picker.scroll.end-check") {
+            look(false, true) { after ->
+                if (!validPicker(after) || after.pickerHeight != height) {
+                    after.done("board-picker-end")
+                    return@look fail("Mất lưới khi xác minh hàng tướng cuối.")
+                }
+                val delta = BoardPickerMotion.displacement(profile, after.pickerProfile, height, 1)
+                when {
+                    delta == null -> {
+                        after.done("board-picker-end")
+                        fail("Không nhận dạng được chuyển động khi xác minh hàng cuối; chưa báo hoàn tất.")
+                    }
+                    abs(delta) > .004 -> {
+                        after.done("board-picker-end")
+                        fail("Lưới tướng vẫn cuộn được; không được kết luận hết danh sách.")
+                    }
+                    else -> confirmEnd(after, still + 1)
                 }
             }
         }
-        return if (gap < .06) best else 0.0
     }
 
     private fun closeAndEnd() = tap(BoardScreens.PICKER_CLOSE_X, BoardScreens.PICKER_CLOSE_Y, 1200, "picker.close") {
-        end(
-            Outcome.Done(
-                index - first
-            )
-        )
+        look(true) { l ->
+            val back = BoardScreens.page(l.words, l.lobby) == BoardScreens.Page.BOARD
+            l.done(null)
+            if (back) {
+                end(Outcome.Done(index - first))
+            } else {
+                fail("Đã thấy hàng cuối nhưng chưa đóng Chọn tướng về Chiến khu; không đánh dấu hoàn tất.")
+            }
+        }
     }
 
     /** A hero was tapped: "Chọn tướng" closes and the ranking shows it. */

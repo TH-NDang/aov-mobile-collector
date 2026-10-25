@@ -58,6 +58,56 @@ class BoardTest {
         assertEquals(.4704, moved[1].first, .004)
     }
 
+    @Test fun finalRowWithOneToFourHeroesStillHasAVisibleBand() {
+        val width = 1536
+        val height = 691
+        for (lastCount in 1..4) {
+            val pixels = IntArray(width * height) { 0xff33337e.toInt() }
+
+            fun draw(row: Int, cards: Int) {
+                val top = ((.3426 + row * BoardScreens.ROW_PITCH) * height).toInt()
+                val bottom = (top + BoardScreens.CARD * height).toInt()
+                for (col in 0 until cards) {
+                    val cx = (BoardScreens.COLUMNS[col] * width).toInt()
+                    val half = (.022 * width).toInt()
+                    for (y in top until bottom) {
+                        for (x in cx - half..cx + half) {
+                            pixels[y * width + x] = 0xffd8a842.toInt()
+                        }
+                    }
+                }
+            }
+            draw(0, 8)
+            draw(1, lastCount)
+            val frame = Triple(width, height, pixels)
+            val detected = BoardScreens.rows(width, height, rows(frame))
+            assertEquals("last row with $lastCount hero(es)", 2, detected.size)
+            assertTrue(BoardScreens.card(width, height, 0, detected[1].first, detected[1].second, rows(frame)))
+            for (col in 1 until 8) {
+                assertEquals(
+                    "final row $lastCount, col $col",
+                    col < lastCount,
+                    BoardScreens.card(width, height, col, detected[1].first, detected[1].second, rows(frame))
+                )
+            }
+        }
+    }
+
+    @Test fun portraitShiftMeasuresRealMovementNotRepeatingBorders() {
+        val original = pixels("picker")
+        val moved = pixels("picker-scrolled")
+        val source = BoardPickerMotion.profile(original.first, original.second, rows(original))
+        val shifted = BoardPickerMotion.profile(moved.first, moved.second, rows(moved))
+        val distance = BoardPickerMotion.displacement(source, shifted, original.second, 1)
+        assertTrue("must measure 1-row partial movement from actual art: $distance", distance != null && distance in .03..0.07)
+        assertFalse(BoardPickerMotion.sameViewport(source, shifted))
+        assertTrue(BoardPickerMotion.sameViewport(source, source.copyOf()))
+        assertTrue(BoardPickerMotion.validTop(BoardScreens.rows(original.first, original.second, rows(original))))
+        assertEquals(null, BoardPickerMotion.occupiedPrefix(listOf(true, false, true, false, false, false, false, false)))
+        assertEquals(1, BoardPickerMotion.occupiedPrefix(listOf(true, false, false, false, false, false, false, false)))
+        assertEquals(8, BoardPickerMotion.occupiedPrefix(List(8) { true }))
+    }
+
     @Test fun theRankedPageIsNeverTakenForTheLobby() {
         // Its own "Đấu hạng" sits where the lobby's is: a tap meant for the lobby there would start a match.
         for (name in listOf("ranked", "ranked-new")) {
@@ -235,7 +285,9 @@ class BoardTest {
         val ownedHeroes: Int = 14,
         val ignoreFilterTaps: Boolean = false,
         val ownedOnReopen: Boolean = false,
-        val ignorePickerTaps: Boolean = false
+        val ignorePickerTaps: Boolean = false,
+        var allSelected: Boolean = true,
+        val reselectOtherTab: Boolean = false
     ) : BoardReader.Screen {
         var looks = 0
         var outcome: BoardReader.Outcome? = null
@@ -247,6 +299,7 @@ class BoardTest {
         val pending = ArrayDeque<() -> Unit>()
         var filterTaps = 0
         var gridDrags = 0
+        var allTaps = 0
         override val alive get() = outcome == null && looks < cut
 
         // The season's review: its screens in turn, the trailer showing no words.
@@ -346,6 +399,44 @@ class BoardTest {
 
         private fun rowAt(y: Double) = floor((y - rowZero + gridScroll) / BoardScreens.ROW_PITCH).toInt()
 
+        /**
+         * Different heroes have different RGB artwork, even though every card's border and
+         * vertical pitch are identical. A profile made only from row geometry would repeat.
+         * This synthetic scrollable artwork shifts by the ACTUAL clamped gridScroll.
+         */
+        private fun portraits(): FloatArray {
+            val h = 540
+            val y0 = (BoardScreens.VIEW_TOP * h).toInt()
+            val y1 = (BoardScreens.VIEW_BOTTOM * h).toInt()
+            val out = FloatArray((y1 - y0) * 15)
+            for (y in y0 until y1) {
+                val world = y + gridScroll * h
+                val relative = world - rowZero * h
+                val rowId = floor(relative / (BoardScreens.ROW_PITCH * h)).toInt()
+                val local = relative - rowId * BoardScreens.ROW_PITCH * h
+                for (col in 0..4) {
+                    val portrait = rowId >= 0 &&
+                        rowId < rowCount &&
+                        rowId * 8 + col < visibleHeroes &&
+                        local >= 0.0 &&
+                        local < BoardScreens.CARD * h
+                    for (channel in 0..2) {
+                        val at = (y - y0) * 15 + col * 3 + channel
+                        out[at] = if (!portrait) {
+                            43.0f + channel * 6
+                        } else {
+                            val seed = (rowId * 53 + col * 83 + channel * 41) % 125
+                            (
+                                65.0 + seed + 18.0 * kotlin.math.sin(local / 13 + col + channel) +
+                                    7.0 * kotlin.math.cos(local / 23 + channel)
+                                ).toFloat()
+                        }
+                    }
+                }
+            }
+            return out
+        }
+
         override fun look(words: Boolean, grid: Boolean, then: (BoardReader.Look?) -> Unit) {
             looks++
             val shown = if (words) words() else emptyList()
@@ -357,8 +448,19 @@ class BoardTest {
                 override val signature = signature
                 override val rows = bands
                 override val ownedFilter = if (page == Page.PICKER) owned?.let { BoardScreens.OwnedFilter(it, .814, .229) } else null
+                override val allSelected = page == Page.PICKER && this@Game.allSelected
+                override val pickerProfile = if (page == Page.PICKER) portraits() else FloatArray(0)
+                override val pickerHeight = 540
 
-                override fun card(col: Int, top: Double, bottom: Double) = rowAt((top + bottom) / 2) * 8 + col < visibleHeroes
+                override fun card(col: Int, top: Double, bottom: Double): Boolean {
+                    val mid = (top + bottom) / 2
+                    val row = rowAt(mid)
+                    val local = mid - rowZero + gridScroll - row * BoardScreens.ROW_PITCH
+                    return col in 0..7 &&
+                        row >= 0 &&
+                        row * 8 + col < visibleHeroes &&
+                        local in 0.0..BoardScreens.CARD
+                }
 
                 override fun done(keep: String?) {
                     if (keep != null) kept += keep
@@ -407,9 +509,9 @@ class BoardTest {
                     abs(x - BoardScreens.SWAP_X) < .01 && abs(y - BoardScreens.SWAP_Y) < .01 -> if (!ignorePickerTaps) {
                         page = Page.PICKER
                         if (ownedOnReopen) {
-                            owned =
-                                true
+                            owned = true
                         }
+                        if (reselectOtherTab) allSelected = false
                     }
                     abs(y - BoardScreens.TAB_Y) < .01 -> {
                         tab = Tab.values().indexOfFirst { abs(it.x - x) < .01 }
@@ -427,6 +529,11 @@ class BoardTest {
                     }
                 }
                 Page.PICKER -> when {
+                    abs(x - .215) < .02 && abs(y - .227) < .02 -> {
+                        allSelected = true
+                        allTaps++
+                        gridScroll = 0.0
+                    }
                     abs(x - BoardScreens.PICKER_CLOSE_X) < .01 && abs(y - BoardScreens.PICKER_CLOSE_Y) < .01 -> page = Page.BOARD
                     abs(x - .814) < .01 && abs(y - .229) < .01 -> {
                         filterTaps++
@@ -559,6 +666,57 @@ class BoardTest {
         assertEquals((0 until 30).toList(), game.chosen)
         assertEquals(1, game.filterTaps)
         assertEquals(false, game.owned)
+    }
+
+    @Test fun fullFinalRowOf128HeroesEndsOnlyAfterTwoVerifiedScrollProbes() {
+        val game = Game(page = Page.BOARD, heroes = 128, owned = false).run(
+            heroesWanted = 300,
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3))
+        )
+        assertTrue("outcome=${game.outcome}", game.outcome is BoardReader.Outcome.Done)
+        assertEquals((0 until 128).toList(), game.chosen)
+        assertEquals(128, (game.outcome as BoardReader.Outcome.Done).heroes)
+        assertEquals("hero-128-quoc-gia-01", game.kept.last())
+    }
+
+    @Test fun collectsComplete129HeroRosterIncludingSingleLastCard() {
+        val game = Game(page = Page.BOARD, heroes = 129, owned = false).run(
+            heroesWanted = 300,
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3))
+        )
+        assertTrue("result=${game.outcome}", game.outcome is BoardReader.Outcome.Done)
+        assertEquals("no missing or repeated hero", (0 until 129).toList(), game.chosen)
+        assertEquals((0 until 129).toList(), game.finished)
+        assertEquals(129, (game.outcome as BoardReader.Outcome.Done).heroes)
+        assertEquals(129, game.kept.size)
+        assertEquals("hero-129-quoc-gia-01", game.kept.last())
+    }
+
+    @Test fun collectsRemainderOf137HeroRosterAfterResumingMidScroll() {
+        val game = Game(page = Page.PICKER, heroes = 137, owned = false, gridScroll = 1.1).run(
+            heroesWanted = 300,
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3)),
+            first = 125
+        )
+        assertTrue(game.outcome is BoardReader.Outcome.Done)
+        assertEquals((125 until 137).toList(), game.chosen)
+        assertEquals((125 until 137).toList(), game.finished)
+        assertEquals(12, (game.outcome as BoardReader.Outcome.Done).heroes)
+    }
+
+    @Test fun switchesBackToAllTabEveryTimeGameReopensAnotherRole() {
+        val game = Game(
+            page = Page.BOARD,
+            heroes = 17,
+            owned = false,
+            allSelected = false,
+            reselectOtherTab = true
+        ).run(
+            heroesWanted = 17,
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3))
+        )
+        assertEquals((0 until 17).toList(), game.chosen)
+        assertEquals(17, game.allTaps)
     }
 
     @Test fun doesNotToggleAnAlreadyOffFilterAndRechecksEveryOpening() {
