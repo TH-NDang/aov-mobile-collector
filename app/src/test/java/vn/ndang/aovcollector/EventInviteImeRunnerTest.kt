@@ -27,10 +27,9 @@ class EventInviteImeRunnerTest {
         tickets = 19
     )
 
-    private inner class Fake(
-        private val typed: Boolean,
-        private val nextScene: EventInviteScreens.Scene? = null
-    ) : EventInviteRunner.Screen {
+    private inner class Fake : EventInviteRunner.Screen {
+        var typed = false
+        var nextScene: EventInviteScreens.Scene? = null
         override val alive get() = true
         var journal: JSONObject? = null
         var gameConfirmTaps = 0
@@ -85,7 +84,7 @@ class EventInviteImeRunnerTest {
     private val code = "ExampleCode91"
 
     @Test fun keyboardFailureCannotCreateSubmittedCheckpointOrSendAnyGameConfirm() {
-        val fake = Fake(false)
+        val fake = Fake()
         var failure: String? = null
         EventInviteRunner(listOf(key), code, "b".repeat(64), fake) { failure = it }.start()
         assertNotNull(failure)
@@ -97,7 +96,7 @@ class EventInviteImeRunnerTest {
     }
 
     @Test fun gameCanOnlySubmitAfterConfirmedKeyboardAndReceipt() {
-        val fake = Fake(true, reward)
+        val fake = Fake().apply { typed = true; nextScene = reward }
         var callbackCalled = false
         var error: String? = "not delivered"
         EventInviteRunner(listOf(key), code, "b".repeat(64), fake) {
@@ -114,7 +113,7 @@ class EventInviteImeRunnerTest {
     }
 
     @Test fun pendingSubmissionIsNeverRetriedWithAnotherKeyboardEntry() {
-        val fake = Fake(false, invite)
+        val fake = Fake().apply { typed = false; nextScene = invite }
         val prior = EventInviteLedger.new(listOf(key), "b".repeat(64))
         prior.put("phase", "submit_pending")
         fake.journal = prior
