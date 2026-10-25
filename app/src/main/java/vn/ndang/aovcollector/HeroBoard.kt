@@ -671,7 +671,7 @@ class BoardReader(
         }
         // A just-cleared checkbox can report a stale ON state during animations.
         if (filter == null || (taps > 0 && reads < FILTER_READS)) {
-            l.done(if (reads >= FILTER_READS) "board-picker-filter" else null)
+            l.done(if (reads >= FILTER_READS) "board-filter" else null)
             if (reads >= FILTER_READS) {
                 return fail("Không đọc rõ Đã nhận trong Chọn tướng; chưa chọn tướng để tránh lấy thiếu.")
             }
@@ -680,7 +680,7 @@ class BoardReader(
             }
         }
         if (taps >= MAX_FILTER_TAPS) {
-            l.done("board-picker-filter")
+            l.done("board-filter")
             return fail("Đã nhận vẫn bật sau khi bỏ tích; chưa thu thập tướng để tránh bỏ sót.")
         }
         l.done(null)
@@ -715,12 +715,16 @@ class BoardReader(
                     after.done("board-picker-probe")
                     return@look fail("Mất lưới tướng khi kiểm tra chiều cuộn.")
                 }
-                val moved = BoardPickerMotion.displacement(profile, after.pickerProfile, height, 1)
-                if (moved == null || moved > .22) {
+                // A previously saved list position can be outside the newly expanded
+                // roster's scroll bounds after toggling the Đã nhận/All filters.
+                // Its first probe may SNAP slightly in the opposite direction.
+                // Any *measured* motion is safe here: the next stage resets to top.
+                val moved = BoardPickerMotion.displacement(profile, after.pickerProfile, height, 0)
+                if (moved == null || abs(moved) > .22) {
                     after.done("board-picker-probe")
-                    return@look fail("Không đo được cuộn lưới tướng; không tự đoán vị trí.")
+                    return@look fail("Không đo được thay đổi vị trí lưới tướng sau khi đổi bộ lọc.")
                 }
-                resetToTop(after, 0, 0, resetMoved = false, probeMoved = moved > .004)
+                resetToTop(after, 0, 0, resetMoved = false, probeMoved = abs(moved) > .004)
             }
         }
     }
