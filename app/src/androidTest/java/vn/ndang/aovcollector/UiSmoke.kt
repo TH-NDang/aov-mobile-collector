@@ -1822,7 +1822,7 @@ class UiSmoke : Instrumentation() {
                 }
             }
             File(targetContext.filesDir, "smoke/clipboard-landscape.txt").writeText(
-                "Physical=${actualWidth}x${actualHeight}; " +
+                "Physical=${actualWidth}x$actualHeight; " +
                     "contextOrientation=${targetContext.resources.configuration.orientation}; " +
                     "requested=${activity.requestedOrientation}; focused collector window landscape=true"
             )
