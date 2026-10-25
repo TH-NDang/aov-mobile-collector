@@ -452,7 +452,15 @@ class BoardTest {
                 override val pickerProfile = if (page == Page.PICKER) portraits() else FloatArray(0)
                 override val pickerHeight = 540
 
-                override fun card(col: Int, top: Double, bottom: Double) = rowAt((top + bottom) / 2) * 8 + col < visibleHeroes
+                override fun card(col: Int, top: Double, bottom: Double): Boolean {
+                    val mid = (top + bottom) / 2
+                    val row = rowAt(mid)
+                    val local = mid - rowZero + gridScroll - row * BoardScreens.ROW_PITCH
+                    return col in 0..7 &&
+                        row >= 0 &&
+                        row * 8 + col < visibleHeroes &&
+                        local in 0.0..BoardScreens.CARD
+                }
 
                 override fun done(keep: String?) {
                     if (keep != null) kept += keep
