@@ -58,6 +58,55 @@ class BoardTest {
         assertEquals(.4704, moved[1].first, .004)
     }
 
+    @Test fun finalRowWithOneToFourHeroesStillHasAVisibleBand() {
+        val width = 1536
+        val height = 691
+        for (lastCount in 1..4) {
+            val pixels = IntArray(width * height) { 0xff33337e.toInt() }
+            fun draw(row: Int, cards: Int) {
+                val top = ((.3426 + row * BoardScreens.ROW_PITCH) * height).toInt()
+                val bottom = (top + BoardScreens.CARD * height).toInt()
+                for (col in 0 until cards) {
+                    val cx = (BoardScreens.COLUMNS[col] * width).toInt()
+                    val half = (.022 * width).toInt()
+                    for (y in top until bottom) {
+                        for (x in cx - half..cx + half) {
+                            pixels[y * width + x] = 0xffd8a842.toInt()
+                        }
+                    }
+                }
+            }
+            draw(0, 8)
+            draw(1, lastCount)
+            val frame = Triple(width, height, pixels)
+            val detected = BoardScreens.rows(width, height, rows(frame))
+            assertEquals("last row with $lastCount hero(es)", 2, detected.size)
+            assertTrue(BoardScreens.card(width, height, 0, detected[1].first, detected[1].second, rows(frame)))
+            for (col in 1 until 8) {
+                assertEquals(
+                    "final row $lastCount, col $col",
+                    col < lastCount,
+                    BoardScreens.card(width, height, col, detected[1].first, detected[1].second, rows(frame))
+                )
+            }
+        }
+    }
+
+    @Test fun portraitShiftMeasuresRealMovementNotRepeatingBorders() {
+        val original = pixels("picker")
+        val moved = pixels("picker-scrolled")
+        val source = BoardPickerMotion.profile(original.first, original.second, rows(original))
+        val shifted = BoardPickerMotion.profile(moved.first, moved.second, rows(moved))
+        val distance = BoardPickerMotion.displacement(source, shifted, original.second, 1)
+        assertTrue("must measure 1-row partial movement from actual art: $distance", distance != null && distance in .03..0.07)
+        assertFalse(BoardPickerMotion.sameViewport(source, shifted))
+        assertTrue(BoardPickerMotion.sameViewport(source, source.copyOf()))
+        assertTrue(BoardPickerMotion.validTop(BoardScreens.rows(original.first, original.second, rows(original))))
+        assertEquals(null, BoardPickerMotion.occupiedPrefix(listOf(true, false, true, false, false, false, false, false)))
+        assertEquals(1, BoardPickerMotion.occupiedPrefix(listOf(true, false, false, false, false, false, false, false)))
+        assertEquals(8, BoardPickerMotion.occupiedPrefix(List(8) { true }))
+    }
+
     @Test fun theRankedPageIsNeverTakenForTheLobby() {
         // Its own "Đấu hạng" sits where the lobby's is: a tap meant for the lobby there would start a match.
         for (name in listOf("ranked", "ranked-new")) {
@@ -604,6 +653,46 @@ class BoardTest {
         assertEquals((0 until 30).toList(), game.chosen)
         assertEquals(1, game.filterTaps)
         assertEquals(false, game.owned)
+    }
+
+    @Test fun collectsComplete129HeroRosterIncludingSingleLastCard() {
+        val game = Game(page = Page.BOARD, heroes = 129, owned = false).run(
+            heroesWanted = 300,
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3))
+        )
+        assertTrue("result=${game.outcome}", game.outcome is BoardReader.Outcome.Done)
+        assertEquals("no missing or repeated hero", (0 until 129).toList(), game.chosen)
+        assertEquals((0 until 129).toList(), game.finished)
+        assertEquals(129, (game.outcome as BoardReader.Outcome.Done).heroes)
+        assertEquals(129, game.kept.size)
+        assertEquals("hero-129-quoc-gia-01", game.kept.last())
+    }
+
+    @Test fun collectsRemainderOf137HeroRosterAfterResumingMidScroll() {
+        val game = Game(page = Page.PICKER, heroes = 137, owned = false, gridScroll = 1.1).run(
+            heroesWanted = 300,
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3)),
+            first = 125
+        )
+        assertTrue(game.outcome is BoardReader.Outcome.Done)
+        assertEquals((125 until 137).toList(), game.chosen)
+        assertEquals((125 until 137).toList(), game.finished)
+        assertEquals(12, (game.outcome as BoardReader.Outcome.Done).heroes)
+    }
+
+    @Test fun switchesBackToAllTabEveryTimeGameReopensAnotherRole() {
+        val game = Game(
+            page = Page.BOARD,
+            heroes = 17,
+            owned = false,
+            allSelected = false,
+            reselectOtherTab = true
+        ).run(
+            heroesWanted = 17,
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3))
+        )
+        assertEquals((0 until 17).toList(), game.chosen)
+        assertEquals(17, game.allTaps)
     }
 
     @Test fun doesNotToggleAnAlreadyOffFilterAndRechecksEveryOpening() {
