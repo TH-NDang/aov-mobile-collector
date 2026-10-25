@@ -27,7 +27,7 @@ class EventInviteImeRunnerTest {
         tickets = 19
     )
 
-    private class Fake(private val typed: Boolean, private val nextScene: EventInviteScreens.Scene? = null) : EventInviteRunner.Screen {
+    private inner class Fake(private val typed: Boolean, private val nextScene: EventInviteScreens.Scene? = null) : EventInviteRunner.Screen {
         override val alive get() = true
         var journal: JSONObject? = null
         var gameConfirmTaps = 0
