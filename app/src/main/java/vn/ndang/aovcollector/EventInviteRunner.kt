@@ -37,7 +37,8 @@ class EventInviteRunner(
 
         fun tap(x: Double, y: Double, then: (Boolean) -> Unit)
 
-        fun typeInviteCode(code: String, then: (Boolean) -> Unit)
+        /** True only after keyboard OK closed AND the code is visible back in the game popup. */
+        fun typeInviteCode(code: String, then: (Boolean, String?) -> Unit)
 
         /** Screenshot is retained only when it contains proof of a received reward or a known failure. */
         fun capture(name: String, then: (Boolean) -> Unit)
@@ -285,10 +286,19 @@ class EventInviteRunner(
         if (++confirmations > 3) return stop("Màn nhập mã chưa ổn định; dừng an toàn")
         note("Chọn tất cả, xóa mã có sẵn và nhập mã chương trình")
         // host must verify a real edit field, select all + clear before typing, AND read it back.
-        screen.typeInviteCode(code) { typed ->
+        screen.typeInviteCode(code) { typed, reason ->
             if (!active()) return@typeInviteCode
-            if (!typed) return@typeInviteCode stop("Không thay được toàn bộ mã mặc định hoặc chưa xác minh ô nhập")
-            after(500) { confirmInvite(0) }
+            if (!typed) {
+                // No game confirmation was sent. Leave journal phase=navigating,
+                // not submit_pending, so a failed keyboard interaction cannot
+                // poison the checkpoint as an allegedly submitted invitation.
+                return@typeInviteCode stop(
+                    reason ?: "Chưa nhập được mã qua thanh trắng của bàn phím; chưa bấm Xác nhận"
+                )
+            }
+            // The IME action can finish asynchronously; wait for the game
+            // to settle before locating its separate yellow Xác nhận button.
+            after(1050) { confirmInvite(0) }
         }
     }
 
