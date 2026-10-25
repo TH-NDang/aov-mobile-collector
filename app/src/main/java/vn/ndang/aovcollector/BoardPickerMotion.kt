@@ -24,8 +24,7 @@ internal object BoardPickerMotion {
         band = .022
     )
 
-    fun profile(width: Int, height: Int, readRow: (Int, IntArray) -> Unit): FloatArray =
-        HeroGrid.profile(width, height, layout, readRow)
+    fun profile(width: Int, height: Int, readRow: (Int, IntArray) -> Unit): FloatArray = HeroGrid.profile(width, height, layout, readRow)
 
     /**
      * Signed movement in screen heights: positive means content moved UP.

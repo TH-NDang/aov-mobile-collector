@@ -381,8 +381,10 @@ class BoardReader(
         val signature: IntArray
         val rows: List<Pair<Double, Double>>
         val ownedFilter: BoardScreens.OwnedFilter?
+
         /** The selected category must be Tất cả, independently of the Đã nhận checkbox. */
         val allSelected: Boolean
+
         /** Five RGB portrait columns over the scrollable region, never static row borders. */
         val pickerProfile: FloatArray
         val pickerHeight: Int
@@ -688,10 +690,9 @@ class BoardReader(
         }
     }
 
-    private fun validPicker(l: Look): Boolean =
-        l.rows.isNotEmpty() &&
-            l.pickerProfile.isNotEmpty() &&
-            l.pickerHeight >= 400
+    private fun validPicker(l: Look): Boolean = l.rows.isNotEmpty() &&
+        l.pickerProfile.isNotEmpty() &&
+        l.pickerHeight >= 400
 
     /**
      * Probe a small downward scroll to prove the viewport moves before resetting.
@@ -809,7 +810,8 @@ class BoardReader(
             // unloaded middle card or a missing detected row is not end-of-list.
             val occupied = (0..7).map { l.card(it, band.first, band.second) }
             val prefix = BoardPickerMotion.occupiedPrefix(occupied)
-            if (prefix != null && col >= prefix &&
+            if (prefix != null &&
+                col >= prefix &&
                 l.rows.last() == band &&
                 BoardPickerMotion.clearLastRow(l.rows)
             ) {

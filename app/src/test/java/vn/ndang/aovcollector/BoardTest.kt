@@ -63,6 +63,7 @@ class BoardTest {
         val height = 691
         for (lastCount in 1..4) {
             val pixels = IntArray(width * height) { 0xff33337e.toInt() }
+
             fun draw(row: Int, cards: Int) {
                 val top = ((.3426 + row * BoardScreens.ROW_PITCH) * height).toInt()
                 val bottom = (top + BoardScreens.CARD * height).toInt()
@@ -414,17 +415,21 @@ class BoardTest {
                 val rowId = floor(relative / (BoardScreens.ROW_PITCH * h)).toInt()
                 val local = relative - rowId * BoardScreens.ROW_PITCH * h
                 for (col in 0..4) {
-                    val portrait = rowId >= 0 && rowId < rowCount &&
+                    val portrait = rowId >= 0 &&
+                        rowId < rowCount &&
                         rowId * 8 + col < visibleHeroes &&
-                        local >= 0.0 && local < BoardScreens.CARD * h
+                        local >= 0.0 &&
+                        local < BoardScreens.CARD * h
                     for (channel in 0..2) {
                         val at = (y - y0) * 15 + col * 3 + channel
                         out[at] = if (!portrait) {
                             43.0f + channel * 6
                         } else {
                             val seed = (rowId * 53 + col * 83 + channel * 41) % 125
-                            (65.0 + seed + 18.0 * kotlin.math.sin(local / 13 + col + channel) +
-                                7.0 * kotlin.math.cos(local / 23 + channel)).toFloat()
+                            (
+                                65.0 + seed + 18.0 * kotlin.math.sin(local / 13 + col + channel) +
+                                    7.0 * kotlin.math.cos(local / 23 + channel)
+                                ).toFloat()
                         }
                     }
                 }
