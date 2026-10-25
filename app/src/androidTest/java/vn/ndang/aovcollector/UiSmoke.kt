@@ -1777,12 +1777,22 @@ class UiSmoke : Instrumentation() {
                     Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
                 )
             )
-            // Application Context.resources may keep its previous portrait Configuration when
-            // Android returns from an external clipboard receiver. The actual game-facing UI
-            // has already rotated; verify the *focused window* and screenshot geometry instead.
-            // This is stronger than trusting either a stale Context or a requested orientation.
-            waitFor("Collector did not show its own focused landscape window after pasting") {
-                automation.windows.any { window ->
+            // The external clipboard fixture uses the phone's natural portrait orientation.
+            // Returning to a multi-orientation app does NOT promise automatic landscape.
+            // This smoke suite needs landscape again to exercise a large game screenshot,
+            // so explicitly request it from the same Activity under test. A request alone
+            // is NOT proof: also require the focused window AND physical screenshot to
+            // become landscape before continuing.
+            runOnMainSync {
+                check(!activity.isDestroyed && !activity.isFinishing) {
+                    "The original collector Activity was destroyed during clipboard handoff"
+                }
+                activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE
+            }
+            var actualWidth = 0
+            var actualHeight = 0
+            waitFor("Collector did not restore a focused landscape display after clipboard handoff") {
+                val ownWindow = automation.windows.any { window ->
                     if (window.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION ||
                         !window.isFocused ||
                         window.root?.packageName?.toString() != targetContext.packageName
@@ -1794,21 +1804,28 @@ class UiSmoke : Instrumentation() {
                         actual.width() > actual.height() && actual.width() > 0
                     }
                 }
-            }
-            checkNotNull(automation.takeScreenshot()) { "No display screenshot after returning from clipboard app" }.let { shot ->
-                try {
-                    check(shot.width > shot.height) {
-                        "Physical display stayed portrait after pasting: ${shot.width}x${shot.height}"
+                if (!ownWindow) {
+                    false
+                } else {
+                    val shot = automation.takeScreenshot()
+                    if (shot == null) {
+                        false
+                    } else {
+                        try {
+                            actualWidth = shot.width
+                            actualHeight = shot.height
+                            shot.width > shot.height
+                        } finally {
+                            shot.recycle()
+                        }
                     }
-                    File(targetContext.filesDir, "smoke/clipboard-landscape.txt").writeText(
-                        "Screen=${shot.width}x${shot.height}; " +
-                            "contextOrientation=${targetContext.resources.configuration.orientation}; " +
-                            "actual focused AOV window is landscape"
-                    )
-                } finally {
-                    shot.recycle()
                 }
             }
+            File(targetContext.filesDir, "smoke/clipboard-landscape.txt").writeText(
+                "Physical=${actualWidth}x${actualHeight}; " +
+                    "contextOrientation=${targetContext.resources.configuration.orientation}; " +
+                    "requested=${activity.requestedOrientation}; focused collector window landscape=true"
+            )
             waitForIdleSync()
             SystemClock.sleep(500)
             // The receiving app can rotate the device; rotation intentionally closes the large preview.
