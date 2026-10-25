@@ -695,8 +695,7 @@ class BoardReader(
         l.pickerHeight >= 400
 
     /** A fourth row might appear as a sliver below the whole-row detector. */
-    private fun bottomSliver(l: Look): Boolean =
-        l.card(0, BoardScreens.VIEW_BOTTOM - .025, BoardScreens.VIEW_BOTTOM)
+    private fun bottomSliver(l: Look): Boolean = l.card(0, BoardScreens.VIEW_BOTTOM - .025, BoardScreens.VIEW_BOTTOM)
 
     /**
      * Probe a small downward scroll to prove the viewport moves before resetting.
