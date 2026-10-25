@@ -25,20 +25,6 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      # Temporary branch-only source formatting. Remove immediately after the
-      # autoformat commit; strict Check Kotlin formatting remains mandatory.
-      - name: Autoformat quota OCR Kotlin sources on fix branch
-        if: github.ref == 'refs/heads/codex/fix-event-invite-quota-ocr'
-        run: |
-          set -euo pipefail
-          ./tools/ktlint --format
-          if ! git diff --quiet -- '*.kt' '*.kts'; then
-            git config user.name "github-actions[bot]"
-            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-            git add -u -- '*.kt' '*.kts'
-            git commit -m "style: ktlint-format event quota OCR fix"
-            git push origin HEAD:refs/heads/codex/fix-event-invite-quota-ocr
-          fi
       - name: Check Kotlin formatting
         run: ./tools/ktlint
       - uses: android-actions/setup-android@v4
