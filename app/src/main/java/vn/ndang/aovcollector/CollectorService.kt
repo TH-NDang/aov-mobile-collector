@@ -2564,32 +2564,43 @@ class CollectorService : AccessibilityService() {
                                     // Re-read ONLY the quota band from this SAME verified modal,
                                     // at native resolution with a colour-aware contrast fallback.
                                     val focused = GameText.eventInviteQuota(bitmap)
-                                    val freshQuota = EventInviteScreens.quota(focused)
+                                    val textQuota = EventInviteScreens.quota(focused)
                                     val firstQuota = if (first.used != null && first.dailyLimit != null) {
                                         first.used to first.dailyLimit
                                     } else {
                                         null
                                     }
-                                    when {
-                                        focused.isEmpty() -> first
-                                        freshQuota != null && firstQuota != null && freshQuota != firstQuota -> {
-                                            // Conflicting observations: never submit, or skip an
-                                            // account as "1/1", until another clear frame exists.
-                                            first.copy(
-                                                words = words + focused,
-                                                used = null,
-                                                dailyLimit = null
-                                            )
-                                        }
-                                        freshQuota != null -> {
-                                            // Drop the small original OCR fragments, which can
-                                            // duplicate or scramble the same quota text.
-                                            EventInviteScreens.classify(
-                                                words.filterNot(EventInviteScreens::isQuotaWord) + focused
-                                            )
-                                        }
-                                        else -> EventInviteScreens.classify(words + focused)
+                                    // ML Kit can read "Hôm nay đã nhập / mã" yet omit BOTH
+                                    // magenta/orange numbers. In that exact case, the small
+                                    // colour shapes provide an independent 0/1 vs 1/1 reading.
+                                    // Never enable pixel matching on an unidentified page or
+                                    // when the daily-quota caption itself is not visible.
+                                    val hasCaption = (words + focused).any { word ->
+                                        EventInviteScreens.isQuotaWord(word) &&
+                                            (word.plain.contains("homnay") || word.plain.contains("danhap"))
                                     }
+                                    val byPixels = if (hasCaption) {
+                                        EventInviteQuotaPixels.read(bitmap.width, bitmap.height) { x, y ->
+                                            bitmap.getPixel(x, y)
+                                        }?.let { it.used to it.dailyLimit }
+                                    } else {
+                                        null
+                                    }
+                                    val observations = listOfNotNull(firstQuota, textQuota, byPixels).distinct()
+                                    val detectedQuota = observations.singleOrNull()
+                                    val verified = if (focused.isNotEmpty()) {
+                                        EventInviteScreens.classify(
+                                            words.filterNot(EventInviteScreens::isQuotaWord) + focused
+                                        )
+                                    } else {
+                                        first
+                                    }
+                                    // Conflicting, incomplete, or absent evidence is UNKNOWN;
+                                    // never submit a code or skip an account by guessing.
+                                    verified.copy(
+                                        used = detectedQuota?.first,
+                                        dailyLimit = detectedQuota?.second
+                                    )
                                 }
                             } catch (e: Throwable) {
                                 CrashLog.record(this@CollectorService, "Không đọc được popup sự kiện", e)
