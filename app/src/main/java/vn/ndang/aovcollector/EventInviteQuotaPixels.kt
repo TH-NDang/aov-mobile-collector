@@ -15,19 +15,15 @@ package vn.ndang.aovcollector
  */
 object EventInviteQuotaPixels {
     /** Diagnostic scores are non-sensitive and may be used by unit tests. */
-    data class Reading(
-        val used: Int,
-        val dailyLimit: Int,
-        val firstInk: Int,
-        val secondInk: Int,
-        val slashInk: Int
-    )
+    data class Reading(val used: Int, val dailyLimit: Int, val firstInk: Int, val secondInk: Int, val slashInk: Int)
 
     fun read(width: Int, height: Int, pixel: (Int, Int) -> Int): Reading? {
         if (width < 800 || height < 360 || width <= height) return null
 
         fun channelRed(rgb: Int) = (rgb ushr 16) and 255
+
         fun channelGreen(rgb: Int) = (rgb ushr 8) and 255
+
         fun channelBlue(rgb: Int) = rgb and 255
 
         fun colouredNumber(rgb: Int): Boolean {
