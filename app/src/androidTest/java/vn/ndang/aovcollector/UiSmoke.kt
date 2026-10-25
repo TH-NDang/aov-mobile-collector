@@ -162,42 +162,57 @@ class UiSmoke : Instrumentation() {
             val name = HeroNames.read(image)
             check(name != null && HeroNames.slug(name) == "elandorr") { "OCR returned $name" }
 
-            // Regression from a phone screenshot on 25/10/2026: the invite modal
-            // visibly says "Hôm nay đã nhập 0/1 mã", but half-resolution OCR
-            // missed the small magenta 0 and the macro refused to type any code.
-            // The fixture is ONLY the 253x36 quota strip, without UID, credentials,
-            // invite code, game profile, or other user information.
-            val quotaFixture = context.assets.open("invite-quota-0of1.webp.b64").bufferedReader().use {
-                android.util.Base64.decode(it.readText().trim(), android.util.Base64.DEFAULT)
+            // Real user screenshots from 25/10/2026. Tiny pink/gold 0 and 1 are
+            // completely absent from ML Kit OCR even after 3x enlargement.
+            // These privacy-cropped strips contain NO UID, credentials or invite code.
+            fun checkRealQuota(asset: String, expected: Int) {
+                val compressed = context.assets.open(asset).bufferedReader().use {
+                    android.util.Base64.decode(it.readText().trim(), android.util.Base64.DEFAULT)
+                }
+                val strip = checkNotNull(BitmapFactory.decodeByteArray(compressed, 0, compressed.size)) {
+                    "Cannot decode real event quota pixel fixture: $asset"
+                }
+                val frame = Bitmap.createBitmap(1536, 691, Bitmap.Config.ARGB_8888)
+                Canvas(frame).apply {
+                    drawColor(Color.rgb(116, 83, 219))
+                    drawBitmap(strip, 663f, 358f, null)
+                }
+                strip.recycle()
+                val words = GameText.eventInviteQuota(frame)
+                val textQuota = EventInviteScreens.quota(words)
+                val caption = words.any { word ->
+                    EventInviteScreens.isQuotaWord(word) &&
+                        (word.plain.contains("homnay") || word.plain.contains("danhap"))
+                }
+                val pixelEvidence = if (caption) {
+                    EventInviteQuotaPixels.read(frame.width, frame.height) { x, y -> frame.getPixel(x, y) }
+                } else {
+                    null
+                }
+                frame.recycle()
+                val pixelQuota = pixelEvidence?.let { it.used to it.dailyLimit }
+                val decision = if (textQuota != null && pixelQuota != null && textQuota != pixelQuota) {
+                    null
+                } else {
+                    textQuota ?: pixelQuota
+                }
+                File(targetContext.filesDir, "smoke/event-invite-quota-$expected.txt").apply {
+                    parentFile?.mkdirs()
+                    writeText(
+                        "textQuota=$textQuota; pixelQuota=$pixelQuota; evidence=$pixelEvidence; final=$decision\n" +
+                            words.joinToString("\n") { word ->
+                                "%.3f %.3f %s".format(word.x, word.y, word.text)
+                            }
+                    )
+                }
+                check(decision == (expected to 1)) {
+                    "Real user image quota $expected/1 not verified: text=$textQuota; " +
+                        "pixels=$pixelEvidence; caption=$caption; words=" + words.map { it.text }
+                }
             }
-            val quotaFragment = checkNotNull(
-                BitmapFactory.decodeByteArray(quotaFixture, 0, quotaFixture.size)
-            ) { "Cannot decode privacy-cropped 0/1 event quota regression fixture" }
-            val quotaScene = Bitmap.createBitmap(1536, 691, Bitmap.Config.ARGB_8888)
-            Canvas(quotaScene).apply {
-                drawColor(Color.rgb(116, 83, 219))
-                drawBitmap(quotaFragment, 663f, 358f, null)
-            }
-            quotaFragment.recycle()
-            val quotaReading = try {
-                GameText.eventInviteQuota(quotaScene)
-            } finally {
-                quotaScene.recycle()
-            }
-            val quotaDecision = EventInviteScreens.quota(quotaReading)
-            File(targetContext.filesDir, "smoke/event-invite-quota.txt").apply {
-                parentFile?.mkdirs()
-                writeText(
-                    "quota=" + quotaDecision + "\n" +
-                        quotaReading.joinToString("\n") { word ->
-                            "%.3f %.3f %s".format(word.x, word.y, word.text)
-                        }
-                )
-            }
-            check(quotaDecision == (0 to 1)) {
-                "Real screenshot quota OCR must read 0/1 before accepting invite code; got " +
-                    quotaDecision + "; recognized " + quotaReading.map { it.text }
-            }
+
+            checkRealQuota("invite-quota-0of1.webp.b64", 0)
+            checkRealQuota("invite-quota-1of1.webp.b64", 1)
             // Qi's name region from a real run, where ML Kit read nothing.
             val qi = Bitmap.createBitmap(2400, 1080, Bitmap.Config.ARGB_8888)
             context.assets.open("qi-name.png").use { BitmapFactory.decodeStream(it) }.let {
