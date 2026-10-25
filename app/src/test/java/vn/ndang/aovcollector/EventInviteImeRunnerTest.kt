@@ -116,7 +116,10 @@ class EventInviteImeRunnerTest {
     }
 
     @Test fun pendingSubmissionIsNeverRetriedWithAnotherKeyboardEntry() {
-        val fake = Fake().apply { typed = false; nextScene = invite }
+        val fake = Fake().apply {
+            typed = false
+            nextScene = invite
+        }
         val prior = EventInviteLedger.new(listOf(key), "b".repeat(64))
         prior.put("phase", "submit_pending")
         fake.journal = prior
