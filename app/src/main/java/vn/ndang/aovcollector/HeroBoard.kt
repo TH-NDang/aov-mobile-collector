@@ -246,45 +246,52 @@ object BoardScreens {
     const val VIEW_TOP = .285
     const val VIEW_BOTTOM = .891
 
-    /** Bands of rows of cards on screen, as (top, bottom) fractions: cut ones at the window's edges too. */
+    /**
+     * Detect row bands from the FIRST portrait column, not a majority of all eight.
+     * The old "more than half of eight" rule erased the last row whenever it had
+     * 1–4 heroes and silently marked the roster finished too soon.
+     *
+     * A short sliver near either clipping edge is allowed here; seeking a card
+     * separately requires an entire measured row.
+     */
     fun rows(width: Int, height: Int, readRow: (Int, IntArray) -> Unit): List<Pair<Double, Double>> {
-        val y0 = (VIEW_TOP * height).toInt()
-        val y1 = (VIEW_BOTTOM * height).toInt()
-        val line = IntArray(width)
+        if (height < 400 || width <= height) return emptyList()
+        val top = (VIEW_TOP * height).toInt()
+        val bottom = (VIEW_BOTTOM * height).toInt()
+        val center = (COLUMNS[0] * width).toInt()
         val half = (.022 * width).toInt()
-        val bands = ArrayList<Pair<Double, Double>>()
+        val row = IntArray(width)
+        val result = ArrayList<Pair<Double, Double>>()
         var start = -1
-        for (y in y0..y1) {
-            readRow(y, line)
-            // The background between the columns, which shades from top to bottom.
-            val bg = listOf(.2615, .6605).map { line[(it * width).toInt()] }
-            var off = 0
-            var all = 0
-            for (c in COLUMNS) {
-                val cx = (c * width).toInt()
-                var x = cx - half
-                while (x <= cx + half) {
-                    val p = line[x]
-                    all++
-                    if (bg.minOf { b ->
-                            abs((p shr 16 and 255) - (b shr 16 and 255)) + abs((p shr 8 and 255) - (b shr 8 and 255)) +
-                                abs((p and 255) - (b and 255))
-                        } >
-                        60
-                    ) {
-                        off++
-                    }
-                    x += 2
+        var lastHit = -1
+        for (y in top..bottom) {
+            readRow(y, row)
+            val bg = row[(.2615 * width).toInt()]
+            var changed = 0
+            var total = 0
+            for (x in center - half..center + half step 2) {
+                val p = row[x]
+                if (abs((p shr 16 and 255) - (bg shr 16 and 255)) +
+                    abs((p shr 8 and 255) - (bg shr 8 and 255)) +
+                    abs((p and 255) - (bg and 255)) > 60
+                ) {
+                    changed++
                 }
+                total++
             }
-            val card = off > .5 * all && y < y1
-            if (card && start < 0) start = y
-            if (!card && start >= 0) {
-                if (y - start > .02 * height) bands.add(start.toDouble() / height to y.toDouble() / height)
+            val occupied = changed > total * .5 && y < bottom
+            if (occupied) {
+                if (start < 0) start = y
+                lastHit = y
+            }
+            if (start >= 0 && ((!occupied && y - lastHit > height * .008) || y == bottom)) {
+                if (lastHit - start >= height * .020) {
+                    result += start.toDouble() / height to (lastHit + 1).toDouble() / height
+                }
                 start = -1
             }
         }
-        return bands
+        return result
     }
 
     /** Whether the card at [col] of the band [top]–[bottom] is there: the last row may be short. */
