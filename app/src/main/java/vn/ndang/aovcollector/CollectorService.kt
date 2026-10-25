@@ -3113,7 +3113,7 @@ class CollectorService : AccessibilityService() {
                         if (!outerShieldReleased && watchdog.elapsedMs > 8_000L) {
                             outerShieldReleased = true
                             captureShield.release(transaction)
-                            screen.say("Cờ: đang đối chiếu ảnh gốc; nút Dừng/Tiếp tục vẫn dùng được")
+                            say("Cờ: đang đối chiếu ảnh gốc; nút Dừng/Tiếp tục vẫn dùng được")
                         }
                         handler.postDelayed(timeout!!, 1_500L)
                     }
