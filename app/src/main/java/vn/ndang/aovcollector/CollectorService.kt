@@ -3125,7 +3125,14 @@ class CollectorService : AccessibilityService() {
                     }
 
                     fun tapNative(x: Double, y: Double, done: (Boolean) -> Unit) {
-                        if (active()) touchGame(tapAt(x, y), true) { if (active()) { if (it) watchdog.advanced(NativeSaveWatchdog.Stage.SURE_PRESSED); done(it) } }
+                        if (active()) {
+                            touchGame(tapAt(x, y), true) {
+                                if (active()) {
+                                    if (it) watchdog.advanced(NativeSaveWatchdog.Stage.SURE_PRESSED)
+                                    done(it)
+                                }
+                            }
+                        }
                     }
 
                     fun readPrompt(done: (Pair<List<GameScreens.Word>, NativeSaveEvidence.Scene>?) -> Unit) {
