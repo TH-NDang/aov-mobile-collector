@@ -694,6 +694,10 @@ class BoardReader(
         l.pickerProfile.isNotEmpty() &&
         l.pickerHeight >= 400
 
+    /** A fourth row might appear as a sliver below the whole-row detector. */
+    private fun bottomSliver(l: Look): Boolean =
+        l.card(0, BoardScreens.VIEW_BOTTOM - .025, BoardScreens.VIEW_BOTTOM)
+
     /**
      * Probe a small downward scroll to prove the viewport moves before resetting.
      * With a truly short, fully visible list the probe may not move at all.
@@ -749,7 +753,8 @@ class BoardReader(
                 val movedBack = resetMoved || !same
                 if (stable >= 2) {
                     val fullyVisibleShortList = BoardPickerMotion.validTop(after.rows) &&
-                        BoardPickerMotion.clearLastRow(after.rows)
+                        BoardPickerMotion.clearLastRow(after.rows) &&
+                        !bottomSliver(after)
                     if (!movedBack && !probeMoved && !fullyVisibleShortList) {
                         after.done("board-picker-top")
                         return@look fail("Cuộn không dịch chuyển và chưa chứng minh được đầu danh sách; không chọn nhầm tướng.")
@@ -851,7 +856,7 @@ class BoardReader(
 
     /** Prove the end by two independent stationary downward probes with a whole last row. */
     private fun confirmEnd(l: Look, still: Int) {
-        if (!validPicker(l) || !BoardPickerMotion.clearLastRow(l.rows)) {
+        if (!validPicker(l) || !BoardPickerMotion.clearLastRow(l.rows) || bottomSliver(l)) {
             l.done("board-picker-end")
             return fail("Danh sách không cuộn nhưng chưa thấy hàng cuối đầy đủ và khoảng trống phía dưới.")
         }
