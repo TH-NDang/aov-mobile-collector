@@ -101,12 +101,20 @@ object EventInviteScreens {
         return fromSentence.singleOrNull()
     }
 
-    /** Only numbers in the central reward card can count as tickets. Never read the bottom UID. */
-    private fun tickets(words: List<GameScreens.Word>): Int? = words
-        .filter { it.x in .37..0.63 && it.y in .30..0.59 }
-        .mapNotNull { Regex("^(\\d{1,4})$").matchEntire(it.plain)?.groupValues?.get(1)?.toIntOrNull() }
-        .filter { it in 1..9999 }
-        .firstOrNull()
+    /** Quantity must belong to the central ticket card, not a balance, quota, UID or reward range. */
+    fun rewardTickets(words: List<GameScreens.Word>): Int? {
+        val labels = words.filter { "venhay" in it.plain && it.x in .37..0.63 && it.y in .43..0.62 }
+        if (labels.isEmpty()) return null
+        val amount = Regex("""(?i)^(?:[x×]\s*)?(\d{1,4})(?:\s*vé\s+nhảy)?$""")
+        val values = words.filter { word ->
+            word.x in .37..0.63 &&
+                word.y in .30..0.60 &&
+                labels.any { abs(word.x - it.x) < .10 && word.y <= it.y + .025 && it.y - word.y < .20 }
+        }.mapNotNull { word ->
+            amount.matchEntire(word.text.trim())?.groupValues?.get(1)?.toIntOrNull()
+        }.filter { it in 1..9999 }.distinct()
+        return values.singleOrNull()
+    }
 
     fun classify(words: List<GameScreens.Word>, isLobby: Boolean = false): Scene {
         fun scene(kind: Kind, value: Int? = null): Scene {
@@ -117,7 +125,7 @@ object EventInviteScreens {
             (includes(words, "nhanduoc") || includes(words, "bandanhanduoc"))
         val rewardTicket = includes(words, "venhay")
         if (reward && (includes(words, "chamdetieptuc") || includes(words, "nhandetieptuc"))) {
-            return scene(Kind.REWARD, if (rewardTicket) tickets(words) else null)
+            return scene(Kind.REWARD, if (rewardTicket) rewardTickets(words) else null)
         }
         if (includes(words, "kichhoathieuungtrolai")) return scene(Kind.RETURN_EFFECT)
         if (includes(words, "hotrobanbe") &&
@@ -173,7 +181,7 @@ object EventInviteScreens {
 
 /** Bounded, deterministic journal metadata; never includes login credentials or the plaintext invitation code. */
 object EventInviteLedger {
-    const val SCHEMA = 1
+    const val SCHEMA = 2
     const val MAX_ACCOUNTS = 80
     val VALID_STATES = setOf("pending", "login", "navigating", "submit_pending", "done", "used", "rejected")
 
@@ -190,34 +198,86 @@ object EventInviteLedger {
             .put("results", org.json.JSONObject())
             .put("gifts", 0)
             .put("tickets", 0)
+            .put("unknownTickets", 0)
             .put("complete", false)
     }
 
     fun validate(journal: org.json.JSONObject, accounts: List<String>, codeFingerprint: String): Boolean {
-        if (journal.optInt("schema") != SCHEMA || journal.optString("codeFingerprint") != codeFingerprint) return false
+        if (journal.optInt("schema") !in setOf(1, SCHEMA) || journal.optString("codeFingerprint") != codeFingerprint) return false
         val stored = journal.optJSONArray("accounts") ?: return false
         val keys = (0 until stored.length()).map { stored.optString(it) }
-        return keys == accounts &&
+        val valid = keys == accounts &&
             journal.optInt("next", -1) in 0..accounts.size &&
             journal.optString("phase") in VALID_STATES &&
             journal.optJSONObject("results") != null &&
             journal.optInt("gifts", -1) >= 0 &&
             journal.optInt("tickets", -1) >= 0
+        if (!valid) return false
+        // Schema 1 wrote unread receipt amounts as zero. Keep completion and submit
+        // checkpoints intact: recovering a count must never replay an invitation.
+        val results = journal.getJSONObject("results")
+        for (key in results.keys()) {
+            val result = results.optJSONObject(key) ?: continue
+            if (knownTickets(result, journal.optInt("schema") == 1) == null) result.put("tickets", org.json.JSONObject.NULL)
+        }
+        journal.put("schema", SCHEMA)
+        updateTotals(journal)
+        return true
     }
 
-    fun completed(journal: org.json.JSONObject, key: String, status: String, gifts: Int, tickets: Int) {
+    private fun knownTickets(result: org.json.JSONObject, legacy: Boolean): Int? {
+        val raw = result.opt("tickets") as? Number ?: return null
+        val count = raw.toInt()
+        if (raw.toDouble() != count.toDouble() || count !in 0..9999) return null
+        // A confirmed ticket receipt has a positive amount; historical zero is unread.
+        return count.takeUnless { it == 0 && (result.optString("status") == "done" || (legacy && result.optString("status") == "used")) }
+    }
+
+    private fun ticketTotals(journal: org.json.JSONObject): Pair<Int, Int> {
+        val results = journal.optJSONObject("results") ?: return 0 to 1
+        var known = 0
+        var unknown = (journal.optInt("next", 0) - results.length()).coerceAtLeast(0)
+        for (key in results.keys()) {
+            val result = results.optJSONObject(key)
+            val count = result?.let { knownTickets(it, journal.optInt("schema") == 1) }
+            if (count == null) unknown++ else known += count
+        }
+        return known to unknown
+    }
+
+    private fun updateTotals(journal: org.json.JSONObject) {
+        val (known, unknown) = ticketTotals(journal)
+        journal.put("tickets", known)
+        journal.put("unknownTickets", unknown)
+    }
+
+    fun ticketSummary(journal: org.json.JSONObject?): String {
+        if (journal == null) return "Chưa có số Vé nhảy"
+        val (known, unknown) = ticketTotals(journal)
+        return if (unknown > 0 && known == 0) {
+            "Vé nhảy: chưa rõ · $unknown kết quả chưa rõ số lượng"
+        } else if (unknown > 0) {
+            "Đã đọc $known Vé nhảy · $unknown kết quả chưa rõ số lượng"
+        } else {
+            "$known Vé nhảy"
+        }
+    }
+
+    fun completed(journal: org.json.JSONObject, key: String, status: String, gifts: Int, tickets: Int?) {
         require(status in setOf("done", "used", "rejected"))
-        require(gifts in 0..10 && tickets in 0..9999)
+        require(gifts in 0..10 && (tickets == null || tickets in 0..9999))
         val results = journal.getJSONObject("results")
         require(!results.has(key)) { "Tài khoản đã ghi nhận kết quả; không cộng quà hai lần" }
+        val known = tickets.takeUnless { status == "done" && it == 0 }
         results.put(
             key,
-            org.json.JSONObject().put("status", status).put("gifts", gifts).put("tickets", tickets)
+            org.json.JSONObject().put("status", status).put("gifts", gifts)
+                .put("tickets", known ?: org.json.JSONObject.NULL)
                 .put("time", System.currentTimeMillis())
         )
         journal.put("gifts", journal.getInt("gifts") + gifts)
-        journal.put("tickets", journal.getInt("tickets") + tickets)
         journal.put("next", journal.getInt("next") + 1)
+        updateTotals(journal)
         journal.put("phase", "pending")
         journal.remove("imeVerifiedFor")
         journal.remove("active")

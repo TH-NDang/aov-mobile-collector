@@ -20,6 +20,20 @@ class EventInviteScreensTest {
         word("Xác nhận", .5, .68)
     )
 
+    @Test fun rewardCountRequiresItsCardAndRejectsConflictsAndUnrelatedNumbers() {
+        val label = word("Vé nhảy", .50, .55)
+        assertEquals(19, EventInviteScreens.rewardTickets(listOf(label, word("19", .52, .48))))
+        assertEquals(19, EventInviteScreens.rewardTickets(listOf(word("19 Vé nhảy", .50, .54))))
+        assertEquals(19, EventInviteScreens.rewardTickets(listOf(label, word("x19", .52, .48), word("19", .52, .48))))
+        assertNull(EventInviteScreens.rewardTickets(listOf(label, word("19", .52, .48), word("18", .52, .48))))
+        for (value in listOf("6-38", "6–38", "1/1", "UID 19", "19 38")) {
+            assertNull(value, EventInviteScreens.rewardTickets(listOf(label, word(value, .52, .48))))
+        }
+        assertNull(EventInviteScreens.rewardTickets(listOf(label, word("38", .88, .10))))
+        assertNull(EventInviteScreens.rewardTickets(listOf(word("19", .52, .48))))
+        assertNull(EventInviteScreens.rewardTickets(listOf(label)))
+    }
+
     @Test fun classifyInviteAndItsQuotaWithoutStrippingSlash() {
         val open = EventInviteScreens.classify(modal)
         assertEquals(EventInviteScreens.Kind.INVITE, open.kind)

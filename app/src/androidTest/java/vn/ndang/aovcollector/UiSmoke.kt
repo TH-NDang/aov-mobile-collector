@@ -162,6 +162,29 @@ class UiSmoke : Instrumentation() {
             val name = HeroNames.read(image)
             check(name != null && HeroNames.slug(name) == "elandorr") { "OCR returned $name" }
 
+            // Synthetic receipt only: no user screenshot, UID, code or account data.
+            val receiptMock = Bitmap.createBitmap(2048, 921, Bitmap.Config.ARGB_8888)
+            Canvas(receiptMock).apply {
+                drawColor(Color.rgb(39, 39, 67))
+                val ink = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.WHITE
+                    textSize = 22f
+                }
+                drawText("19", 1050f, 450f, ink)
+                ink.textSize = 26f
+                drawText("Vé nhảy", 980f, 510f, ink)
+                drawText("38", 1800f, 100f, ink)
+                drawText("1/1", 1600f, 700f, ink)
+            }
+            val receiptWords = try {
+                GameText.eventInviteReward(receiptMock)
+            } finally {
+                receiptMock.recycle()
+            }
+            check(EventInviteScreens.rewardTickets(receiptWords) == 19) {
+                "Focused ticket receipt OCR did not read 19: $receiptWords"
+            }
+
             // Unity in landscape opens the Android IME's white extract bar above
             // its keyboard. The real phone places OK at the upper right, separate
             // from the game's yellow "Xác nhận" button. Test this OCR-only

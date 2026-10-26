@@ -28,6 +28,8 @@ class EventInviteImeRunnerTest {
     )
 
     private inner class Fake : EventInviteRunner.Screen {
+        var rewardLooks = 0
+        var readings: List<Int?>? = null
         var typed = false
         var nextScene: EventInviteScreens.Scene? = null
         override val alive get() = true
@@ -48,7 +50,19 @@ class EventInviteImeRunnerTest {
         override fun login(key: String, then: (Boolean, String?) -> Unit) = then(true, null)
 
         override fun look(then: (EventInviteRunner.Look?) -> Unit) {
-            val observed = if (gameConfirmTaps > 0) nextScene ?: invite else invite
+            val observed = if (gameConfirmTaps > 0 || journal?.optString("phase") == "submit_pending") {
+                val scene = nextScene ?: invite
+                if (scene.kind == EventInviteScreens.Kind.REWARD) {
+                    val samples = readings
+                    val value = samples?.get(rewardLooks.coerceAtMost(samples.lastIndex)) ?: if (samples == null) scene.tickets else null
+                    rewardLooks++
+                    scene.copy(tickets = value)
+                } else {
+                    scene
+                }
+            } else {
+                invite
+            }
             then(object : EventInviteRunner.Look {
                 override val scene: EventInviteScreens.Scene = observed
 
@@ -130,5 +144,50 @@ class EventInviteImeRunnerTest {
         assertEquals(0, fake.typedCalls)
         assertEquals(0, fake.gameConfirmTaps)
         assertEquals(0, fake.journal?.getInt("gifts"))
+    }
+
+    @Test fun missingAndConflictingQuantitiesStayUnknownWithoutAnotherSubmit() {
+        for (samples in listOf(listOf(null, null, null, null), listOf(19, 18, 19, 19))) {
+            val fake = Fake().apply {
+                typed = true
+                nextScene = reward
+                readings = samples
+            }
+            EventInviteRunner(listOf(key), code, "b".repeat(64), fake) {}.start()
+            assertEquals(1, fake.gameConfirmTaps)
+            assertEquals(4, fake.rewardLooks)
+            assertTrue(fake.savedReceipt)
+            assertTrue(fake.journal!!.getJSONObject("results").getJSONObject(key).isNull("tickets"))
+            assertTrue(fake.output.contains("chưa rõ"))
+            // Completed journal and still-visible popup must not add the same receipt twice.
+            EventInviteRunner(listOf(key), code, "b".repeat(64), fake) {}.start()
+            assertEquals(1, fake.gameConfirmTaps)
+            assertEquals(1, fake.journal!!.getInt("gifts"))
+        }
+    }
+
+    @Test fun focusedRereadRecoversCountAndPendingResumeNeverSubmitsAgain() {
+        val fake = Fake().apply {
+            nextScene = reward
+            readings = listOf(null, 19, 19)
+            journal = EventInviteLedger.new(listOf(key), "b".repeat(64))
+                .put("phase", "submit_pending").put("imeVerifiedFor", key)
+        }
+        EventInviteRunner(listOf(key), code, "b".repeat(64), fake) {}.start()
+        assertEquals(0, fake.typedCalls)
+        assertEquals(0, fake.gameConfirmTaps)
+        assertEquals(3, fake.rewardLooks)
+        assertEquals(19, fake.journal!!.getInt("tickets"))
+    }
+
+    @Test fun quotaAfterSubmissionIsNotProofOfZeroTicketsOrOfAReceipt() {
+        val fake = Fake().apply {
+            typed = true
+            nextScene = invite.copy(used = 1)
+        }
+        EventInviteRunner(listOf(key), code, "b".repeat(64), fake) {}.start()
+        assertEquals(1, fake.gameConfirmTaps)
+        assertEquals(0, fake.journal!!.getInt("gifts"))
+        assertTrue(fake.journal!!.getJSONObject("results").getJSONObject(key).isNull("tickets"))
     }
 }

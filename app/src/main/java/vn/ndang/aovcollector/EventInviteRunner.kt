@@ -60,6 +60,7 @@ class EventInviteRunner(
     private var loginAttempts = 0
     private var navigating = false
     private var submittedThisSession = false
+    private val rewardReadings = mutableListOf<Int?>()
 
     private fun active() = !ended && screen.alive
 
@@ -81,7 +82,7 @@ class EventInviteRunner(
         if (active()) {
             screen.say(
                 "Sự kiện ${accountIndex + 1}/${keys.size} · $message · " +
-                    "${ledger.optInt("gifts")} quà · ${ledger.optInt("tickets")} Vé nhảy"
+                    "${ledger.optInt("gifts")} quà · ${EventInviteLedger.ticketSummary(ledger)}"
             )
         }
     }
@@ -132,6 +133,7 @@ class EventInviteRunner(
             }
             saved
         }
+        if (saved != null && !save()) return
         accountIndex = ledger.optInt("next", 0)
         if (ledger.optBoolean("complete")) {
             success()
@@ -158,7 +160,7 @@ class EventInviteRunner(
     }
 
     private fun summary(): String =
-        "Hoàn thành ${keys.size} tài khoản · ${ledger.optInt("gifts")} quà · ${ledger.optInt("tickets")} Vé nhảy"
+        "Hoàn thành ${keys.size} tài khoản · ${ledger.optInt("gifts")} quà · ${EventInviteLedger.ticketSummary(ledger)}"
 
     private fun success() {
         if (ended) return
@@ -183,6 +185,7 @@ class EventInviteRunner(
         bonusPending = false
         navigating = false
         submittedThisSession = false
+        rewardReadings.clear()
         ledger.remove("imeVerifiedFor")
         ledger.put("active", keys[accountIndex]).put("phase", "login")
         if (!save()) return
@@ -352,7 +355,15 @@ class EventInviteRunner(
                         image.done("non-ticket-reward")
                         return@look stop("Popup sau mã mời không ghi Vé nhảy; không cộng quà chưa xác minh")
                     }
-                    val tickets = scene.tickets ?: 0
+                    rewardReadings.add(scene.tickets)
+                    val distinct = rewardReadings.filterNotNull().distinct()
+                    val stable = distinct.singleOrNull()?.takeIf { value -> rewardReadings.count { it == value } >= 2 }
+                    if (stable == null && rewardReadings.size < 4 && rechecks < 6) {
+                        image.done()
+                        note("Đọc lại số Vé nhảy trên cùng popup, không gửi lại mã")
+                        return@look after(650) { inspectSubmission(rechecks + 1) }
+                    }
+                    val tickets = stable
                     val name = "event-%02d-invite-reward".format(accountIndex + 1)
                     // Commit the EXACT recognized screenshot before recording the reward.
                     image.keep(name) { kept ->
@@ -366,7 +377,7 @@ class EventInviteRunner(
                     if (EventInviteScreens.dailyUsed(scene) && rechecks >= 3) {
                         // Limit changed 0/1 -> 1/1, but reward popup was not observed.
                         // Count NO gift without evidence. Do not submit again.
-                        complete("used", bonuses, 0)
+                        complete("used", bonuses, null)
                     } else {
                         after(900) { inspectSubmission(rechecks + 1) }
                     }
@@ -383,7 +394,7 @@ class EventInviteRunner(
         }
     }
 
-    private fun complete(result: String, gifts: Int, tickets: Int) {
+    private fun complete(result: String, gifts: Int, tickets: Int?) {
         if (!active()) return
         try {
             EventInviteLedger.completed(ledger, keys[accountIndex], result, gifts, tickets)
@@ -391,7 +402,7 @@ class EventInviteRunner(
             return stop("Tiến độ quà bị trùng hoặc không hợp lệ: ${e.message}")
         }
         if (!save()) return
-        note("Đã ghi nhận tài khoản; quà thực nhận $gifts, Vé nhảy $tickets")
+        note("Đã ghi nhận tài khoản; quà thực nhận $gifts, Vé nhảy ${tickets ?: "chưa rõ"}")
         if (ledger.optBoolean("complete")) {
             success()
         } else {

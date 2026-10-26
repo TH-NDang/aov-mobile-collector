@@ -49,7 +49,7 @@ jobs:
             echo "Validating $APK"
             test -s "$APK"
             "$AAPT" dump badging "$APK" > /tmp/collector-badging.txt
-            grep -q "package: name='vn.ndang.aovcollector' versionCode='59' versionName='0.13.28'" /tmp/collector-badging.txt
+            grep -q "package: name='vn.ndang.aovcollector' versionCode='60' versionName='0.13.29'" /tmp/collector-badging.txt
             grep -q "application-icon-" /tmp/collector-badging.txt
             grep -q "ic_launcher" /tmp/collector-badging.txt
             "$SIGNER" verify --print-certs "$APK"

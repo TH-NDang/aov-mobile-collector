@@ -525,7 +525,7 @@ class CollectorService : AccessibilityService() {
             val finished = state?.optInt("next", 0) ?: 0
             val total = m.json.optInt("accountCount", 0)
             return "Mã mời · $finished/$total tài khoản · ${state?.optInt("gifts",0) ?: 0} quà · " +
-                "${state?.optInt("tickets",0) ?: 0} Vé nhảy · ${clock(elapsed())}"
+                "${EventInviteLedger.ticketSummary(state)} · ${clock(elapsed())}"
         }
         // Heroes by name go as the list does, one block of steps a hero.
         val all = m.json.optString("collectionMode") in LISTED
@@ -2557,7 +2557,10 @@ class CollectorService : AccessibilityService() {
                                 }
                                 val words = hierarchy + GameText.words(bitmap)
                                 val first = EventInviteScreens.classify(words, pixels.kind == GameScreens.Kind.LOBBY)
-                                if (first.kind != EventInviteScreens.Kind.INVITE) {
+                                if (first.kind == EventInviteScreens.Kind.REWARD) {
+                                    val receiptWords = words + GameText.eventInviteReward(bitmap)
+                                    first.copy(words = receiptWords, tickets = EventInviteScreens.rewardTickets(receiptWords))
+                                } else if (first.kind != EventInviteScreens.Kind.INVITE) {
                                     first
                                 } else {
                                     // Full-screen OCR is half-sized and the 0/1 label is tiny.

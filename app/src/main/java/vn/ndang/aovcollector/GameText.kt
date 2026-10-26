@@ -44,6 +44,9 @@ object GameText {
     fun rankingHeader(screen: Bitmap) =
         rankingCrop(screen, RankScreens.LINK_LEFT, RankScreens.LINK_TOP, RankScreens.LINK_RIGHT, RankScreens.LINK_BOTTOM)
 
+    /** Read the small receipt quantity and caption together, only on a verified reward popup. */
+    fun eventInviteReward(screen: Bitmap): List<GameScreens.Word> = rankingCrop(screen, .37, .30, .64, .62, scale = 3)
+
     /**
      * Native-resolution recovery for the small "Hôm nay đã nhập 0/1 mã" text.
      * Called ONLY after whole-screen OCR has verified an "Hỗ trợ bạn bè" modal.
@@ -150,7 +153,14 @@ object GameText {
         }
     }
 
-    private fun rankingCrop(screen: Bitmap, left: Double, top: Double, right: Double, bottom: Double): List<GameScreens.Word> {
+    private fun rankingCrop(
+        screen: Bitmap,
+        left: Double,
+        top: Double,
+        right: Double,
+        bottom: Double,
+        scale: Int = 2
+    ): List<GameScreens.Word> {
         if (screen.width <= screen.height) return emptyList()
         val x0 = (screen.width * left).toInt()
         val y0 = (screen.height * top).toInt()
@@ -158,16 +168,16 @@ object GameText {
         val height = (screen.height * (bottom - top)).toInt().coerceAtMost(screen.height - y0)
         if (width < 1 || height < 1) return emptyList()
         val crop = Bitmap.createBitmap(screen, x0, y0, width, height)
-        val enlarged = Bitmap.createScaledBitmap(crop, width * 2, height * 2, true)
+        val enlarged = Bitmap.createScaledBitmap(crop, width * scale, height * scale, true)
         crop.recycle()
         val text = ocr(enlarged) ?: return emptyList()
 
         fun located(value: String, b: android.graphics.Rect) = GameScreens.Word(
             value,
-            (x0 + b.left / 2.0) / screen.width,
-            (y0 + b.top / 2.0) / screen.height,
-            (x0 + b.right / 2.0) / screen.width,
-            (y0 + b.bottom / 2.0) / screen.height
+            (x0 + b.left / scale.toDouble()) / screen.width,
+            (y0 + b.top / scale.toDouble()) / screen.height,
+            (x0 + b.right / scale.toDouble()) / screen.width,
+            (y0 + b.bottom / scale.toDouble()) / screen.height
         )
         return text.textBlocks.flatMap { it.lines }.flatMap { line ->
             buildList {
