@@ -1369,6 +1369,12 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                 frame.discard()
                 return
             }
+            if (!frame.modal) {
+                ended = true
+                frame.discard()
+                fail("Chi tiết " + folder + " đã đóng ngoài dự kiến; kiểm tra rồi Tiếp tục.")
+                return
+            }
             reads++
             val icons = frame.skillIcons().mapNotNull { frame.nativeIconSignature(it.x, it.y) }
             when (readiness.observe(screen.monotonicMs, screen.alive && !completed, frame.modal, frame.signature, icons)) {
