@@ -31,6 +31,15 @@ object NativePhotoReceipt {
         return possible.none { !it.readable || it.matches || it.ambiguous } && (possible.isEmpty() || hasSignature)
     }
 
+    /** Diagnostics contain counts only, never gallery filenames or document IDs. */
+    fun explain(startedAt: Long, endsAt: Long, candidates: List<Candidate>, hasSignature: Boolean): String {
+        val possible = candidates.filter { it.modified > 0 && it.modified >= startedAt / 1000 * 1000 && it.modified <= endsAt }
+        return "Pictures receipt unresolved: signature=$hasSignature, fresh=${candidates.size}, " +
+            "inWindow=${possible.size}, matched=${possible.count { it.readable && it.matches }}, " +
+            "unreadable=${possible.count { !it.readable }}, ambiguous=${possible.count { it.ambiguous }}, " +
+            "undated=${candidates.count { it.modified <= 0 }}, outsideWindow=${candidates.count { it.modified > 0 } - possible.size}"
+    }
+
     fun signature(bitmap: Bitmap, x: Double, y: Double): String? = signature(bitmap.width, bitmap.height, x, y, bitmap::getPixel)
 
     /** The same central patch used by skill identity, without assuming the probe is icon-centred. */
@@ -44,6 +53,13 @@ object NativePhotoReceipt {
         }.filter(::textured).sortedByDescending(::textureScore).take(3)
         if (variants.isEmpty()) return null
         return PREFIX + variants.joinToString("|") { values -> values.joinToString("") { "%06x".format(it and 0xffffff) } }
+    }
+
+    /** Fresh screen patches must retain the same textured image before any save gesture. */
+    fun sameIcon(before: String?, after: String?): Boolean {
+        val a = decode(before) ?: return false
+        val b = decode(after) ?: return false
+        return a.any { expected -> b.any { actual -> similar(expected, actual) } }
     }
 
     fun matches(signature: String?, bitmap: Bitmap): Boolean = matches(signature, bitmap.width, bitmap.height, bitmap::getPixel)

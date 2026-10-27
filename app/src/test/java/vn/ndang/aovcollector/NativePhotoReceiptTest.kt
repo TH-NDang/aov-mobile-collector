@@ -77,6 +77,57 @@ class NativePhotoReceiptTest {
         assertEquals(0, restarted.getJSONArray("saves").length())
     }
 
+    @Test fun slowPromptUsesOneTimeSureIntentWindowAndNeverRefreshesItOnResume() {
+        val journal = state()
+        val first = NativePhotoReceiptJournal.prepare(journal, group, item, emptySet(), "signature", setOf("old"), t)
+        NativePhotoReceiptJournal.start(journal, first.id, t)
+        val sureAt = t + 25_000
+        NativePhotoReceiptJournal.confirmIntent(journal, first.id, sureAt)
+        val restarted = JSONObject(journal.toString())
+        val attempt = NativePhotoReceiptJournal.find(restarted, first.id)
+        assertEquals(t, attempt.getLong("startedAt"))
+        assertEquals(sureAt + NativePhotoReceipt.WINDOW_MS, attempt.getLong("endsAt"))
+        assertEquals(
+            "late-save",
+            NativePhotoReceipt.select(
+                setOf("old"),
+                emptySet(),
+                t,
+                attempt.getLong("endsAt"),
+                listOf(candidate("late-save", sureAt + 500))
+            )
+        )
+        val resumed = NativePhotoReceiptJournal.prepare(restarted, group, item, emptySet(), "new", emptySet(), t + 90_000)
+        assertEquals(first.id, resumed.id)
+        try {
+            NativePhotoReceiptJournal.confirmIntent(restarted, first.id, t + 90_000)
+            throw AssertionError("Sure must not be dispatched twice")
+        } catch (_: IllegalStateException) {}
+        assertEquals(sureAt + NativePhotoReceipt.WINDOW_MS, attempt.getLong("endsAt"))
+        assertEquals(0, restarted.getJSONArray("saves").length())
+    }
+
+    @Test fun unresolvedReceiptDiagnosticDoesNotInventPersistenceFailureOrLeakNames() {
+        val reason = NativePhotoReceipt.explain(
+            t,
+            t + 2000,
+            listOf(
+                candidate("private-file-name", matches = false),
+                candidate("unfinished", readable = false),
+                candidate("late", t + 3000),
+                candidate("undated", 0)
+            ),
+            false
+        )
+        assertTrue(reason.contains("signature=false"))
+        assertTrue(reason.contains("matched=0"))
+        assertTrue(reason.contains("unreadable=1"))
+        assertTrue(reason.contains("outsideWindow=1"))
+        assertTrue(reason.contains("undated=1"))
+        assertFalse(reason.contains("private-file-name"))
+        assertFalse(reason.contains("write failed"))
+    }
+
     @Test fun hashDriftOrDifferentHeroCannotBlindlyStartAnotherSave() {
         val journal = state()
         val first = NativePhotoReceiptJournal.prepare(journal, group, item, emptySet(), null, emptySet(), t)
@@ -182,6 +233,44 @@ class NativePhotoReceiptTest {
         assertFalse(NativePhotoReceipt.matches(signature, 1920, 1080, ::art))
         assertFalse(NativePhotoReceipt.matches(null, 100, 100, ::art))
         assertFalse(NativePhotoReceipt.matches("malformed", 100, 100, ::art))
+    }
+
+    @Test fun freshIconMustMatchTexturedReferenceRatherThanBlankOrChangedFrame() {
+        fun signature(reverse: Boolean = false) = NativePhotoReceipt.signature(1000, 600, .5, .5) { x, y ->
+            val sx = (x - 482) * 2 + 15
+            val sy = (y - 282) * 2
+            if (sx in 0..99 && sy in 0..99) {
+                if (reverse) art(99 - sx, 99 - sy) else art(sx, sy)
+            } else {
+                0x174487
+            }
+        }
+        val loaded = signature()
+        assertNotNull(loaded)
+        assertTrue(NativePhotoReceipt.sameIcon(loaded, signature()))
+        assertFalse(NativePhotoReceipt.sameIcon(loaded, null))
+        assertFalse(NativePhotoReceipt.sameIcon(loaded, signature(true)))
+        assertFalse(NativePhotoReceipt.sameIcon(null, null))
+    }
+
+    @Test fun knownUndispatchedAttemptCanBeCancelledButSureIntentCannot() {
+        val journal = state()
+        val first = NativePhotoReceiptJournal.prepare(journal, group, item, emptySet(), "signature", setOf("old"), t)
+        NativePhotoReceiptJournal.start(journal, first.id, t)
+        NativePhotoReceiptJournal.cancelBeforeDispatch(journal, first.id)
+        val retry = NativePhotoReceiptJournal.prepare(journal, group, item, emptySet(), "signature", setOf("old"), t + 1000)
+        assertNotEquals(first.id, retry.id)
+        assertEquals(0, journal.getJSONArray("saves").length())
+        NativePhotoReceiptJournal.start(journal, retry.id, t + 1000)
+        NativePhotoReceiptJournal.confirmIntent(journal, retry.id, t + 1100)
+        var rejected = false
+        try {
+            NativePhotoReceiptJournal.cancelBeforeDispatch(journal, retry.id)
+        } catch (_: IllegalStateException) {
+            rejected = true
+        }
+        assertTrue(rejected)
+        assertEquals("pending", NativePhotoReceiptJournal.find(journal, retry.id).getString("status"))
     }
 
     @Test fun flatBackingOrBlackImageCannotBecomeContentEvidence() {

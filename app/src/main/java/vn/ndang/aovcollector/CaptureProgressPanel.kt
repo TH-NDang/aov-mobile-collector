@@ -30,6 +30,7 @@ class CaptureProgressPanel(
     internal val view: View? get() = layout
     private var params: WindowManager.LayoutParams? = null
     private var status: TextView? = null
+    private val statusSnapshot = CaptureProgressStatus()
     private var summary: TextView? = null
     private var rows: LinearLayout? = null
     private var scroll: ScrollView? = null
@@ -118,12 +119,11 @@ class CaptureProgressPanel(
         }
         val head = LinearLayout(c)
         val title = Ui.text(c, "TIẾN TRÌNH ẢNH · KÉO", 11f, Color.WHITE, true)
-        head.addView(title, LinearLayout.LayoutParams(0, dp(36), 1f))
+        title.gravity = Gravity.CENTER_VERTICAL
+        head.addView(title, LinearLayout.LayoutParams(0, dp(48), 1f))
         head.addView(
-            Ui.button(c, "×") {
-                close()
-            }.apply { contentDescription = "Đóng tiến trình ảnh" },
-            LinearLayout.LayoutParams(dp(40), dp(36))
+            PanelHeaderActions.button(c, R.drawable.ic_panel_close, "Đóng tiến trình ảnh") { close() },
+            LinearLayout.LayoutParams(dp(48), dp(48))
         )
         var x = 0f
         var y = 0f
@@ -153,7 +153,11 @@ class CaptureProgressPanel(
             }
         }
         box.addView(head)
-        status = Ui.text(c, "", 11f, Color.rgb(215, 210, 255)).apply { maxLines = 5 }
+        status = Ui.text(c, "", 11f, Color.rgb(215, 210, 255)).apply {
+            setLines(5)
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            contentDescription = "Trạng thái tiến trình ảnh"
+        }
         box.addView(status)
         summary = Ui.text(c, "Đang đọc lịch sử…", 10f, Color.LTGRAY)
         box.addView(summary)
@@ -203,7 +207,7 @@ class CaptureProgressPanel(
         loading = true
         val token = epoch
         val (run, line) = current()
-        status?.text = line
+        statusSnapshot.begin(run, line)?.let { status?.text = it }
         if (shownRun !=
             run
         ) {
@@ -249,7 +253,7 @@ class CaptureProgressPanel(
                         images.forEach { it.recycle() }
                         if (layout != null) refresh()
                     } else {
-                        status?.text = details
+                        statusSnapshot.complete(run, details)?.let { status?.text = it }
                         summary?.text = if (entries.isEmpty()) {
                             "Chưa có ảnh trong lượt hiện tại."
                         } else {
@@ -381,6 +385,7 @@ class CaptureProgressPanel(
     }
 
     fun resetSession() {
+        statusSnapshot.clear()
         shownRun = null
         selected.clear()
         selecting = false
@@ -394,6 +399,7 @@ class CaptureProgressPanel(
     }
 
     fun close() {
+        statusSnapshot.clear()
         preview.close()
         epoch++
         main.removeCallbacks(tick)

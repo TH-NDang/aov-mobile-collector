@@ -84,6 +84,22 @@ internal object NativePhotoReceiptJournal {
         attempt.put("status", "pending").put("startedAt", now).put("endsAt", now + NativePhotoReceipt.WINDOW_MS)
     }
 
+    /** Caller must still own the operation and know no gesture was dispatched. */
+    fun cancelBeforeDispatch(state: JSONObject, id: String) {
+        val attempt = find(state, id)
+        check(attempt.getString("status") == "pending" && !attempt.has("sureIntentAt"))
+        attempt.put("status", "cancelled")
+    }
+
+    /** Record once before Sure, not after slow OCR or during a resumed lookup. */
+    fun confirmIntent(state: JSONObject, id: String, now: Long) {
+        val attempt = find(state, id)
+        check(attempt.getString("status") == "pending") { "Native save is not pending" }
+        check(!attempt.has("sureIntentAt")) { "Native confirmation must not be dispatched twice" }
+        check(now >= attempt.getLong("startedAt")) { "Native confirmation clock moved backwards" }
+        attempt.put("sureIntentAt", now).put("endsAt", now + NativePhotoReceipt.WINDOW_MS)
+    }
+
     fun earlierAbsentSignatures(state: JSONObject, id: String, modified: Long): List<String> = attempts(state).filter {
         it.getString("id") != id &&
             it.getString("status") == "absent" &&

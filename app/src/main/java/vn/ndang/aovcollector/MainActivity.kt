@@ -899,11 +899,15 @@ class MainActivity : Activity() {
             if (cover != null) loadThumb(cover, dp(74), dp(60), this) else setImageDrawable(ActionIcon("float", Ui.accent))
         }
         row.addView(thumb, LinearLayout.LayoutParams(dp(74), dp(60)))
+        val m = meta(file)
         val info = Ui.stack(this).apply { setPadding(dp(12), 0, dp(6), 0) }
         info.addView(
             Ui.text(this, title(file), 16f, Ui.ink, true).apply {
                 maxLines = 2
                 ellipsize = android.text.TextUtils.TruncateAt.END
+                if (file.isDirectory && !File(file, "hero.json").exists()) {
+                    TaskIcons.decorate(this, if (file.name == "manual") "manual" else m.optString("collectionMode"))
+                }
             }
         )
         if (searchRoot != null && file.parentFile != searchRoot) {
@@ -931,7 +935,6 @@ class MainActivity : Activity() {
         } else {
             ""
         }
-        val m = meta(file)
         val ran = m.optLong("activeMs", 0L).takeIf { it > 0 }?.let { " · chạy " + duration(it) } ?: ""
         info.addView(
             Ui.text(
@@ -1018,6 +1021,7 @@ class MainActivity : Activity() {
         "board" -> "Chiến khu"
         "chess" -> "Cờ Liên Quân"
         "pro-builds" -> "Đề cử Pro"
+        "event-invite" -> "Mã mời"
         "custom" -> "Macro"
         else -> if (file.name == "manual") "Chụp nhanh" else null
     }

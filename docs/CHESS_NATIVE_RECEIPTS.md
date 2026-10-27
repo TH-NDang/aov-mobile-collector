@@ -15,7 +15,7 @@ Một lần OCR trả `UNKNOWN` sau nhấn giữ không chứng minh rằng game
 - Lần chuẩn bị chưa gửi thao tác có thể được chuẩn bị lại an toàn. Lần đã ghi ý định gửi thao tác được giữ lại qua tạm dừng hoặc tiến trình bị đóng; không mặc định là thất bại rồi nhấn giữ lại.
 - Khi tìm được ảnh, ghi dấu hoàn tất và ghim đúng định danh nguồn cùng SHA-256/số byte trong một lần ghi tiến độ. Sao chép vào lượt thu thập kiểm tra lại nội dung nguồn và bản sao; không đổi gán sang tướng khác vì ảnh khác xuất hiện muộn.
 - Vị trí đã xác minh không có Save Photo được nhớ riêng, không ghi giả là đã lưu. Khi quay lại, đối chiếu ảnh xuất hiện muộn và xác minh lại màn chi tiết; không nhấn giữ trùng vị trí chỉ để kiểm tra.
-- Mỗi giao dịch vẫn có giới hạn 15 giây; dừng/hủy không cho phép callback muộn gửi thao tác mới. Pictures được đọc ngoài luồng giao diện. Các bảo vệ cửa sổ, vùng chạm, shield và khoảng hiển thị Stop/Pause được giữ nguyên.
+- Mỗi giao dịch có watchdog theo tiến triển và giới hạn tổng 150 giây; dừng/hủy không cho phép callback muộn gửi thao tác mới. Pictures được đọc ngoài luồng giao diện. Các bảo vệ cửa sổ, vùng chạm, shield và khoảng hiển thị Stop/Pause được giữ nguyên.
 
 ## Giới hạn và kiểm thử
 
@@ -24,3 +24,24 @@ Một lần OCR trả `UNKNOWN` sau nhấn giữ không chứng minh rằng game
 - Kiểm thử hồi quy gồm định danh cũ/mới/đã gán, mốc thời gian, hai ảnh khớp, ảnh chưa đọc được, nội dung khác, khôi phục nhật ký, prepared/pending/absent, ghim file, hình học điểm dò lệch tâm và ảnh tham chiếu bị thay đổi/tên tướng mâu thuẫn.
 - Có kiểm tra thuật toán trực tiếp trên các pixel bằng chứng người dùng cung cấp ở ngoài repo. Ảnh đó không đưa vào source hoặc fixture. Ảnh gallery thu nhỏ không thay thế kiểm chứng file xuất thật trên thiết bị.
 - Chưa xác nhận trên game/điện thoại thật; kiểm thử JVM và CI Android không được mô tả như một lượt game thật.
+
+
+## v0.13.30: đợi ảnh tải thật, chờ Pictures và báo đúng nguyên nhân
+
+- Lỗi `save mark write failed` trước đây được truyền cả khi đoạn ghi dấu không thất bại, che mất nguyên nhân đối chiếu file. Bản này chỉ dùng lý do đó cho lỗi ghi thật; đối chiếu ghi số lượng ứng viên mới/trong cửa sổ/khớp/chưa đọc được/mơ hồ/thiếu thời gian, không ghi tên ảnh riêng tư.
+- Đối chiếu tuần tự tối đa 30 giây và 16 lượt, mỗi lượt cách 2 giây, thay cho ba lần đọc cách 600 ms. Tiếp tục lần đang dở cũng chỉ đối chiếu, không nhấn giữ/Sure lại. Stop và callback muộn không được phép tiến thêm.
+- Trước Sure lưu một mốc ý định duy nhất; hạn timestamp được tính từ mốc đó thay vì hết hạn khi OCR mở prompt còn chậm. Mốc không đổi khi polling, tạm dừng hoặc khởi động lại. Sau ghi nhật ký phải đọc lại prompt mới trước khi chạm. Baseline, nội dung, một ứng viên duy nhất và xác minh màn chi tiết vẫn bắt buộc.
+- Lỗi ghi nhật ký thật vẫn không được bỏ qua: ảnh nguồn có thể tồn tại nhưng chưa được đánh dấu. Đối chiếu lại cùng attempt có thể hoàn tất khi lưu trữ phục hồi, không tải lại ảnh.
+- Kiểm thử thêm: file nguồn tồn tại nhưng journal `.part` không ghi được; khôi phục cùng attempt không tạo ảnh thứ hai; prompt chậm hơn 20 giây, deadline không đổi qua resume; Pictures xuất hiện muộn, cancel/callback trùng/mất callback; chẩn đoán không bịa lỗi ghi.
+- Log và ảnh Hayate chưa có dữ liệu Pictures/journal gốc nên không đủ kết luận lỗi cụ thể là timestamp, ảnh chưa lập chỉ mục hay chữ ký không khớp. Đây là sửa các lỗi kiểm soát đã xác minh trong mã, không tuyên bố đã chạy thành công game trên điện thoại.
+
+### Popup tải chậm / giật
+
+- Trước ghi ảnh chi tiết, tạo fingerprint hoặc dò Save Photo, chờ các khung chi tiết ổn định. Trang đầu quân cờ phải có biểu tượng có texture và chữ ký ảnh hợp lệ; nền trống/loading không đủ. Jitter hoặc nội dung thay đổi đặt lại chuỗi ổn định, không chụp/lướt tiếp ngay.
+- Chờ có giới hạn 30 giây, đọc tuần tự và kiểm tra hủy; không dùng một khoảng sleep cố định để giả định đã tải. Trang cuộn sau có thể hợp lệ khi không có icon, nhưng vẫn phải ổn định. Hết hạn ghi rõ readiness và dừng, không đoán ảnh.
+- Ngay trước nhấn giữ, đối chiếu lại ảnh chiêu với tham chiếu qua ba lần đọc mới; sau ghi journal đọc thêm khung mới trước gửi gesture. Nếu ảnh dịch/chuyển, không nhấn. Chỉ khi biết chắc chưa gửi gesture mới hủy attempt để lần sau chuẩn bị lại; nếu ghi hủy thất bại vẫn giữ trạng thái chưa rõ, không bỏ qua lỗi.
+- Kiểm thử synthetic bổ sung placeholder→ảnh thật muộn, một khung ảnh thoáng qua, jitter rồi ổn định, timeout và hủy; không đưa ảnh người dùng vào repo. Đây không thay thế kiểm chứng popup game trên điện thoại thật.
+
+### Nhấp nháy dòng “Ảnh gốc” của popup app
+
+Đã xác minh `CaptureProgressPanel.refresh()` trước đây ghi dòng trạng thái cơ bản trước, rồi callback nền thay bằng trạng thái có thêm dòng “Ảnh gốc” mỗi lượt cập nhật. Việc bỏ/thêm dòng gây thay đổi chiều cao lặp lại; không phải bằng chứng game xuất ảnh chậm. Bản này giữ snapshot đầy đủ trong lúc đọc nền, chỉ cập nhật khi nội dung đổi và không mang trạng thái lượt cũ sang lượt mới. Bảo vệ ẩn overlay khi chụp vẫn giữ nguyên; không tắt shield để che triệu chứng.

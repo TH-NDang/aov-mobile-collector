@@ -178,6 +178,18 @@ object GamePhotoSession {
         store(context, runId, state)
     }
 
+    @Synchronized fun cancelBeforeDispatch(context: Context, runId: String, attemptId: String) {
+        val state = read(context, runId)
+        NativePhotoReceiptJournal.cancelBeforeDispatch(state, attemptId)
+        store(context, runId, state)
+    }
+
+    @Synchronized fun confirmIntent(context: Context, runId: String, attemptId: String) {
+        val state = read(context, runId)
+        NativePhotoReceiptJournal.confirmIntent(state, attemptId, System.currentTimeMillis())
+        store(context, runId, state)
+    }
+
     /** Close only a positively confirmed Sure or positively verified no-save outcome. */
     @Synchronized fun finishAttempt(context: Context, runId: String, attemptId: String, confirmed: Boolean) {
         val state = read(context, runId)
@@ -262,7 +274,7 @@ object GamePhotoSession {
                 } else if (id == null) {
                     ReceiptResult(
                         ReceiptStatus.UNCERTAIN,
-                        reason = "Chưa có đúng một ảnh mới khớp nội dung lần lưu",
+                        reason = NativePhotoReceipt.explain(startedAt, endsAt, candidates, attempt.optString("signature").isNotBlank()),
                         absenceSafe = absenceSafe
                     )
                 } else {
@@ -271,7 +283,10 @@ object GamePhotoSession {
             }
         }
     } catch (e: Exception) {
-        ReceiptResult(ReceiptStatus.UNCERTAIN, reason = e.message ?: "Không đối chiếu được Pictures")
+        ReceiptResult(
+            ReceiptStatus.UNCERTAIN,
+            reason = "Pictures reconciliation failed (${e.javaClass.simpleName}); receipt not committed"
+        )
     }
 
     /** Called AFTER Save Photo → Sure has been confirmed on the correct icon/topic. */

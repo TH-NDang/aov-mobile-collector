@@ -140,7 +140,12 @@ class ChessWikiTest {
                 then(true)
             }
 
-            override fun later(ms: Long, then: () -> Unit) = then()
+            private val clock = ChessTestClockQueue()
+            override val monotonicMs get() = clock.now
+
+            override fun later(ms: Long, then: () -> Unit) = clock.later(ms, then)
+
+            fun drain() = clock.drain()
 
             override fun seen(id: String) = id in done
 
@@ -153,6 +158,7 @@ class ChessWikiTest {
             override fun say(message: String) {}
         }
         ChessWikiReader(screen, ChessWiki.Options(setOf("thang-thua-vong"), openGame = false)) { outcome = it }.start()
+        screen.drain()
         assertTrue(outcome is ChessWikiReader.Outcome.Done)
         assertEquals(listOf("chess__thong-tin__thang-thua-vong__trang__001", "chess__thong-tin__thang-thua-vong__trang__002"), kept)
         assertTrue("topic:thang-thua-vong" in done)
@@ -211,7 +217,12 @@ class ChessWikiTest {
                 then(nativeResult)
             }
 
-            override fun later(ms: Long, then: () -> Unit) = then()
+            private val clock = ChessTestClockQueue()
+            override val monotonicMs get() = clock.now
+
+            override fun later(ms: Long, then: () -> Unit) = clock.later(ms, then)
+
+            fun drain() = clock.drain()
 
             override fun seen(id: String) = id in finished
 
@@ -232,6 +243,7 @@ class ChessWikiTest {
             ),
             { outcome = it }
         ).start()
+        screen.drain()
         assertTrue(outcome is ChessWikiReader.Outcome.Done)
         assertEquals(listOf("trang-bi"), native)
         assertEquals(
@@ -273,7 +285,12 @@ class ChessWikiTest {
 
             override fun swipe(x: Double, y: Double, toX: Double, toY: Double, then: (Boolean) -> Unit) = then(true)
 
-            override fun later(ms: Long, then: () -> Unit) = then()
+            private val clock = ChessTestClockQueue()
+            override val monotonicMs get() = clock.now
+
+            override fun later(ms: Long, then: () -> Unit) = clock.later(ms, then)
+
+            fun drain() = clock.drain()
 
             override fun seen(id: String) = id in finished
 
@@ -286,6 +303,7 @@ class ChessWikiTest {
             override fun say(message: String) {}
         }
         ChessWikiReader(screen, ChessWiki.Options(setOf("quy-trinh"), openGame = false), { result = it }).start()
+        screen.drain()
         assertTrue(result is ChessWikiReader.Outcome.Done)
         assertEquals(listOf("chess__thong-tin__quy-trinh__trang__001"), kept)
         assertTrue("topic:quy-trinh" in finished)
@@ -338,7 +356,12 @@ class ChessWikiTest {
 
             override fun swipe(x: Double, y: Double, toX: Double, toY: Double, then: (Boolean) -> Unit) = then(true)
 
-            override fun later(ms: Long, then: () -> Unit) = then()
+            private val clock = ChessTestClockQueue()
+            override val monotonicMs get() = clock.now
+
+            override fun later(ms: Long, then: () -> Unit) = clock.later(ms, then)
+
+            fun drain() = clock.drain()
 
             override fun seen(id: String) = id in done
 
@@ -351,6 +374,7 @@ class ChessWikiTest {
             override fun say(message: String) {}
         }
         ChessWikiReader(screen, ChessWiki.Options(setOf("quy-trinh"), openGame = false), { result = it }).start()
+        screen.drain()
         assertTrue(result is ChessWikiReader.Outcome.Done)
         assertEquals(.333, taps[0].first, .001)
         assertEquals(GameScreens.CHESS_VETERAN_Y, taps[0].second, .001)
@@ -445,7 +469,12 @@ class ChessWikiTest {
 
             override fun swipe(x: Double, y: Double, toX: Double, toY: Double, then: (Boolean) -> Unit) = then(true)
 
-            override fun later(ms: Long, then: () -> Unit) = then()
+            private val clock = ChessTestClockQueue()
+            override val monotonicMs get() = clock.now
+
+            override fun later(ms: Long, then: () -> Unit) = clock.later(ms, then)
+
+            fun drain() = clock.drain()
 
             override fun seen(id: String) = id in completed
 
@@ -458,6 +487,7 @@ class ChessWikiTest {
             override fun say(message: String) {}
         }
         ChessWikiReader(screen, ChessWiki.Options(setOf("quy-trinh"), openGame = false), { outcome = it }).start()
+        screen.drain()
         assertTrue(outcome is ChessWikiReader.Outcome.Done)
         assertEquals(4, stage)
         assertEquals(ChessWiki.MODE_X, taps[0].first, .001)
@@ -601,6 +631,13 @@ class ChessWikiTest {
                         listOf(card)
                     }
 
+                    override fun skillIcons() = listOf(ChessWiki.Tile(.405, .525, "loaded"))
+
+                    override fun nativeIconSignature(x: Double, y: Double) = NativePhotoReceipt.signature(1000, 640, x, y) { px, py ->
+                        val value = ((px / 4 + py / 5) % 2) * 180 + 30
+                        (value shl 16) or (value shl 8) or value
+                    }
+
                     override fun keep(name: String, then: (Boolean) -> Unit) {
                         saved.add(name)
                         then(true)
@@ -626,7 +663,12 @@ class ChessWikiTest {
                 then("Violet")
             }
 
-            override fun later(ms: Long, then: () -> Unit) = then()
+            private val clock = ChessTestClockQueue()
+            override val monotonicMs get() = clock.now
+
+            override fun later(ms: Long, then: () -> Unit) = clock.later(ms, then)
+
+            fun drain() = clock.drain()
 
             override fun seen(id: String) = id in done
 
@@ -647,6 +689,7 @@ class ChessWikiTest {
             ),
             { outcome = it }
         ).start()
+        screen.drain()
         assertTrue(outcome is ChessWikiReader.Outcome.Done)
         assertEquals(1, verified)
         assertTrue(saved.any { "__tuong__violet__001" in it })
@@ -699,6 +742,13 @@ class ChessWikiTest {
                             )
                         )
 
+                        override fun skillIcons() = listOf(ChessWiki.Tile(.405, .525, "loaded"))
+
+                        override fun nativeIconSignature(x: Double, y: Double) = NativePhotoReceipt.signature(1000, 640, x, y) { px, py ->
+                            val value = ((px / 4 + py / 5) % 2) * 180 + 30
+                            (value shl 16) or (value shl 8) or value
+                        }
+
                         override fun keep(name: String, then: (Boolean) -> Unit) {
                             saved.add(name)
                             then(true)
@@ -726,7 +776,12 @@ class ChessWikiTest {
                     then("Arduin")
                 }
 
-                override fun later(ms: Long, then: () -> Unit) = then()
+                private val clock = ChessTestClockQueue()
+                override val monotonicMs get() = clock.now
+
+                override fun later(ms: Long, then: () -> Unit) = clock.later(ms, then)
+
+                fun drain() = clock.drain()
 
                 override fun seen(id: String) = id in seen
 
@@ -749,6 +804,7 @@ class ChessWikiTest {
                 ),
                 { outcome = it }
             ).start()
+            screen.drain()
             assertEquals(ChessWikiReader.Outcome.Done(2, 1), outcome)
             assertEquals(2, reads) // one opening; two matching reads resolve the conflicting label
             assertEquals(1, saved.count { "__tuong__arduin__001" in it })
@@ -801,6 +857,13 @@ class ChessWikiTest {
                             ChessWiki.Tile(.275, .408, "hero-violet", "Violet")
                         )
 
+                        override fun skillIcons() = listOf(ChessWiki.Tile(.405, .525, "loaded"))
+
+                        override fun nativeIconSignature(x: Double, y: Double) = NativePhotoReceipt.signature(1000, 640, x, y) { px, py ->
+                            val value = ((px / 4 + py / 5) % 2) * 180 + 30
+                            (value shl 16) or (value shl 8) or value
+                        }
+
                         override fun keep(name: String, then: (Boolean) -> Unit) {
                             saved.add(name)
                             then(true)
@@ -819,7 +882,12 @@ class ChessWikiTest {
 
                 override fun readHeroTitle(then: (String?) -> Unit) = then(readings[reads++])
 
-                override fun later(ms: Long, then: () -> Unit) = then()
+                private val clock = ChessTestClockQueue()
+                override val monotonicMs get() = clock.now
+
+                override fun later(ms: Long, then: () -> Unit) = clock.later(ms, then)
+
+                fun drain() = clock.drain()
 
                 override fun seen(id: String) = id in done
 
@@ -840,6 +908,7 @@ class ChessWikiTest {
                 ),
                 { outcome = it }
             ).start()
+            screen.drain()
             assertTrue(outcome is ChessWikiReader.Outcome.Failed)
             assertEquals(3, reads)
             assertTrue(saved.any { "__trang__" in it })

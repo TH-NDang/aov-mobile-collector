@@ -1,9 +1,12 @@
 package vn.ndang.aovcollector
 
-import java.util.ArrayDeque
 import kotlin.math.abs
 import kotlin.math.roundToInt
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -64,7 +67,11 @@ class ChessTraversalTest {
         val drawerPages: List<Int> = listOf(0),
         val ignoredDrawerDrags: Set<Int> = emptySet(),
         val closeOnDrawerDrag: Int? = null,
-        val skillIconsByPage: Map<Int, List<ChessWiki.Tile>> = emptyMap(),
+        val skillIconsByPage: Map<Int, List<ChessWiki.Tile>> = mapOf(0 to listOf(ChessWiki.Tile(.405, .525, "loaded-skill"))),
+        val placeholderModalReads: Int = 0,
+        val cancelAtModalRead: Int? = null,
+        val missingModalRead: Int? = null,
+        val lateModalRead: Int? = null,
         val failedNativeItem: String? = null,
         val absentNativeItem: String? = null,
         val interruptAfterNative: Boolean = false,
@@ -86,9 +93,11 @@ class ChessTraversalTest {
         private var upDrags = 0
         private var dragCount = 0
         private var looks = 0
+        var modalLooks = 0
+        val capturedModalLooks = ArrayList<Int>()
         private var released = 0
         private var steps = 0
-        private val queue = ArrayDeque<() -> Unit>()
+        private val queue = ChessTestClockQueue()
 
         // CollectorService normalizes old item IDs before it exposes its persisted ledger.
         val ledger = oldIds.map(ChessWiki::heroIdentity).toMutableSet().apply {
@@ -127,7 +136,11 @@ class ChessTraversalTest {
             val hero = opened
             val isModal = hero != null
             val detailPage = if (isModal) drawerPages[drawerPageIndex] else null
+            if (isModal) modalLooks++
+            if (isModal && modalLooks == missingModalRead) return@post
+            if (isModal && modalLooks == cancelAtModalRead) alive = false
             looks++
+            val illustrationLoaded = modalLooks > placeholderModalReads
             if (!isModal) {
                 lastListLook = at
                 events.add("look-list:$at")
@@ -161,7 +174,11 @@ class ChessTraversalTest {
                     tile.label?.let { word(it, tile.x, tile.y + .172) }
                 }
             }
-            then(object : ChessWikiReader.Look {
+            val delayed = isModal && modalLooks == lateModalRead
+            val deliver: (ChessWikiReader.Look?) -> Unit = { frame ->
+                if (delayed) queue.later(31_000L) { then(frame) } else then(frame)
+            }
+            deliver(object : ChessWikiReader.Look {
                 var consumed = false
                 override val words = if (words) content else emptyList()
                 override val signature = IntArray(96) { if (isModal) 73 + detailPage!! * 40 + signatureNoise else 30 + (at / 7) % 150 }
@@ -173,7 +190,12 @@ class ChessTraversalTest {
 
                 override fun tiles(topic: ChessWiki.Topic) = tiles
 
-                override fun skillIcons() = skillIconsByPage[detailPage].orEmpty()
+                override fun skillIcons() = if (illustrationLoaded) skillIconsByPage[detailPage].orEmpty() else emptyList()
+
+                override fun nativeIconSignature(x: Double, y: Double) = NativePhotoReceipt.signature(1000, 640, x, y) { px, py ->
+                    val value = ((px / 4 + py / 5) % 2) * 180 + 30
+                    (value shl 16) or (value shl 8) or value
+                }
 
                 private fun release() {
                     assertFalse("Every captured frame must be kept or discarded exactly once", consumed)
@@ -182,6 +204,7 @@ class ChessTraversalTest {
                 }
 
                 override fun keep(name: String, then: (Boolean) -> Unit) {
+                    if (isModal) capturedModalLooks.add(modalLooks)
                     release()
                     saved.add(Capture(name, isModal, at, hero, detailPage))
                     events.add("save:$name")
@@ -288,7 +311,9 @@ class ChessTraversalTest {
             then(opened)
         }
 
-        override fun later(ms: Long, then: () -> Unit) = post(then)
+        override val monotonicMs get() = queue.now
+
+        override fun later(ms: Long, then: () -> Unit) = queue.later(ms, then)
 
         override fun seen(id: String) = id in ledger
 
@@ -631,6 +656,49 @@ class ChessTraversalTest {
         assertTrue((outcome as ChessWikiReader.Outcome.Failed).reason.contains("nội dung cũ"))
     }
 
+    @Test fun slowHeroIllustrationIsNotCapturedOrSwipedWhilePlaceholderIsVisible() {
+        val run = HeroScreen(names = listOf("Hayate"), placeholderModalReads = 10)
+        assertTrue(run.run() is ChessWikiReader.Outcome.Done)
+        assertTrue(run.capturedModalLooks.isNotEmpty())
+        assertTrue(run.capturedModalLooks.all { it >= 13 })
+        assertEquals(1, run.saved.count { it.modal })
+    }
+
+    @Test fun neverLoadedHeroIllustrationStopsWithoutDetailCaptureOrNativeSave() {
+        val run = HeroScreen(names = listOf("Hayate"), placeholderModalReads = Int.MAX_VALUE)
+        val result = run.run(skills = true)
+        assertTrue(result is ChessWikiReader.Outcome.Failed)
+        assertTrue(run.saved.none { it.modal })
+        assertTrue(run.nativeSkills.isEmpty())
+        assertFalse(itemId("Hayate") in run.ledger)
+        assertTrue((result as ChessWikiReader.Outcome.Failed).reason.contains("chưa tải ổn định"))
+    }
+
+    @Test fun cancelledReadinessNeverCapturesOrAdvances() {
+        val run = HeroScreen(names = listOf("Hayate"), placeholderModalReads = 10, cancelAtModalRead = 3)
+        assertNull(run.run(skills = true, expectInterrupted = true))
+        assertTrue(run.saved.none { it.modal })
+        assertTrue(run.modalDrags.isEmpty())
+        assertTrue(run.nativeSkills.isEmpty())
+    }
+
+    @Test fun missingReadinessScreenshotCallbackHasIndependentDeadline() {
+        val run = HeroScreen(names = listOf("Hayate"), placeholderModalReads = 10, missingModalRead = 2)
+        assertTrue(run.run(skills = true) is ChessWikiReader.Outcome.Failed)
+        assertTrue(run.saved.none { it.modal })
+        assertTrue(run.modalDrags.isEmpty())
+        assertTrue(run.nativeSkills.isEmpty())
+        assertTrue(run.notes.any { it.contains("readiness timed out") })
+    }
+
+    @Test fun lateReadinessScreenshotAfterDeadlineIsDiscardedWithoutAction() {
+        val run = HeroScreen(names = listOf("Hayate"), lateModalRead = 2)
+        assertTrue(run.run(skills = true) is ChessWikiReader.Outcome.Failed)
+        assertTrue(run.saved.none { it.modal })
+        assertTrue(run.modalDrags.isEmpty())
+        assertTrue(run.nativeSkills.isEmpty())
+    }
+
     @Test fun interruptedSkillSaveResumesWithoutRewritingDetailsOrDownloadingSavedSkillsAgain() {
         val a = ChessWiki.Tile(.405, .525, "skill-a")
         val b = ChessWiki.Tile(.405, .66, "skill-b")
@@ -770,7 +838,7 @@ class ChessTraversalTest {
         val completed = HashSet<String>()
         val kept = ArrayList<Pair<String, Pair<String, Int>>>()
         val opened = ArrayList<String>()
-        val queue = ArrayDeque<() -> Unit>()
+        val queue = ChessTestClockQueue()
         var current = topics.first()
         var page = 0
         var drags = 0
@@ -830,9 +898,9 @@ class ChessTraversalTest {
                 }
             }
 
-            override fun later(ms: Long, then: () -> Unit) {
-                queue.add(then)
-            }
+            override val monotonicMs get() = queue.now
+
+            override fun later(ms: Long, then: () -> Unit) = queue.later(ms, then)
 
             override fun seen(id: String) = id in completed
 

@@ -29,6 +29,7 @@ internal object QuickSettingsSmoke {
             check(!service.isWorking && invoke("canStop") == false && field("teaching").getBoolean(service).not())
             check(field("activeDialog").get(service) == null && field("macroPicker").get(service) == null)
             check(!field("libraryBusy").getBoolean(service))
+            check(service.captureProgressView == null)
         }
         // This helper verifies fixture activity metadata before launching or injecting anything.
         TeachingDeviceSmoke.openFixture(test, service, automation, immersive = false)
@@ -105,6 +106,52 @@ internal object QuickSettingsSmoke {
             }
             waitFor("Expanded toolbar did not lay out") { main(test) { service.panelView?.height?.let { it > 0 } == true } }
             assertWindow()
+            val headerDescriptions = listOf(
+                "Mở cài đặt nhanh",
+                "Chỉnh từng bước",
+                "Mở hoặc đóng tiến trình ảnh",
+                "Thu gọn bảng nổi"
+            )
+            main(test) {
+                val headerButtons = headerDescriptions.map { description ->
+                    nodes().single { it.contentDescription?.toString() == description }
+                }
+                val minimum = (48 * service.resources.displayMetrics.density).toInt()
+                val rectangles = headerButtons.map(::bounds)
+                headerButtons.forEach { check(it.width >= minimum && it.height >= minimum) { "Header target smaller than 48dp" } }
+                rectangles.forEachIndexed { at, rect ->
+                    check(bounds(checkNotNull(service.panelView)).contains(rect))
+                    rectangles.drop(at + 1).forEach { check(!Rect.intersects(rect, it)) { "Header actions overlap" } }
+                }
+                check(nodes().filterIsInstance<Button>().none { it.text.toString() in listOf("Cài đặt", "Chỉnh từng bước") })
+                // The pencil retains showCalibration's busy guard rather than starting a competing action.
+                field("busy").setBoolean(service, true)
+            }
+            clickDescription("Chỉnh từng bước")
+            main(test) {
+                check(!field("teaching").getBoolean(service)) { "Pencil started teaching while an action was busy" }
+                field("busy").setBoolean(service, false)
+            }
+            clickDescription("Mở hoặc đóng tiến trình ảnh")
+            waitFor("Image progress panel did not open") {
+                main(test) { service.captureProgressView?.isShown == true && service.captureProgressView!!.height > 0 }
+            }
+            val progressClose = main(test) {
+                val progressPanel = checkNotNull(service.captureProgressView)
+                val children = descendants(progressPanel)
+                val closeControl = children.single { it.contentDescription?.toString() == "Đóng tiến trình ảnh" }
+                val status = children.filterIsInstance<android.widget.TextView>()
+                    .single { it.contentDescription?.toString() == "Trạng thái tiến trình ảnh" }
+                check(status.minLines == 5 && status.maxLines == 5) { "Progress status can resize during polling" }
+                val minimum = (48 * service.resources.displayMetrics.density).toInt()
+                check(closeControl.width >= minimum && closeControl.height >= minimum)
+                check(closeControl.background is android.graphics.drawable.RippleDrawable)
+                check(bounds(progressPanel).contains(bounds(closeControl)))
+                closeControl
+            }
+            tap(automation, main(test) { bounds(progressClose) })
+            waitFor("Image progress close icon did not dismiss panel") { main(test) { service.captureProgressView == null } }
+            check(nodes().any { it.contentDescription?.toString() == "Mở cài đặt nhanh" })
             open()
             assertWindow()
             val previousSmart = ui.getBoolean("smartGameEntry", true)
@@ -161,18 +208,27 @@ internal object QuickSettingsSmoke {
             }
             rebuild()
             close()
+            val expandedWidth = main(test) { checkNotNull(service.panelView).width }
             clickDescription("Thu gọn bảng nổi")
+            waitFor("Compact toolbar did not resize") {
+                main(test) { checkNotNull(service.panelView).width in 1 until expandedWidth }
+            }
+            check(nodes().none { it.contentDescription?.toString() in headerDescriptions }) {
+                "Compact toolbar still exposes settings or editing actions"
+            }
+            assertWindow()
+            clickDescription("Mở bảng điều khiển thu thập")
+            waitFor("Expanded toolbar did not restore header actions") {
+                nodes().count { it.contentDescription?.toString() in headerDescriptions } == 4
+            }
             open()
             assertWindow()
             close()
-            check(nodes().any { it.contentDescription?.toString() == "Mở bảng điều khiển thu thập" }) {
-                "Closing compact settings lost compact toolbar state"
-            }
             // Both open settings and the closed compact toolbar must leave real navigation usable.
             for (settingsOpen in listOf(true, false)) {
                 for (navigation in listOf("home", "recent_apps")) {
                     TeachingDeviceSmoke.openFixture(test, service, automation, immersive = false)
-                    if (settingsOpen) open()
+                    if (settingsOpen) open() else clickDescription("Thu gọn bảng nổi")
                     assertWindow()
                     val nav = navigationBounds(automation, navigation)
                     check(!Rect.intersects(main(test) { bounds(checkNotNull(service.panelView)) }, nav))
@@ -180,7 +236,7 @@ internal object QuickSettingsSmoke {
                     waitFor("Real $navigation touch was intercepted by the floating panel") {
                         main(test) { service.foreground().let { it != null && it != CollectorService.GAME && it != service.packageName } }
                     }
-                    if (settingsOpen) close()
+                    if (settingsOpen) close() else clickDescription("Mở bảng điều khiển thu thập")
                 }
             }
             open()
@@ -197,6 +253,58 @@ internal object QuickSettingsSmoke {
                 check(ui.getBoolean(GestureDebugOverlay.PREFERENCE, false) == debugValue)
                 service.showPanel()
             }
+
+            fun pointer(action: Int, x: Float, y: Float, down: Long) {
+                val event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0)
+                event.source = InputDevice.SOURCE_TOUCHSCREEN
+                try {
+                    check(automation.injectInputEvent(event, true))
+                } finally {
+                    event.recycle()
+                }
+                SystemClock.sleep(100)
+            }
+            // Dragging changes only panel visibility/position. No capture files are deletion targets.
+            val captureNames = java.io.File(service.filesDir, "captures").walkTopDown()
+                .filter { it.isFile }.map { it.relativeTo(service.filesDir).path }.toSet()
+            for (compactMode in listOf(false, true)) {
+                for (ending in listOf("outside", "cancel", "trash")) {
+                    main(test) {
+                        field("compact").setBoolean(service, compactMode)
+                        invoke("rebuildPanel")
+                    }
+                    val description = if (compactMode) "Mở bảng điều khiển thu thập" else "Kéo để di chuyển bảng nổi"
+                    val handle = nodes().single { it.contentDescription?.toString() == description }
+                    waitFor("Drag handle not laid out") { main(test) { handle.width > 0 && handle.isShown } }
+                    val from = main(test) { bounds(handle) }
+                    val display = main(test) { service.getSystemService(WindowManager::class.java).currentWindowMetrics.bounds }
+                    val down = SystemClock.uptimeMillis()
+                    pointer(MotionEvent.ACTION_DOWN, from.exactCenterX(), from.exactCenterY(), down)
+                    val stageX = display.width() * if (from.exactCenterX() < display.exactCenterX()) .75f else .25f
+                    pointer(MotionEvent.ACTION_MOVE, stageX, display.exactCenterY(), down)
+                    waitFor("Trash target not shown after drag slop") {
+                        main(test) { service.panelTrashView?.let { it.isShown && it.width > 0 } == true }
+                    }
+                    val trash = main(test) {
+                        val target = checkNotNull(service.panelTrashView)
+                        val params = target.layoutParams as WindowManager.LayoutParams
+                        check(params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0)
+                        check(params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE != 0)
+                        bounds(target).also { check(display.contains(it)) }
+                    }
+                    val x = if (ending == "outside") display.exactCenterX() else trash.exactCenterX()
+                    val y = if (ending == "outside") display.exactCenterY() else trash.exactCenterY()
+                    pointer(MotionEvent.ACTION_MOVE, x, y, down)
+                    if (ending != "outside") main(test) { check(service.panelTrashView?.isActivated == true) }
+                    pointer(if (ending == "cancel") MotionEvent.ACTION_CANCEL else MotionEvent.ACTION_UP, x, y, down)
+                    waitFor("Trash target leaked after drag") { main(test) { service.panelTrashView == null } }
+                    main(test) {
+                        check((service.panelView == null) == (ending == "trash")) { "Unexpected drop/cancel visibility" }
+                        if (service.panelView == null) service.showPanel()
+                    }
+                    check(captureNames.all { java.io.File(service.filesDir, it).isFile }) { "Drop removed captured files" }
+                }
+            }
             // Immediate settings deliberately have no staged Save/Cancel lifecycle to replay.
             check(nodes().filterIsInstance<Button>().none { it.text.toString() in listOf("Lưu", "Hủy") })
         } catch (error: Throwable) {
@@ -208,6 +316,7 @@ internal object QuickSettingsSmoke {
                 restore(collector, oldCollector)
                 restore(ui, oldUi)
                 main(test) {
+                    invoke("hidePanel")
                     oldState.forEach { (name, value) -> field(name).set(service, value) }
                     field("panelParams").set(service, oldParams)
                     if (hadPanel) invoke("rebuildPanel") else invoke("hidePanel")

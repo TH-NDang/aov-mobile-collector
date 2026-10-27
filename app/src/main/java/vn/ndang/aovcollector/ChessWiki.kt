@@ -577,6 +577,7 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
 
     interface Screen {
         val alive: Boolean
+        val monotonicMs: Long get() = System.nanoTime() / 1_000_000L
 
         /** Previously completed heroes from this run's persistent ledger. */
         val completedHeroes: Int get() = 0
@@ -1329,6 +1330,67 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
     }
 
     private fun modal(
+        at: Int,
+        page: Int,
+        signature: IntArray,
+        tiles: List<ChessWiki.Tile>,
+        from: Int,
+        tile: ChessWiki.Tile,
+        kind: String,
+        folder: String,
+        number: Int,
+        l: Look,
+        previous: IntArray?,
+        still: Int
+    ) {
+        val readiness = ChessDetailReadiness(
+            screen.monotonicMs,
+            requiresIcon = kind == "tuong" && number == 1,
+            sameDetail = { a, b -> !ChessWiki.changed(a, b) },
+            sameIcon = NativePhotoReceipt::sameIcon
+        )
+
+        var ended = false
+        var reads = 0
+
+        fun timeout() {
+            if (ended) return
+            ended = true
+            if (!screen.alive || completed) return
+            screen.note("Detail readiness timed out after $reads frames; no capture or advance was authorized.")
+            fail("Ảnh chi tiết " + folder + " chưa tải ổn định; chưa lưu hoặc chuyển bước. Chờ ảnh hiện rồi Tiếp tục.")
+        }
+        screen.note("Waiting for stable detail artwork before capture.")
+        screen.later(30_000L) { timeout() }
+
+        fun waitForDetail(frame: Look) {
+            if (ended || !screen.alive || completed) {
+                ended = true
+                frame.discard()
+                return
+            }
+            reads++
+            val icons = frame.skillIcons().mapNotNull { frame.nativeIconSignature(it.x, it.y) }
+            when (readiness.observe(screen.monotonicMs, screen.alive && !completed, frame.modal, frame.signature, icons)) {
+                ChessDetailReadiness.Decision.READY -> {
+                    ended = true
+                    modalReady(at, page, signature, tiles, from, tile, kind, folder, number, frame, previous, still)
+                }
+                ChessDetailReadiness.Decision.WAIT -> {
+                    frame.discard()
+                    screen.later(800L) { if (!ended) look(false) { waitForDetail(it) } }
+                }
+                ChessDetailReadiness.Decision.CANCELLED -> frame.discard()
+                ChessDetailReadiness.Decision.TIMEOUT -> {
+                    frame.discard()
+                    timeout()
+                }
+            }
+        }
+        waitForDetail(l)
+    }
+
+    private fun modalReady(
         at: Int,
         page: Int,
         signature: IntArray,

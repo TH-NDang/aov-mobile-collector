@@ -50,11 +50,26 @@ internal object NativePhotoReceiptSmoke {
             val attempt = GamePhotoSession.prepareAttempt(context, run, group, item, expectedSignature = signature)
             check(attempt.status == GamePhotoSession.ReceiptStatus.NONE)
             GamePhotoSession.startAttempt(context, run, attempt.id)
+            GamePhotoSession.confirmIntent(context, run, attempt.id)
             check(GamePhotoSession.reconcileAttempt(context, run, attempt.id).status == GamePhotoSession.ReceiptStatus.UNCERTAIN)
             check(!GamePhotoSession.hasMark(context, run, group, item)) { "Old matching artwork counted as fresh export" }
             val unrelatedSource = write("receipt-unrelated.png", mirrored = true)
             check(GamePhotoSession.reconcileAttempt(context, run, attempt.id).status == GamePhotoSession.ReceiptStatus.UNCERTAIN)
             val exported = write("receipt-new.png")
+            // Simulate an actual atomic journal write failure after the game file exists.
+            // Only this fixture's temporary path is obstructed; the durable pending journal stays intact.
+            val blockedPart = File(runDir, GamePhotoSession.FILE + ".part")
+            check(blockedPart.mkdir())
+            val failedCommit = try {
+                GamePhotoSession.reconcileAttempt(context, run, attempt.id)
+            } finally {
+                check(blockedPart.delete())
+            }
+            check(failedCommit.status == GamePhotoSession.ReceiptStatus.UNCERTAIN)
+            check(failedCommit.reason?.contains("reconciliation failed") == true)
+            check(!GamePhotoSession.hasMark(context, run, group, item))
+            check(GamePhotoSession.prepareAttempt(context, run, group, item, expectedSignature = signature).id == attempt.id)
+            // Retry only file reconciliation, with no new export or new baseline.
             val receipt = GamePhotoSession.reconcileAttempt(context, run, attempt.id)
             check(receipt.status == GamePhotoSession.ReceiptStatus.RECEIPT) { "Fresh native receipt failed: $receipt" }
             check(receipt.documentId == DocumentsContract.getDocumentId(exported)) { "Wrong image pinned" }

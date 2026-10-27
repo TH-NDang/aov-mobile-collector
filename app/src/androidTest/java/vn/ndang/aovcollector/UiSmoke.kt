@@ -1542,6 +1542,51 @@ class UiSmoke : Instrumentation() {
             SystemClock.sleep(1200)
             chooserClick()
             snap("02-task-picker")
+            runOnMainSync {
+                val service = CollectorService.current ?: error("Task picker service missing")
+                val pickerField = CollectorService::class.java.getDeclaredField("macroPicker").apply { isAccessible = true }
+                val picker = pickerField.get(service) as? android.view.ViewGroup ?: error("Task picker missing")
+
+                fun descendants(view: View): List<View> = listOf(view) +
+                    if (view is android.view.ViewGroup) {
+                        (0 until view.childCount).flatMap {
+                            descendants(view.getChildAt(it))
+                        }
+                    } else {
+                        emptyList()
+                    }
+                val list = descendants(picker).filterIsInstance<android.widget.ListView>().single()
+                check(list.width > 0) { "Task list was not laid out" }
+                val titles = listOf(
+                    "Lấy thông tin tướng",
+                    "Thống kê tướng",
+                    "Chiến khu",
+                    "Cờ Liên Quân · Bách khoa",
+                    "Đề cử Pro · Combo tướng",
+                    "Sự kiện · Mã mời nhiều tài khoản"
+                )
+                titles.forEachIndexed { index, title ->
+                    val row = list.adapter.getView(index, null, list)
+                    row.measure(
+                        View.MeasureSpec.makeMeasureSpec(list.width, View.MeasureSpec.EXACTLY),
+                        View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
+                    )
+                    row.layout(0, 0, row.measuredWidth, row.measuredHeight)
+                    val label = descendants(row).filterIsInstance<android.widget.TextView>().single { it.text.toString() == title }
+                    val icon = label.compoundDrawablesRelative[0] ?: error("Task icon missing: $title")
+                    val expected = (24 * label.resources.displayMetrics.density + .5f).toInt()
+                    check(icon.bounds.width() == expected && icon.bounds.height() == expected) { "Task icon size changed: $title" }
+                    check(label.contentDescription == null && label.text.toString() == title) { "Task accessible title changed" }
+                    val layout = label.layout ?: error("Task title layout missing")
+                    val available = label.width - label.compoundPaddingLeft - label.compoundPaddingRight
+                    check(available > 0 && row.height >= expected) { "Task icon clipped: $title" }
+                    for (line in 0 until layout.lineCount) {
+                        check(layout.getEllipsisCount(line) == 0 && layout.getLineWidth(line) <= available + 1) {
+                            "Task title clipped: $title"
+                        }
+                    }
+                }
+            }
 
             fun nodes() = automation.windows.mapNotNull { it.root }
 
@@ -1555,6 +1600,16 @@ class UiSmoke : Instrumentation() {
                     node.performAction(AccessibilityNodeInfo.ACTION_CLICK) ||
                         node.parent?.performAction(AccessibilityNodeInfo.ACTION_CLICK) == true
                 )
+                waitForIdleSync()
+                SystemClock.sleep(500)
+            }
+
+            fun openImageProgress() {
+                val description = "Mở hoặc đóng tiến trình ảnh"
+                val node = nodes().flatMap { it.findAccessibilityNodeInfosByText(description) }
+                    .firstOrNull { it.contentDescription?.toString() == description }
+                    ?: error("Missing image progress header action")
+                check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK))
                 waitForIdleSync()
                 SystemClock.sleep(500)
             }
@@ -1758,7 +1813,7 @@ class UiSmoke : Instrumentation() {
                     journal.last().state == "interrupted"
             )
             check(journal.first { it.order == failedOrder }.state == "failed")
-            click("Ảnh")
+            openImageProgress()
             waitFor("Missing live saved-image row") { nodes().any { it.findAccessibilityNodeInfosByText(savedRow.name).isNotEmpty() } }
             check(nodes().any { it.findAccessibilityNodeInfosByText("Đã lưu trong app").isNotEmpty() })
             check(
@@ -2048,7 +2103,7 @@ class UiSmoke : Instrumentation() {
             runOnMainSync { activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE }
             SystemClock.sleep(1500)
             snap("05-landscape")
-            click("Ảnh")
+            openImageProgress()
             waitFor("New run still shows earlier images") {
                 nodes().any { it.findAccessibilityNodeInfosByText("Chưa có ảnh trong lượt hiện tại").isNotEmpty() }
             }

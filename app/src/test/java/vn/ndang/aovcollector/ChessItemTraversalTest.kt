@@ -1,7 +1,9 @@
 package vn.ndang.aovcollector
 
-import java.util.ArrayDeque
-import org.junit.Assert.*
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** Production pagination/resume against semantic titles and a non-overwriting file adapter. */
@@ -22,7 +24,7 @@ class ChessItemTraversalTest {
         var released = 0
         val writes = ArrayList<String>()
         var outcome: ChessWikiReader.Outcome? = null
-        private val queue = ArrayDeque<() -> Unit>()
+        private val queue = ChessTestClockQueue()
 
         private fun post(action: () -> Unit) {
             queue.addLast(action)
@@ -89,7 +91,9 @@ class ChessItemTraversalTest {
             then(true)
         }
 
-        override fun later(ms: Long, then: () -> Unit) = post(then)
+        override val monotonicMs get() = queue.now
+
+        override fun later(ms: Long, then: () -> Unit) = queue.later(ms, then)
 
         override fun seen(id: String) = id in ledger
 

@@ -1,4 +1,10 @@
-# AOV Mobile Collector — v0.13.28
+# AOV Mobile Collector — v0.13.30
+
+## v0.13.30: đối chiếu ảnh Cờ không dừng sớm
+
+Đợi ảnh chiêu tải thật và popup ổn định trước chụp/nhấn giữ; kiểm lại ảnh bằng khung mới sau ghi journal, không lướt qua placeholder. Chờ Pictures có giới hạn thay vì chỉ ba lần đọc ngắn; giữ ý định Sure qua tạm dừng và không tải trùng. Báo đúng lý do thiếu biên nhận thay vì luôn báo lỗi ghi dấu. Không bỏ qua lỗi lưu trữ thật hoặc ảnh chưa khớp. Xem [kiểm thử và giới hạn](docs/CHESS_NATIVE_RECEIPTS.md).
+
+Bảng nổi gọn bỏ Cài đặt; bảng mở rộng đưa Cài đặt (bánh răng) và Chỉnh bước (bút) lên hàng trên. Popup ảnh giữ nguyên trạng thái đầy đủ khi cập nhật nền, không xóa rồi thêm lại dòng “Ảnh gốc”; nút đóng dùng icon rõ ràng với vùng chạm lớn. Kéo bảng nổi vượt ngưỡng chạm sẽ hiện đích thùng rác phía dưới: thả vào để tạm dừng rồi ẩn bảng như nút Đóng; thả ngoài chỉ đổi vị trí, không xóa ảnh/dữ liệu. Các loại tác vụ có icon riêng bên cạnh tên, gồm fallback cho macro tùy chỉnh. Xem [hành vi bảng nổi và kiểm thử](docs/FLOATING_PANEL.md).
 
 ## v0.13.28: nhận đúng cửa sổ nhập mã mời
 
