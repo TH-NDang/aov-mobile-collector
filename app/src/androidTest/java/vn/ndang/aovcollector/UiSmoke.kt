@@ -2048,7 +2048,7 @@ class UiSmoke : Instrumentation() {
             }
 
             fun closeHistory() {
-                val node = nodes().flatMap { it.findAccessibilityNodeInfosByText("×") }
+                val node = nodes().flatMap { it.findAccessibilityNodeInfosByText("Đóng tiến trình ảnh") }
                     .firstOrNull { it.contentDescription?.toString() == "Đóng tiến trình ảnh" } ?: error("Missing history close")
                 check(node.performAction(AccessibilityNodeInfo.ACTION_CLICK))
                 waitForIdleSync()
