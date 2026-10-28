@@ -267,11 +267,14 @@ internal object QuickSettingsSmoke {
                 service.showPanel()
             }
 
-            fun pointer(action: Int, x: Float, y: Float, down: Long) {
+            fun pointer(action: Int, x: Float, y: Float, down: Long, scenario: String, requireAccepted: Boolean = true) {
                 val event = MotionEvent.obtain(down, SystemClock.uptimeMillis(), action, x, y, 0)
                 event.source = InputDevice.SOURCE_TOUCHSCREEN
                 try {
-                    check(automation.injectInputEvent(event, true))
+                    val accepted = automation.injectInputEvent(event, true)
+                    val diagnostic = "$scenario action=${MotionEvent.actionToString(action)} accepted=$accepted"
+                    android.util.Log.i("QuickSettingsSmoke", diagnostic)
+                    check(accepted || !requireAccepted) { "Pointer injection rejected: $diagnostic" }
                 } finally {
                     event.recycle()
                 }
@@ -282,6 +285,7 @@ internal object QuickSettingsSmoke {
                 .filter { it.isFile }.map { it.relativeTo(service.filesDir).path }.toSet()
             for (compactMode in listOf(false, true)) {
                 for (ending in listOf("outside", "cancel", "configuration", "trash")) {
+                    val scenario = "compact=$compactMode ending=$ending"
                     main(test) {
                         field("compact").setBoolean(service, compactMode)
                         invoke("rebuildPanel")
@@ -293,9 +297,9 @@ internal object QuickSettingsSmoke {
                     val from = main(test) { bounds(handle) }
                     val display = main(test) { service.getSystemService(WindowManager::class.java).currentWindowMetrics.bounds }
                     val down = SystemClock.uptimeMillis()
-                    pointer(MotionEvent.ACTION_DOWN, from.exactCenterX(), from.exactCenterY(), down)
+                    pointer(MotionEvent.ACTION_DOWN, from.exactCenterX(), from.exactCenterY(), down, scenario)
                     val stageX = display.width() * if (from.exactCenterX() < display.exactCenterX()) .75f else .25f
-                    pointer(MotionEvent.ACTION_MOVE, stageX, display.exactCenterY(), down)
+                    pointer(MotionEvent.ACTION_MOVE, stageX, display.exactCenterY(), down, scenario)
                     waitFor("Trash target not shown after drag slop") {
                         main(test) { service.panelTrashView?.let { it.isShown && it.width > 0 } == true }
                     }
@@ -335,25 +339,42 @@ internal object QuickSettingsSmoke {
                     val x = if (ending == "outside") outside.first.toFloat() else trash.exactCenterX()
                     val y = if (ending == "outside") outside.second.toFloat() else trash.exactCenterY()
                     if (ending == "outside") check(!trash.contains(x.toInt(), y.toInt()))
-                    pointer(MotionEvent.ACTION_MOVE, x, y, down)
+                    pointer(MotionEvent.ACTION_MOVE, x, y, down, scenario)
                     if (ending != "outside") main(test) { check(service.panelTrashView?.isActivated == true) }
                     if (ending == "configuration") {
-                        // Exercise the same lifecycle cleanup used by rotation while a drag is active.
+                        val oldPanel = main(test) { checkNotNull(service.panelView) }
+                        val oldTarget = main(test) { checkNotNull(service.panelTrashView) }
+                        // Rotation tears down the touch-owning window and its active drag target.
                         main(test) { service.onConfigurationChanged(android.content.res.Configuration(service.resources.configuration)) }
-                        check(main(test) { service.panelTrashView == null && service.panelView != null })
+                        waitFor("Configuration did not replace panel and release drag target: $scenario") {
+                            main(test) {
+                                !oldPanel.isAttachedToWindow &&
+                                    !handle.isAttachedToWindow &&
+                                    !oldTarget.isAttachedToWindow &&
+                                    service.panelTrashView == null &&
+                                    service.panelView?.let { it !== oldPanel && it.isAttachedToWindow } == true
+                            }
+                        }
+                        // Android may already have cancelled this stream when its old window was removed.
+                        // Only this proven-detached lifecycle cleanup may reject the final cancellation.
+                        pointer(MotionEvent.ACTION_CANCEL, x, y, down, scenario, requireAccepted = false)
+                        main(test) {
+                            val replacement = checkNotNull(service.panelView)
+                            check(replacement !== oldPanel && replacement.isAttachedToWindow)
+                            val lateUp = MotionEvent.obtain(down, SystemClock.uptimeMillis(), MotionEvent.ACTION_UP, x, y, 0)
+                            try {
+                                handle.dispatchTouchEvent(lateUp)
+                            } finally {
+                                lateUp.recycle()
+                            }
+                            check(service.panelView === replacement && replacement.isAttachedToWindow) {
+                                "Detached drag callback closed the replacement panel"
+                            }
+                            check(service.panelTrashView == null && !oldTarget.isAttachedToWindow)
+                        }
+                    } else {
+                        pointer(if (ending == "cancel") MotionEvent.ACTION_CANCEL else MotionEvent.ACTION_UP, x, y, down, scenario)
                     }
-                    pointer(
-                        if (ending in
-                            listOf("cancel", "configuration")
-                        ) {
-                            MotionEvent.ACTION_CANCEL
-                        } else {
-                            MotionEvent.ACTION_UP
-                        },
-                        x,
-                        y,
-                        down
-                    )
                     waitFor("Trash target leaked after drag") { main(test) { service.panelTrashView == null } }
                     main(test) {
                         check((service.panelView == null) == (ending == "trash")) { "Unexpected drop/cancel visibility" }
