@@ -21,6 +21,16 @@ internal class PanelDragTrash(private val context: Context, private val windows:
         if (view != null) return
         val metrics = windows.currentWindowMetrics
         val insets = metrics.windowInsets.getInsetsIgnoringVisibility(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+        val placement = PanelOverlayGeometry.trash(
+            metrics.bounds.width(),
+            metrics.bounds.height(),
+            insets.left,
+            insets.top,
+            insets.right,
+            insets.bottom,
+            dp(PanelOverlayGeometry.TRASH_SIZE_DP),
+            dp(PanelOverlayGeometry.TRASH_BOTTOM_GAP_DP)
+        )
         val target = ImageView(context).apply {
             setImageResource(R.drawable.ic_panel_trash)
             imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
@@ -30,16 +40,16 @@ internal class PanelDragTrash(private val context: Context, private val windows:
             background = Ui.shape(Color.rgb(72, 43, 55), dp(32), Color.rgb(244, 166, 177))
         }
         val parameters = WindowManager.LayoutParams(
-            dp(64),
-            dp(64),
+            placement.width,
+            placement.height,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
                 WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = ((metrics.bounds.width() - width) / 2).coerceAtLeast(insets.left)
-            y = (metrics.bounds.height() - insets.bottom - height - dp(12)).coerceAtLeast(insets.top)
+            x = placement.x
+            y = placement.y
             // Coordinates explicitly exclude system-bar insets above.
             setFitInsetsTypes(0)
         }

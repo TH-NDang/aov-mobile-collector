@@ -62,29 +62,88 @@ object NativePhotoReceipt {
         return a.any { expected -> b.any { actual -> similar(expected, actual) } }
     }
 
-    fun matches(signature: String?, bitmap: Bitmap): Boolean = matches(signature, bitmap.width, bitmap.height, bitmap::getPixel)
+    data class MatchResult(
+        val matched: Boolean,
+        val width: Int,
+        val height: Int,
+        val bestRgbError: Double?,
+        val bestCloseFraction: Double?,
+        val bestCorrelation: Double?,
+        val coarseComparisons: Int,
+        val refinedComparisons: Int
+    )
 
-    /**
-     * Native skill images are near-square assets, not game screenshots. Search a bounded patch
-     * range to accommodate .50/.55 probes on the same illustrated icon and renderer scaling.
-     * Both absolute RGB agreement and correlated spatial detail are required.
-     */
-    fun matches(signature: String?, width: Int, height: Int, pixel: (Int, Int) -> Int): Boolean {
-        val expected = decode(signature) ?: return false
-        if (width < 32 || height < 32 || width.toDouble() / height !in .75..1.34) return false
+    private data class Comparison(val rgb: Double, val close: Double, val correlation: Double) {
+        val accepted get() = rgb <= 18 && close >= .85 && correlation >= .92
+        val alignmentRank get() = maxOf(rgb / 18, (1 - close) / .15, (1 - correlation) / .08)
+    }
+
+    private data class Seed(val percent: Int, val row: Int, val column: Int, val rank: Double)
+
+    fun matches(signature: String?, bitmap: Bitmap): Boolean = matchDetailed(signature, bitmap).matched
+
+    fun matches(signature: String?, width: Int, height: Int, pixel: (Int, Int) -> Int): Boolean =
+        matchDetailed(signature, width, height, pixel).matched
+
+    fun matchDetailed(signature: String?, bitmap: Bitmap): MatchResult =
+        matchDetailed(signature, bitmap.width, bitmap.height, bitmap::getPixel)
+
+    /** Refine alignment, never acceptance thresholds or document provenance requirements. */
+    fun matchDetailed(signature: String?, width: Int, height: Int, pixel: (Int, Int) -> Int): MatchResult {
+        var coarse = 0
+        var refined = 0
+        var best: Comparison? = null
+
+        fun result(matched: Boolean) = MatchResult(matched, width, height, best?.rgb, best?.close, best?.correlation, coarse, refined)
+        val expected = decode(signature) ?: return result(false)
+        if (width < 32 || height < 32 || width.toDouble() / height !in .75..1.34) return result(false)
         val edge = minOf(width, height).toDouble()
+        val seeds = expected.map { ArrayList<Seed>(4) }
         for (percent in 30..100 step 5) {
             val side = edge * percent / 100
             for (row in 0..8) {
                 for (column in 0..8) {
-                    val left = (width - side) * column / 8
-                    val top = (height - side) * row / 8
-                    val actual = sample(width, height, left, top, side, pixel) ?: continue
-                    if (expected.any { similar(it, actual) }) return true
+                    val actual = sample(width, height, (width - side) * column / 8, (height - side) * row / 8, side, pixel) ?: continue
+                    for ((index, reference) in expected.withIndex()) {
+                        coarse++
+                        val comparison = compare(reference, actual)
+                        if (best == null || comparison.rgb < best!!.rgb || comparison.accepted) best = comparison
+                        if (comparison.accepted) return result(true)
+                        val shortlist = seeds[index]
+                        if (shortlist.size < 4 || comparison.alignmentRank < shortlist.last().rank) {
+                            shortlist.add(Seed(percent, row, column, comparison.alignmentRank))
+                            shortlist.sortBy { it.rank }
+                            if (shortlist.size > 4) shortlist.removeAt(4)
+                        }
+                    }
                 }
             }
         }
-        return false
+        // Four seeds per variant prevent textured border patches from starving an icon patch.
+        // At most 3 variants × 4 seeds × 9 scales × 9 offsets = 972 extra comparisons.
+        for ((index, reference) in expected.withIndex()) {
+            for (seed in seeds[index]) {
+                for (delta in -4..4) {
+                    val percent = seed.percent + delta
+                    if (percent !in 30..100) continue
+                    val side = edge * percent / 100
+                    for (dy in -1..1) {
+                        for (dx in -1..1) {
+                            val row = seed.row + dy * .5
+                            val column = seed.column + dx * .5
+                            if (row !in 0.0..8.0 || column !in 0.0..8.0) continue
+                            val actual =
+                                sample(width, height, (width - side) * column / 8, (height - side) * row / 8, side, pixel) ?: continue
+                            refined++
+                            val comparison = compare(reference, actual)
+                            if (best == null || comparison.rgb < best!!.rgb || comparison.accepted) best = comparison
+                            if (comparison.accepted) return result(true)
+                        }
+                    }
+                }
+            }
+        }
+        return result(false)
     }
 
     private fun decode(value: String?): List<IntArray>? {
@@ -141,30 +200,37 @@ object NativePhotoReceipt {
         return deviation >= 16 && edges >= 7 && lights.maxOrNull()!! - lights.minOrNull()!! >= 65
     }
 
-    private fun similar(expected: IntArray, actual: IntArray): Boolean {
+    private fun similar(expected: IntArray, actual: IntArray): Boolean = compare(expected, actual).accepted
+
+    private fun compare(expected: IntArray, actual: IntArray): Comparison {
         var error = 0L
         var close = 0
+        var sumA = 0.0
+        var sumB = 0.0
+        var sumAA = 0.0
+        var sumBB = 0.0
+        var sumAB = 0.0
         for (i in expected.indices) {
             var cell = 0
-            for (shift in listOf(0, 8, 16)) cell += abs((expected[i] shr shift and 255) - (actual[i] shr shift and 255))
+            for (shift in 0..16 step 8) cell += abs((expected[i] shr shift and 255) - (actual[i] shr shift and 255))
             error += cell
             if (cell <= 90) close++
+            val a = light(expected[i])
+            val b = light(actual[i])
+            sumA += a
+            sumB += b
+            sumAA += a * a
+            sumBB += b * b
+            sumAB += a * b
         }
-        if (error.toDouble() / (expected.size * 3) > 18 || close < expected.size * .85) return false
-        val a = expected.map(::light)
-        val b = actual.map(::light)
-        val meanA = a.average()
-        val meanB = b.average()
-        var covariance = 0.0
-        var energyA = 0.0
-        var energyB = 0.0
-        for (i in a.indices) {
-            val x = a[i] - meanA
-            val y = b[i] - meanB
-            covariance += x * y
-            energyA += x * x
-            energyB += y * y
+        val count = expected.size.toDouble()
+        val energyA = sumAA - sumA * sumA / count
+        val energyB = sumBB - sumB * sumB / count
+        val correlation = if (energyA > 0 && energyB > 0) {
+            (sumAB - sumA * sumB / count) / sqrt(energyA * energyB)
+        } else {
+            0.0
         }
-        return energyA > 0 && energyB > 0 && covariance / sqrt(energyA * energyB) >= .92
+        return Comparison(error / (count * 3), close / count, correlation)
     }
 }

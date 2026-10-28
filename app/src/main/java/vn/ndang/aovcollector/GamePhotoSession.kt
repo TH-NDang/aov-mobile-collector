@@ -219,6 +219,7 @@ object GamePhotoSession {
                 val fresh = all.filter { it.id !in baseline && it.id !in excluded }
                 NativePhotoReceiptJournal.observe(attempt, fresh.map { it.id }.toSet())
                 val verified = HashMap<String, OriginalPhotoCopy.Integrity>()
+                val contentDiagnostics = ArrayList<String>()
                 val candidates = fresh.map { photo ->
                     val eligible = photo.modified >= startedAt / 1000 * 1000 && photo.modified <= endsAt && photo.modified > 0
                     if (!eligible) {
@@ -247,7 +248,9 @@ object GamePhotoSession {
                             val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options) ?: error("Ảnh chưa giải mã được")
                             var ambiguous = false
                             val matching = try {
-                                val matches = NativePhotoReceipt.matches(attempt.optString("signature"), bitmap)
+                                val report = NativePhotoReceipt.matchDetailed(attempt.optString("signature"), bitmap)
+                                if (contentDiagnostics.size < 3) contentDiagnostics.add(NativeReceiptDiagnostics.describe(report))
+                                val matches = report.matched
                                 ambiguous =
                                     matches &&
                                     NativePhotoReceiptJournal.earlierAbsentSignatures(state, attemptId, photo.modified).any {
@@ -274,7 +277,8 @@ object GamePhotoSession {
                 } else if (id == null) {
                     ReceiptResult(
                         ReceiptStatus.UNCERTAIN,
-                        reason = NativePhotoReceipt.explain(startedAt, endsAt, candidates, attempt.optString("signature").isNotBlank()),
+                        reason = NativePhotoReceipt.explain(startedAt, endsAt, candidates, attempt.optString("signature").isNotBlank()) +
+                            if (contentDiagnostics.isEmpty()) "" else "; content=[${contentDiagnostics.joinToString("; ")}]",
                         absenceSafe = absenceSafe
                     )
                 } else {

@@ -213,6 +213,19 @@ internal object QuickSettingsSmoke {
             waitFor("Compact toolbar did not resize") {
                 main(test) { checkNotNull(service.panelView).width in 1 until expandedWidth }
             }
+
+            fun assertCompactSize() = main(test) {
+                val panel = checkNotNull(service.panelView)
+                val expected = PanelOverlayGeometry.compactSize(
+                    Ui.dp(service, PanelOverlayGeometry.HANDLE_SIZE_DP),
+                    Ui.dp(service, PanelOverlayGeometry.COMPACT_PADDING_DP)
+                )
+                check(panel.width == expected && panel.height == expected) { "Compact window does not fit its handle and padding" }
+                val handle = descendants(panel).single { it.contentDescription?.toString() == "Mở bảng điều khiển thu thập" }
+                val minimum = Ui.dp(service, PanelOverlayGeometry.HANDLE_SIZE_DP)
+                check(handle.width >= minimum && handle.height >= minimum) { "Compact handle lost its 48 dp touch target" }
+            }
+            assertCompactSize()
             check(nodes().none { it.contentDescription?.toString() in headerDescriptions }) {
                 "Compact toolbar still exposes settings or editing actions"
             }
@@ -268,7 +281,7 @@ internal object QuickSettingsSmoke {
             val captureNames = java.io.File(service.filesDir, "captures").walkTopDown()
                 .filter { it.isFile }.map { it.relativeTo(service.filesDir).path }.toSet()
             for (compactMode in listOf(false, true)) {
-                for (ending in listOf("outside", "cancel", "trash")) {
+                for (ending in listOf("outside", "cancel", "configuration", "trash")) {
                     main(test) {
                         field("compact").setBoolean(service, compactMode)
                         invoke("rebuildPanel")
@@ -276,6 +289,7 @@ internal object QuickSettingsSmoke {
                     val description = if (compactMode) "Mở bảng điều khiển thu thập" else "Kéo để di chuyển bảng nổi"
                     val handle = nodes().single { it.contentDescription?.toString() == description }
                     waitFor("Drag handle not laid out") { main(test) { handle.width > 0 && handle.isShown } }
+                    if (compactMode) assertCompactSize()
                     val from = main(test) { bounds(handle) }
                     val display = main(test) { service.getSystemService(WindowManager::class.java).currentWindowMetrics.bounds }
                     val down = SystemClock.uptimeMillis()
@@ -290,13 +304,56 @@ internal object QuickSettingsSmoke {
                         val params = target.layoutParams as WindowManager.LayoutParams
                         check(params.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE != 0)
                         check(params.flags and WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE != 0)
-                        bounds(target).also { check(display.contains(it)) }
+                        bounds(target).also { rect ->
+                            check(display.contains(rect))
+                            val metrics = service.getSystemService(WindowManager::class.java).currentWindowMetrics
+                            val insets = metrics.windowInsets.getInsetsIgnoringVisibility(
+                                android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout()
+                            )
+                            val expected = PanelOverlayGeometry.trash(
+                                display.width(),
+                                display.height(),
+                                insets.left,
+                                insets.top,
+                                insets.right,
+                                insets.bottom,
+                                Ui.dp(service, 64),
+                                Ui.dp(service, 80)
+                            )
+                            check(rect.top == expected.y && rect.bottom == expected.y + expected.height) { "Trash target is too low" }
+                        }
                     }
-                    val x = if (ending == "outside") display.exactCenterX() else trash.exactCenterX()
-                    val y = if (ending == "outside") display.exactCenterY() else trash.exactCenterY()
+                    val outside = main(test) {
+                        val metrics = service.getSystemService(WindowManager::class.java).currentWindowMetrics
+                        val insets = metrics.windowInsets.getInsetsIgnoringVisibility(
+                            android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.displayCutout()
+                        )
+                        val xs = listOf(display.left + insets.left + 1, display.right - insets.right - 2)
+                        val ys = listOf(display.top + insets.top + 1, display.bottom - insets.bottom - 2)
+                        xs.flatMap { xx -> ys.map { yy -> xx to yy } }.first { (xx, yy) -> !trash.contains(xx, yy) }
+                    }
+                    val x = if (ending == "outside") outside.first.toFloat() else trash.exactCenterX()
+                    val y = if (ending == "outside") outside.second.toFloat() else trash.exactCenterY()
+                    if (ending == "outside") check(!trash.contains(x.toInt(), y.toInt()))
                     pointer(MotionEvent.ACTION_MOVE, x, y, down)
                     if (ending != "outside") main(test) { check(service.panelTrashView?.isActivated == true) }
-                    pointer(if (ending == "cancel") MotionEvent.ACTION_CANCEL else MotionEvent.ACTION_UP, x, y, down)
+                    if (ending == "configuration") {
+                        // Exercise the same lifecycle cleanup used by rotation while a drag is active.
+                        main(test) { service.onConfigurationChanged(android.content.res.Configuration(service.resources.configuration)) }
+                        check(main(test) { service.panelTrashView == null && service.panelView != null })
+                    }
+                    pointer(
+                        if (ending in
+                            listOf("cancel", "configuration")
+                        ) {
+                            MotionEvent.ACTION_CANCEL
+                        } else {
+                            MotionEvent.ACTION_UP
+                        },
+                        x,
+                        y,
+                        down
+                    )
                     waitFor("Trash target leaked after drag") { main(test) { service.panelTrashView == null } }
                     main(test) {
                         check((service.panelView == null) == (ending == "trash")) { "Unexpected drop/cancel visibility" }

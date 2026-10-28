@@ -45,3 +45,14 @@ Một lần OCR trả `UNKNOWN` sau nhấn giữ không chứng minh rằng game
 ### Nhấp nháy dòng “Ảnh gốc” của popup app
 
 Đã xác minh `CaptureProgressPanel.refresh()` trước đây ghi dòng trạng thái cơ bản trước, rồi callback nền thay bằng trạng thái có thêm dòng “Ảnh gốc” mỗi lượt cập nhật. Việc bỏ/thêm dòng gây thay đổi chiều cao lặp lại; không phải bằng chứng game xuất ảnh chậm. Bản này giữ snapshot đầy đủ trong lúc đọc nền, chỉ cập nhật khi nội dung đổi và không mang trạng thái lượt cũ sang lượt mới. Bảo vệ ẩn overlay khi chụp vẫn giữ nguyên; không tắt shield để che triệu chứng.
+
+## v0.13.31: căn chỉnh nội dung, không nới bằng chứng
+
+Log ngày 28/10 có `signature=true, fresh=1, inWindow=1, matched=0, unreadable=0, ambiguous=0, undated=0, outsideWindow=0`. Do đó lần này thất bại ở đối chiếu nội dung của một ứng viên mới đọc được, không phải chờ lập chỉ mục hay lỗi quyền đọc.
+
+Từ screenshot Hayate và ảnh chiêu riêng 128×128 người dùng gửi, chữ ký dựng lại làm matcher cũ trả false trên JVM thật: lưới scale 5% / vị trí 1/8 bỏ lỡ căn chỉnh phù hợp. Lân cận mịn tìm được phép so với sai số RGB 17.61, 90% ô gần nhau và tương quan 0.93263. Ngưỡng vẫn lần lượt ≤18, ≥85%, ≥0.92; không giảm độ tin cậy để nhận ảnh. Chưa có journal thực tế của lượt lỗi, nên đây là cơ chế lỗi tái hiện trên cặp ảnh được cung cấp, không tuyên bố đã chạy qua Hayate trên điện thoại.
+
+- Giữ tìm thô trước; chỉ giữ tối đa bốn seed cho mỗi vùng chữ ký và tìm mịn trong lân cận hữu hạn về scale/vị trí. Không tìm tùy ý toàn ảnh ở mọi mức zoom. Số phép so có trần và được báo trong chẩn đoán.
+- Chỉ ảnh mới trong cửa sổ attempt mới được giải mã/so; 1591 ảnh baseline không phải 1591 lượt căn mịn. Kiểm tra source, duy nhất một kết quả, nội dung ảnh, timestamp, SHA/bytes khi ghim, lưu journal bền vững và chống tải trùng vẫn giữ nguyên.
+- Khi chưa khớp, log thêm kích thước, sai số RGB, phần ô gần nhau, tương quan và số phép so; tối đa ba bản tóm tắt số học, không ghi tên/path/ID ảnh riêng tư.
+- Kiểm thử dùng hình tổng hợp lệch scale/vị trí và ảnh tương tự nhưng sai; ảnh người dùng chỉ dùng kiểm chứng cục bộ, không đưa vào repo/fixture. JVM cục bộ và emulator CI không thay thế kiểm chứng game trên điện thoại thật.

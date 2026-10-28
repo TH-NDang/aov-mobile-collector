@@ -1,4 +1,10 @@
-# AOV Mobile Collector — v0.13.30
+# AOV Mobile Collector — v0.13.31
+
+## v0.13.31: căn ảnh chiêu chính xác hơn, bảng gọn thật sự
+
+Đối chiếu ảnh chiêu thêm bước căn vị trí/kích thước mịn quanh vài ứng viên tốt nhất; giữ nguyên ngưỡng màu/cấu trúc, yêu cầu một file mới duy nhất và mốc thời gian. Không coi “có ảnh trong Pictures” là đủ, không tải lại attempt chưa rõ. Có chẩn đoán số đo so ảnh thay vì chỉ báo không khớp. Xem [bằng chứng và giới hạn](docs/CHESS_NATIVE_RECEIPTS.md).
+
+Bảng thu gọn còn khoảng **56×56 dp**, gồm vùng chạm **48×48 dp**; thùng rác được nâng lên **80 dp trên vùng điều hướng**, có giới hạn cho màn ngang ngắn. Thả vào vẫn chỉ tạm dừng và ẩn bảng, không xóa ảnh. Xem [kiểm thử bảng nổi](docs/FLOATING_PANEL.md).
 
 ## v0.13.30: đối chiếu ảnh Cờ không dừng sớm
 

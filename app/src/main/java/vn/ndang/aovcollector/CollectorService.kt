@@ -1077,10 +1077,15 @@ class CollectorService : AccessibilityService() {
             }
         }.apply {
             orientation = LinearLayout.VERTICAL
-            val padding = if (compact && !quickSettingsOpen) dp(8) else dp(12)
-            setPadding(padding, dp(10), padding, dp(10))
-            background =
-                Ui.shape(Color.argb(232, 20, 24, 42), dp(20), Color.argb(70, 230, 230, 255))
+            val collapsed = compact && !quickSettingsOpen
+            val padding = if (collapsed) dp(PanelOverlayGeometry.COMPACT_PADDING_DP) else dp(12)
+            val vertical = if (collapsed) padding else dp(10)
+            setPadding(padding, vertical, padding, vertical)
+            background = Ui.shape(
+                Color.argb(232, 20, 24, 42),
+                dp(if (collapsed) PanelOverlayGeometry.COMPACT_SIZE_DP / 2 else 20),
+                Color.argb(70, 230, 230, 255)
+            )
         }
         val params = panelParams ?: WindowManager.LayoutParams().apply {
             type = WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
@@ -1100,7 +1105,11 @@ class CollectorService : AccessibilityService() {
         )
         val availableWidth = maxOf(1, bounds.width() - insets.left - insets.right)
         val availableHeight = maxOf(1, bounds.height() - insets.top - insets.bottom)
-        params.width = minOf(dp(if (compact && !quickSettingsOpen) 152 else 278), availableWidth)
+        val compactSize = PanelOverlayGeometry.compactSize(
+            dp(PanelOverlayGeometry.HANDLE_SIZE_DP),
+            dp(PanelOverlayGeometry.COMPACT_PADDING_DP)
+        )
+        params.width = minOf(if (compact && !quickSettingsOpen) compactSize else dp(278), availableWidth)
         params.height = WindowManager.LayoutParams.WRAP_CONTENT
         params.x = params.x.coerceIn(0, maxOf(0, availableWidth - params.width))
         params.y =
@@ -1217,11 +1226,14 @@ class CollectorService : AccessibilityService() {
             bubble =
                 Ui.text(this, "AOV", 12f, Color.WHITE, true).apply {
                     gravity = Gravity.CENTER
-                    minHeight = dp(38)
+                    minHeight = dp(PanelOverlayGeometry.HANDLE_SIZE_DP)
+                    maxLines = 2
+                    includeFontPadding = false
+                    ellipsize = android.text.TextUtils.TruncateAt.END
                     contentDescription =
                         "Mở bảng điều khiển thu thập"
                 }
-            toolbar.addView(bubble, LinearLayout.LayoutParams(0, dp(48), 1f))
+            toolbar.addView(bubble, LinearLayout.LayoutParams(0, dp(PanelOverlayGeometry.HANDLE_SIZE_DP), 1f))
             layout.addView(toolbar)
             drag(bubble!!) {
                 compact = false
@@ -1430,8 +1442,9 @@ class CollectorService : AccessibilityService() {
         val stoppable = canStop()
         stopView?.isEnabled = stoppable
         stopView?.alpha = if (stoppable) 1f else .4f
+        bubble?.stateDescription = if (running) "Đang chạy" else "Bảng thu gọn"
         bubble?.text = if (running && unknownChessTotal) {
-            "AOV\nĐang chạy"
+            "AOV\n●"
         } else if (running) {
             "AOV\n${progress?.progress ?: if (m != null) step * 100 / maxOf(1,m.steps.length()) else 0}%"
         } else {

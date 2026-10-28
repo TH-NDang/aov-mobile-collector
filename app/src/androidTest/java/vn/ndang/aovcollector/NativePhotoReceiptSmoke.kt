@@ -54,7 +54,10 @@ internal object NativePhotoReceiptSmoke {
             check(GamePhotoSession.reconcileAttempt(context, run, attempt.id).status == GamePhotoSession.ReceiptStatus.UNCERTAIN)
             check(!GamePhotoSession.hasMark(context, run, group, item)) { "Old matching artwork counted as fresh export" }
             val unrelatedSource = write("receipt-unrelated.png", mirrored = true)
-            check(GamePhotoSession.reconcileAttempt(context, run, attempt.id).status == GamePhotoSession.ReceiptStatus.UNCERTAIN)
+            val mismatch = GamePhotoSession.reconcileAttempt(context, run, attempt.id)
+            check(mismatch.status == GamePhotoSession.ReceiptStatus.UNCERTAIN)
+            check(mismatch.reason?.contains("content=[100x100") == true) { "Content mismatch diagnostics missing" }
+            check(mismatch.reason?.contains("receipt-unrelated") == false) { "Diagnostics leaked gallery filename" }
             val exported = write("receipt-new.png")
             // Simulate an actual atomic journal write failure after the game file exists.
             // Only this fixture's temporary path is obstructed; the durable pending journal stays intact.
