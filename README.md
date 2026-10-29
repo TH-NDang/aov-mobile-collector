@@ -656,3 +656,52 @@ Các tùy chọn chạy nhanh, chỉ chụp Chi tiết, chuyển thẳng giữa 
 
 - **Trên máy ảo CI**, UiSmoke chọn giao diện Tối rồi chụp màn Lịch sử, danh sách tác vụ và form Lấy thông tin tướng. Nó kiểm tra độ sáng trung bình của màn hình là tối.
 - Toàn bộ kiểm tra cũ vẫn chạy với tên mục mới trong danh sách tác vụ.
+
+## v0.9.0: chạy nhiều tác vụ nối tiếp, chia sẻ ZIP qua app khác
+
+### Chạy nhiều tác vụ
+
+**Mục mới trong danh sách tác vụ: "Chạy nhiều tác vụ".**
+
+- **Chọn tác vụ:** tick các tác vụ theo thứ tự muốn chạy: Lấy thông tin tướng, Thống kê tướng, Chiến khu. Số thứ tự hiện trước tên mỗi tác vụ.
+- **Tùy chọn:** mỗi tác vụ dùng tùy chọn đã chọn lần trước trong form của nó, và dòng mô tả cạnh tên cho biết đó là gì. Muốn đổi, mở form của tác vụ đó, bấm Chọn tác vụ, rồi quay lại đây.
+  - Lấy thông tin tướng chạy được theo tên tướng hoặc các ô đầu danh sách. Cách Tướng đang mở không chạy được trong chuỗi.
+- **Vào game:** "Tự mở game" áp dụng cho tác vụ đầu: đóng game còn chạy, mở lại, đăng nhập, đóng popup như trước.
+  - Không tick thì cứ mở game, ở sảnh hay màn nào cũng được, rồi bấm Chạy.
+- **Giữa hai tác vụ, app về sảnh game** từ màn tác vụ trước dừng lại, bằng nút quay lại của từng trang:
+  - Số 1 máy chủ → Chiến khu → Đấu hạng → sảnh;
+  - Bảng Phân Bậc Tướng → Cộng đồng → sảnh;
+  - danh sách tướng → sảnh.
+  
+  Rồi app vào màn bắt đầu của tác vụ sau: sảnh, hoặc danh sách tướng. Game không bị đóng mở lại. App vẫn không bao giờ bấm nút Đấu hạng trong trang Đấu hạng.
+- **Khi không nhận ra đường về:** app chờ tối đa 20 giây rồi đi đường dài: đóng game, mở lại và vào sảnh như Tự mở game.
+- **Lịch sử:** mỗi tác vụ là một lượt riêng.
+- **Bảng nổi:** hiện "Tác vụ 2/3 · …".
+- **Tạm dừng / Tiếp tục:** làm tiếp đúng tác vụ đang dở rồi sang tác vụ sau.
+- **Dừng:** kết thúc cả chuỗi. Chọn một tác vụ khác bằng tay cũng bỏ chuỗi.
+
+### Chia sẻ qua app khác
+
+- **Nút "Chia sẻ" mới:** ở thanh chọn nhiều mục (cạnh Lưu ZIP và Xóa), trong menu ⋮ của mỗi mục, và khi xem ảnh.
+- **Cách gửi:** app nén các mục đã chọn rồi mở bảng chia sẻ của Android để chọn app gửi đi (Zalo, Messenger, Drive, Gmail…).
+  - Chỉ một ảnh: gửi nguyên ảnh PNG.
+  - Dưới 450 MB: một file ZIP.
+  - Trên 450 MB: dữ liệu được chia thành các ZIP nhỏ dưới 450 MB như khi Lưu ZIP. App hỏi gửi cách nào:
+    - **Một file ZIP** chứa các ZIP nhỏ bên trong. Nhập lại được vào app như file Lưu ZIP.
+    - **Các ZIP nhỏ riêng**, mỗi file dưới 450 MB. Hợp với app giới hạn dung lượng mỗi file. Từng file cũng nhập lại được vào app.
+- **Tiến độ:** việc nén chạy như Lưu ZIP: có tiến độ, Hủy và Chạy nền. Nếu đang chạy nền, thông báo "xong" mở bảng chia sẻ khi bấm vào.
+- **Bộ nhớ tạm:** file chia sẻ được tạo trong bộ nhớ tạm của app, nên cần chỗ trống bằng dung lượng các mục đã chọn. File cũ được xóa khi chia sẻ lần sau hoặc sau một ngày.
+- **Quyền đọc:** chỉ app được chọn đọc được file, qua quyền Android cấp cho lần chia sẻ đó.
+
+### Kiểm tra
+
+- **Unit test:**
+  - **Về sảnh:** từ Số 1 máy chủ (3 lần quay lại), từ Bảng Phân Bậc Tướng (nút tròn cạnh tiêu đề, rồi nút trên logo Cộng đồng) rồi vào danh sách tướng. Không đóng hay mở lại game.
+  - **Màn lạ:** bỏ cuộc trong khoảng 20 giây để đi đường dài.
+  - **Chia ZIP:** các ZIP nhỏ được ghi thành file riêng, mỗi file dưới giới hạn, đủ mọi file đúng nội dung.
+- **Trên máy ảo CI:**
+  - macro của tác vụ trong chuỗi bắt đầu bằng bước về sảnh (hoặc về danh sách tướng); tác vụ chạy một mình không đổi;
+  - chuỗi tác vụ lưu và đọc lại đúng;
+  - file chia sẻ đọc lại đúng tên, dung lượng và nội dung, và không đọc được file ngoài thư mục chia sẻ;
+  - form Chạy nhiều tác vụ có đủ 3 tác vụ.
+- **Chưa chạy trên máy thật.** Đường về sảnh từ từng trang lần đầu nên xem qua (menu ⋮ của lượt → Xem lại các bước vào game).

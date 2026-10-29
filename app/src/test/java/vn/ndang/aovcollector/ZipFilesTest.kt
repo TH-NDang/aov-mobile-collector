@@ -66,6 +66,24 @@ class ZipFilesTest {
         }
     }
 
+    @Test fun writesThePartsAsFilesOfTheirOwnToShare() {
+        val limit=100_000L
+        val dir=File(root,"share")
+        var last=0L
+        val written=ZipFiles.exportParts(files,root,dir,"aov_",{ false },limit) { done,_,_,_,_ -> last=done }
+        val planned=ZipFiles.plan(files,root,limit)
+        assertEquals(planned.map { "aov_"+it.name },written.map { it.name })
+        assertTrue("several parts",written.size>=3)
+        val names=ArrayList<String>()
+        for(part in written) {
+            assertTrue("${part.name} is ${part.length()} bytes",part.length()<=limit)
+            ZipFile(part).use { zip -> for(entry in zip.entries()) {
+                assertTrue(entry.name,zip.getInputStream(entry).readBytes().contentEquals(File(root,entry.name).readBytes())); names+=entry.name } }
+        }
+        assertEquals(files.map { it.relativeTo(root).invariantSeparatorsPath }.sorted(),names.sorted())
+        assertEquals(files.sumOf { it.length() },last)
+    }
+
     @Test fun putsEverythingInOnePartWhenItFits() {
         val written=ZipFiles.plan(files,root)
         assertEquals(1,written.size)

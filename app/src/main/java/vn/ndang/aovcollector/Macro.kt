@@ -34,6 +34,8 @@ class Macro(val raw: String) {
                     require(s.optInt("hint",-1) in -1..9999) { "find: hint từ -1 đến 9999" }
                     require(s.getInt("skipTo") in i+1..steps.length()) { "find: skipTo phải là một bước sau nó" } }
                 "enter" -> { require(i==0) { "enter chỉ dùng ở bước đầu" }; require(s.optString("to","list") in setOf("list","lobby")) { "enter: to là list hoặc lobby" } }
+                // Between the tasks of a chain: back to the lobby (or on to the list) from where the last task ended.
+                "home" -> { require(i==0) { "home chỉ dùng ở bước đầu" }; require(s.optString("to","list") in setOf("list","lobby")) { "home: to là list hoặc lobby" } }
                 "board" -> { require(s.getInt("heroes") in 1..BuiltInMacros.ALL) { "board: số tướng từ 1 đến ${BuiltInMacros.ALL}" }
                     val tabs=s.getJSONArray("tabs"); require(tabs.length()>0) { "board: chọn ít nhất một bảng" }
                     for(k in 0 until tabs.length()) { val t=tabs.getJSONObject(k)
@@ -66,13 +68,13 @@ object BuiltInMacros {
      * review. All stay off unless chosen (the trace is on by default), so the default steps do not change.
      */
     fun create(heroName:String, count:Int = 1, batch:Boolean = false, fast:Boolean = false, detailOnly:Boolean = false, directSkills:Boolean = false,
-               openGame:Boolean = false, checkAccount:Boolean = false, traceEntry:Boolean = true):String {
+               openGame:Boolean = false, checkAccount:Boolean = false, traceEntry:Boolean = true, home:Boolean = false):String {
         require(count in 1..ALL)
         val steps=org.json.JSONArray()
         val hero=Hero(steps,fast,detailOnly,directSkills)
-        val entering=batch&&openGame
-        if(entering) steps.put(JSONObject().put("type","enter"))
-        hero.waitFor(if(entering) 1000 else 3000)
+        val entering=batch&&openGame&&!home
+        val lead=lead(steps,entering,batch&&home,"list")
+        hero.waitFor(if(lead) 1000 else 3000)
         if(!batch) hero.collect("hero") else for(i in 0 until count) {
             // "pick" scrolls the list by measured amounts and taps card i; the run ends early at the end of the list.
             steps.put(JSONObject().put("type","pick").put("index",i)); hero.waitFor(if(fast) 2000 else 2700)
@@ -83,7 +85,16 @@ object BuiltInMacros {
             .put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
             .put("collectionMode",if(batch) "all" else "single").put("heroName",safeName)
             .put("heroCount",if(batch) count else 1).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills).put("openGame",entering).put("checkAccount",entering&&checkAccount).put("traceEntry",traceEntry)
-            .put("builtinVersion",VERSION).put("steps",steps).toString(2)
+            .apply { if(batch&&home) put("home",true) }.put("builtinVersion",VERSION).put("steps",steps).toString(2)
+    }
+    /**
+     * The first step: "enter" opens the game and goes to [to]; "home", for a task after another in a chain, goes back
+     * there from where the game is. True when there is one.
+     */
+    private fun lead(steps:org.json.JSONArray,enter:Boolean,home:Boolean,to:String):Boolean {
+        if(enter) steps.put(JSONObject().put("type","enter").apply { if(to=="lobby") put("to","lobby") })
+        else if(home) steps.put(JSONObject().put("type","home").put("to",to))
+        return enter||home
     }
     /** The steps that photograph the hero page open: overview, attributes, then the skills read at run time. */
     private class Hero(val steps:org.json.JSONArray,val fast:Boolean,val detailOnly:Boolean,val directSkills:Boolean) {
@@ -107,15 +118,15 @@ object BuiltInMacros {
      * step jumps to the next hero's ("skipTo"). Options as for the list ([create]).
      */
     fun named(names:List<String>,hints:List<Int> =names.map { -1 },fast:Boolean=false,detailOnly:Boolean=false,directSkills:Boolean=false,
-              openGame:Boolean=false,checkAccount:Boolean=false,traceEntry:Boolean=true):String {
+              openGame:Boolean=false,checkAccount:Boolean=false,traceEntry:Boolean=true,home:Boolean=false):String {
         val chosen=names.mapIndexed { i,n -> n.trim() to (hints.getOrNull(i)?.takeIf { it>=0 }?:-1) }.filter { it.first.isNotEmpty() }.distinctBy { HeroNames.slug(it.first) }
         val heroes=chosen.map { it.first }
         require(heroes.size in 1..ALL) { "Chọn ít nhất một tướng" }
         require(heroes.all { it.length<=40 }) { "Tên tướng tối đa 40 ký tự" }
         val steps=org.json.JSONArray()
         val hero=Hero(steps,fast,detailOnly,directSkills)
-        if(openGame) steps.put(JSONObject().put("type","enter"))
-        hero.waitFor(if(openGame) 1000 else 3000)
+        val entering=openGame&&!home
+        hero.waitFor(if(lead(steps,entering,home,"list")) 1000 else 3000)
         for((i,pair) in chosen.withIndex()) {
             val find=JSONObject().put("type","find").put("name",pair.first).put("hint",pair.second)
             steps.put(find); hero.waitFor(if(fast) 2000 else 2700)
@@ -125,8 +136,8 @@ object BuiltInMacros {
         return JSONObject().put("name","named-heroes")
             .put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
             .put("collectionMode","pick").put("heroName",heroes.joinToString(", ").take(80)).put("heroNames",org.json.JSONArray(heroes))
-            .put("heroCount",heroes.size).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills).put("openGame",openGame).put("checkAccount",openGame&&checkAccount).put("traceEntry",traceEntry)
-            .put("builtinVersion",VERSION).put("steps",steps).toString(2)
+            .put("heroCount",heroes.size).put("fast",fast).put("detailOnly",detailOnly).put("directSkills",directSkills).put("openGame",entering).put("checkAccount",entering&&checkAccount).put("traceEntry",traceEntry)
+            .apply { if(home) put("home",true) }.put("builtinVersion",VERSION).put("steps",steps).toString(2)
     }
     /** The names a macro of heroes by name asks for, in order. */
     fun heroNames(json:JSONObject):List<String> { val a=json.optJSONArray("heroNames")?:return emptyList(); return (0 until a.length()).map { a.optString(it) }.filter { it.isNotBlank() } }
@@ -134,32 +145,32 @@ object BuiltInMacros {
      * The hero statistics ([RankingReader]) for the tables named in [combos] ([RankScreens.Combo.slug]): with
      * [openGame], the game is opened and left at the lobby first, as for the list ([checkAccount], [traceEntry] the same).
      */
-    fun ranking(openGame:Boolean=false,checkAccount:Boolean=false,traceEntry:Boolean=true,combos:List<String> =RankScreens.COMBOS.map { it.slug }):String {
+    fun ranking(openGame:Boolean=false,checkAccount:Boolean=false,traceEntry:Boolean=true,combos:List<String> =RankScreens.COMBOS.map { it.slug },home:Boolean=false):String {
         require(combos.isNotEmpty()) { "Chọn ít nhất một bảng" }
         val steps=org.json.JSONArray()
-        if(openGame) steps.put(JSONObject().put("type","enter").put("to","lobby"))
-        steps.put(JSONObject().put("type","wait").put("ms",if(openGame) 1000 else 3000))
+        val entering=openGame&&!home
+        steps.put(JSONObject().put("type","wait").put("ms",if(lead(steps,entering,home,"lobby")) 1000 else 3000))
         steps.put(JSONObject().put("type","ranking").put("combos",org.json.JSONArray(combos)))
         return JSONObject().put("name","hero-ranking").put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
-            .put("collectionMode","ranking").put("heroName","").put("openGame",openGame).put("checkAccount",openGame&&checkAccount).put("traceEntry",traceEntry)
-            .put("rankCombos",org.json.JSONArray(combos)).put("builtinVersion",VERSION).put("steps",steps).toString(2)
+            .put("collectionMode","ranking").put("heroName","").put("openGame",entering).put("checkAccount",entering&&checkAccount).put("traceEntry",traceEntry)
+            .apply { if(home) put("home",true) }.put("rankCombos",org.json.JSONArray(combos)).put("builtinVersion",VERSION).put("steps",steps).toString(2)
     }
     /**
      * The players' ranking of each hero, "Chiến khu" ([BoardReader]): [heroes] of "Chọn tướng" in order, the tabs
      * [wanted], each down to its top players. With [openGame], the game is opened and left at the lobby first, as for
      * the list ([checkAccount], [traceEntry] the same).
      */
-    fun board(openGame:Boolean=false,checkAccount:Boolean=false,traceEntry:Boolean=true,heroes:Int=ALL,wanted:List<BoardScreens.Want> =BoardScreens.DEFAULT):String {
+    fun board(openGame:Boolean=false,checkAccount:Boolean=false,traceEntry:Boolean=true,heroes:Int=ALL,wanted:List<BoardScreens.Want> =BoardScreens.DEFAULT,home:Boolean=false):String {
         require(heroes in 1..ALL&&wanted.isNotEmpty())
         val tabs=org.json.JSONArray(); wanted.forEach { tabs.put(JSONObject().put("tab",it.tab.slug).put("top",it.top)) }
         val steps=org.json.JSONArray()
-        if(openGame) steps.put(JSONObject().put("type","enter").put("to","lobby"))
-        steps.put(JSONObject().put("type","wait").put("ms",if(openGame) 1000 else 3000))
+        val entering=openGame&&!home
+        steps.put(JSONObject().put("type","wait").put("ms",if(lead(steps,entering,home,"lobby")) 1000 else 3000))
         steps.put(JSONObject().put("type","board").put("heroes",heroes).put("tabs",tabs))
         return JSONObject().put("name","hero-board").put("targetPackage","com.garena.game.kgvn").put("orientation","landscape")
             .put("collectionMode","board").put("heroName","").put("heroCount",heroes).put("boardTabs",tabs)
-            .put("openGame",openGame).put("checkAccount",openGame&&checkAccount).put("traceEntry",traceEntry)
-            .put("builtinVersion",VERSION).put("steps",steps).toString(2)
+            .put("openGame",entering).put("checkAccount",entering&&checkAccount).put("traceEntry",traceEntry)
+            .apply { if(home) put("home",true) }.put("builtinVersion",VERSION).put("steps",steps).toString(2)
     }
     /** The tabs a Chiến khu macro or its step asks for, with their top players; the default when it names none. */
     fun boardWants(json:JSONObject):List<BoardScreens.Want> {

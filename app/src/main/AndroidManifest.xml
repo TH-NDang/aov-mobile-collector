@@ -14,5 +14,7 @@
    <meta-data android:name="android.accessibilityservice" android:resource="@xml/collector_service"/>
   </service>
   <service android:name=".FileJobService" android:foregroundServiceType="dataSync" android:exported="false"/>
+  <!-- ZIP files shared to another app: read only, reached only through the permission a share grants. -->
+  <provider android:name=".ShareProvider" android:authorities="vn.ndang.aovcollector.share" android:exported="false" android:grantUriPermissions="true"/>
  </application>
 </manifest>

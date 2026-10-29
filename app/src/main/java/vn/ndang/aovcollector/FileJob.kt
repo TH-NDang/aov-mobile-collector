@@ -44,8 +44,11 @@ object FileJob {
     private var started=0L;private var shownAt=0L;private var notifiedAt=0L
     /** Set on the main thread by the open dialog. */
     var dialog:Dialog?=null
-    /** Set on the main thread by the screen in front; it gets the result. Without one the result is a notification. */
-    var screen:((String)->Unit)?=null
+    /**
+     * Set on the main thread by the screen in front; it gets the result, and what to open next (the share sheet of a
+     * share) when there is something. Without one the result is a notification, whose tap opens that.
+     */
+    var screen:((String,Intent?)->Unit)?=null
 
     fun start(context:Context,title:String,name:String) {
         app=context.applicationContext;this.title=title;this.name=name
@@ -72,8 +75,8 @@ object FileJob {
     }
     fun cancel() { if(!running||cancelled) return;cancelled=true;line="Đang hủy…";main.post { if(running) { dialog?.progress();notifyProgress() } } }
 
-    /** From the worker when the job has ended, with what to tell the user. */
-    fun finish(result:String) {
+    /** From the worker when the job has ended, with what to tell the user and what to open next, if anything. */
+    fun finish(result:String,next:Intent?=null) {
         running=false
         main.post {
             CollectorService.libraryBusy=false
@@ -81,10 +84,10 @@ object FileJob {
             val manager=notifications();manager.cancel(NOTIFICATION)
             dialog?.finished();dialog=null
             val shown=screen
-            if(shown!=null) shown(result)
+            if(shown!=null) shown(result,next)
             else manager.notify(RESULT,Notification.Builder(app,RESULT_CHANNEL).setSmallIcon(android.R.drawable.stat_sys_download_done)
                 .setContentTitle(name).setContentText(result).setStyle(Notification.BigTextStyle().bigText(result))
-                .setAutoCancel(true).setContentIntent(open(app)).build())
+                .setAutoCancel(true).setContentIntent(if(next!=null) PendingIntent.getActivity(app,2,next,PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT) else open(app)).build())
         }
     }
 

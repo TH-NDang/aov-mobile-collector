@@ -156,7 +156,7 @@ class GameEntryTest {
         override fun now()=time
         override fun note(text:String) { notes.add(text) }
         override fun say(text:String) {}
-        fun run(toLobby:Boolean=false):GameEntry.Outcome { GameEntry(this,uid,toLobby) { outcome=it }.start(); var guard=0
+        fun run(toLobby:Boolean=false,restart:Boolean=true):GameEntry.Outcome { GameEntry(this,uid,toLobby,restart) { outcome=it }.start(); var guard=0
             while(outcome==null) { pending.removeFirstOrNull()?.invoke()?:error("stuck"); check(++guard<10000) }; return outcome!! }
     }
     private fun at(kind:GameScreens.Kind,close:Pair<Double,Double>?=null,look:Int=0,words:List<GameScreens.Word> =emptyList(),uid:String?=null,tap:Pair<Double,Double>?=null)=
@@ -166,6 +166,33 @@ class GameEntryTest {
     private val x1=.913 to .056
     private val x2=.78 to .22
     private val heroes=GameScreens.HEROES_X to GameScreens.HEROES_Y
+
+    @Test fun goesBackToTheLobbyFromWhereTheLastTaskEndedWithoutReopeningTheGame() {
+        // From Số 1 máy chủ: back to Chiến khu, to Đấu hạng, to the lobby; never its Đấu hạng button.
+        val top=at(other,words=listOf(word("Số 1 máy chủ",.501,.083),word("Top chiến lực",.498,.156)))
+        val board=at(other,words=listOf(word("Chiến khu",.17,.055),word("Toàn máy chủ",.77,.15),word("L.sử lực chiến cao nhất",.16,.66)))
+        val ranked=at(other,words=listOf(word("Chiến khu",.15,.56),word("Thời hạn mùa giải",.2,.13),word("Đấu hạng",.79,.865)))
+        val lobby=at(GameScreens.Kind.LOBBY)
+        val game=Script(listOf(top,board,ranked,lobby,lobby))
+        assertTrue(game.run(toLobby=true,restart=false) is GameEntry.Outcome.Ready)
+        assertEquals(0 to 0,game.quits to game.launches)
+        assertEquals(listOf(BoardScreens.TOP_BACK_X to BoardScreens.TOP_BACK_Y,HeroGrid.BACK_X to HeroGrid.BACK_Y,HeroGrid.BACK_X to HeroGrid.BACK_Y),game.taps)
+        // From the hero ranking, a web view: its round arrow left of the title, then Cộng đồng's above its logo; then the
+        // next task's hero list from the lobby.
+        val ranking=at(other,words=listOf(word("Bảng Phân Bậc Tướng",.22,.078),word("Đổi bảng xếp hạng",.83,.2)))
+        val community=at(other,words=listOf(word("Bảng xếp hạng đầy đủ",.48,.083),word("LIÊNQUÂN",.085,.9)))
+        val toList=Script(listOf(ranking,community,lobby,lobby,at(GameScreens.Kind.LIST)))
+        assertTrue(toList.run(restart=false) is GameEntry.Outcome.Ready)
+        assertEquals(.22-.03-.0315,toList.taps[0].first,.001); assertEquals(.078,toList.taps[0].second,.001)
+        assertEquals(.085 to .072,toList.taps[1])
+        assertEquals(heroes,toList.taps[2])
+        // A screen not known: the way back gives up soon, for the run to reopen the game instead.
+        val lost=Script(listOf(at(other,look=5)))
+        val outcome=lost.run(toLobby=true,restart=false)
+        assertTrue(outcome is GameEntry.Outcome.Failed&&lost.time<60_000)
+        assertEquals(0 to 0,lost.quits to lost.launches)
+        assertTrue(lost.taps.isEmpty())
+    }
 
     @Test fun opensTheGameClosesItsPopupsAndOpensTheHeroList() {
         val popup=GameScreens.Kind.POPUP

@@ -133,6 +133,26 @@ class UiSmoke:Instrumentation() {
             val finds=(0 until named.steps.length()).filter { named.steps.getJSONObject(it).getString("type")=="find" }
             check(finds.size==2&&named.steps.getJSONObject(finds[0]).getInt("skipTo")==finds[1]&&named.steps.getJSONObject(finds[1]).getInt("skipTo")==named.steps.length()
                 &&named.steps.getJSONObject(finds[0]).getInt("hint")==7&&named.steps.getJSONObject(finds[1]).getString("name")=="violet"&&BuiltInMacros.heroNames(named.json)==listOf("Bolt Baron","violet")) { "Heroes by name: ${named.raw}" }
+            // A chain of tasks: those after the first start by going back to the game's lobby, or on to the hero list.
+            fun first(raw:String)=Macro(raw).steps.getJSONObject(0)
+            check(first(BuiltInMacros.ranking(home=true)).let { it.getString("type")=="home"&&it.getString("to")=="lobby" }) { "Thống kê in a chain should start at the lobby" }
+            check(first(BuiltInMacros.board(heroes=2,home=true)).let { it.getString("type")=="home"&&it.getString("to")=="lobby" }) { "Chiến khu in a chain should start at the lobby" }
+            check(first(BuiltInMacros.create("",2,true,home=true)).let { it.getString("type")=="home"&&it.getString("to")=="list" }) { "A list in a chain should start at the hero list" }
+            val chainNamed=Macro(BuiltInMacros.named(listOf("Violet"),home=true))
+            check(chainNamed.steps.getJSONObject(0).getString("type")=="home"&&(0 until chainNamed.steps.length()).map { chainNamed.steps.getJSONObject(it) }.single { it.getString("type")=="find" }.getInt("skipTo")==chainNamed.steps.length())
+            check(first(BuiltInMacros.ranking(openGame=true)).getString("type")=="enter"&&!Macro(BuiltInMacros.ranking()).json.has("home")) { "A task alone should not change" }
+            val rankRaw=BuiltInMacros.ranking(home=true)
+            TaskQueue.save(targetContext,TaskQueue(listOf(BuiltInMacros.board(openGame=true),rankRaw),1))
+            check(TaskQueue.load(targetContext)?.let { it.pos==1&&it.items.size==2&&it.isCurrent(Macro(rankRaw))&&it.label=="Tác vụ 2/2" }==true) { "Task chain did not survive saving" }
+            TaskQueue.clear(targetContext);check(TaskQueue.load(targetContext)==null)
+            // Files shared to another app: read through the share provider, nothing outside its folder.
+            val shared=File(ShareProvider.dir(targetContext).apply { mkdirs() },"aov-test.zip").apply { writeBytes(ByteArray(1234) { it.toByte() }) }
+            val sharedUri=ShareProvider.uri(shared)
+            check(targetContext.contentResolver.openInputStream(sharedUri)!!.use { it.readBytes() }.contentEquals(shared.readBytes())) { "Shared file read back differently" }
+            targetContext.contentResolver.query(sharedUri,null,null,null,null)!!.use { c -> check(c.moveToFirst()&&c.getString(c.getColumnIndexOrThrow(android.provider.OpenableColumns.DISPLAY_NAME))=="aov-test.zip"&&c.getLong(c.getColumnIndexOrThrow(android.provider.OpenableColumns.SIZE))==1234L) { "Shared file's name or size" } }
+            check(targetContext.contentResolver.getType(sharedUri)=="application/zip")
+            check(runCatching { targetContext.contentResolver.openInputStream(android.net.Uri.parse("content://${ShareProvider.AUTHORITY}/..%2Fshared_prefs%2Fui.xml"))!!.close() }.isFailure) { "The share provider reached outside its folder" }
+            ShareProvider.clear(targetContext);check(!shared.exists())
             // Thống kê tướng takes the chosen tables only; one saved before the choice existed takes all six.
             check(BuiltInMacros.rankCombos(Macro(BuiltInMacros.ranking(combos=listOf("ty-le-dau-5v5","chi-so-dau-hang-tinh-anh"))).json).map { it.slug }==listOf("ty-le-dau-5v5","chi-so-dau-hang-tinh-anh"))
             check(BuiltInMacros.rankCombos(JSONObject(BuiltInMacros.ranking()).apply { remove("rankCombos") }).size==6)
@@ -283,6 +303,13 @@ class UiSmoke:Instrumentation() {
             click("Lấy thông tin tướng");SystemClock.sleep(800)
             val darkForm=luma();snap("10-dark-form")
             check(darkForm<90) { "The dark task form is not dark: mean brightness $darkForm" }
+            click("Hủy")
+            // Chạy nhiều tác vụ: the three tasks to tick, each with what its form chose last.
+            chooserClick()
+            check(nodes().firstNotNullOfOrNull { findEdit(it) }!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT,Bundle().apply { putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,"nhieu tac vu") }))
+            waitForIdleSync();SystemClock.sleep(400)
+            click("Chạy nhiều tác vụ");SystemClock.sleep(800);snap("11-dark-chain")
+            for(task in listOf("Lấy thông tin tướng ·","Thống kê tướng ·","Chiến khu ·")) check(nodes().flatMap { it.findAccessibilityNodeInfosByText(task) }.any { it.className?.toString()=="android.widget.CheckBox" }) { "No $task in Chạy nhiều tác vụ" }
             click("Hủy")
             targetContext.getSharedPreferences("ui",0).edit().remove("theme").commit()
             result.putString("stream","SMOKE_OK: history, viewer, macro upgrade, OCR, task selection, overlay, rotation, tap-through, force stop and dark look passed (legacyTapClosedPanel=$legacyClosed, swallowedRetries=$swallowed)\n")

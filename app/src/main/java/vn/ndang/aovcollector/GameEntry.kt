@@ -273,7 +273,7 @@ object GameScreens {
  * and twice in the lobby quits. Whatever it cannot get past pauses the run with that screen kept. All screen
  * access goes through [Screen], so unit tests run this exact logic on a scripted series of screens.
  */
-class GameEntry(private val screen:Screen,private val expectedUid:String?=null,private val toLobby:Boolean=false,private val finish:(Outcome)->Unit) {
+class GameEntry(private val screen:Screen,private val expectedUid:String?=null,private val toLobby:Boolean=false,private val restart:Boolean=true,private val finish:(Outcome)->Unit) {
     sealed class Outcome { object Ready:Outcome(); class Failed(val reason:String):Outcome() }
     /**
      * One screenshot. [record] keeps it, scaled down, with what was decided on it and where it was tapped,
@@ -314,6 +314,11 @@ class GameEntry(private val screen:Screen,private val expectedUid:String?=null,p
         const val NO_GAME_MS=45_000L
         /** A screen that stays the same this long without being recognised is not going to change by itself. */
         const val STILL_MS=90_000L
+        /** On the way back to the lobby between tasks: an unknown screen, or no game, this long sends the run the long way, reopening the game. */
+        const val HOME_STILL_MS=20_000L
+        const val HOME_NO_GAME_MS=10_000L
+        /** Pages to go back through: Số 1 máy chủ, Chiến khu, Đấu hạng; the ranking, Cộng đồng; the hero list. */
+        const val HOME_BACKS=6
         /** Popups appear a while after the lobby: the lobby must stay clear this long before "Tướng" is tapped. */
         const val LOBBY_SETTLE_MS=4000L
         const val MAX_CLOSES=12
@@ -362,6 +367,8 @@ class GameEntry(private val screen:Screen,private val expectedUid:String?=null,p
      */
     fun start() {
         started=screen.now()
+        // Between the tasks of a chain the game is open where the last task ended: back to its lobby from there.
+        if(!restart) { screen.note("Về sảnh game cho tác vụ tiếp theo"); screen.say("Đang về sảnh game…"); return step() }
         screen.say("Đang đóng Liên Quân nếu còn chạy…")
         screen.quit { result ->
             if(!screen.alive) return@quit
@@ -381,10 +388,12 @@ class GameEntry(private val screen:Screen,private val expectedUid:String?=null,p
     private fun step() {
         if(!screen.alive) return
         val now=screen.now()
-        screen.look(phase!=Phase.ENTER,!uidOk) { s ->
+        // On the way back, pages are known by their words.
+        screen.look(phase!=Phase.ENTER||!restart,!uidOk) { s ->
             if(!screen.alive) { s?.done(null); return@look }
             if(s==null) {
                 if(missingSince<0) missingSince=now
+                if(!restart&&now-missingSince>HOME_NO_GAME_MS) return@look fail("Liên Quân không ở phía trước")
                 if(now-missingSince>NO_GAME_MS) return@look fail("Liên Quân chưa hiện lên sau ${NO_GAME_MS/1000} giây. Nếu máy chặn mở app từ nền, mở game bằng tay rồi bấm Tiếp tục.")
                 screen.say("Đang chờ Liên Quân hiện lên…"); return@look again(1500)
             }
@@ -395,6 +404,9 @@ class GameEntry(private val screen:Screen,private val expectedUid:String?=null,p
             if(reading.kind!=GameScreens.Kind.POPUP) { seen=null; tapped=null; sameClose=0 }
             if(reading.kind!=GameScreens.Kind.OTHER) still=null
             if(phase==Phase.LOGOUT&&reading.kind!=GameScreens.Kind.LOGIN) return@look logout(s,reading)
+            if(!restart&&reading.kind!=GameScreens.Kind.LOBBY&&reading.kind!=GameScreens.Kind.LIST) pageBack(reading)?.let { (what,at) ->
+                if(++backs>HOME_BACKS) return@look stop(s,"home-page","Đã bấm quay lại $HOME_BACKS lần mà chưa về được sảnh game.")
+                return@look tap(s,what,at,1800) }
             when(reading.kind) {
                 GameScreens.Kind.LIST -> list(s,reading)
                 GameScreens.Kind.LOBBY -> lobby(s,reading,now)
@@ -420,8 +432,29 @@ class GameEntry(private val screen:Screen,private val expectedUid:String?=null,p
             }
         }
     }
+    /**
+     * The pages a task ends on, known by their words, and where their way back is: the arrow at their top left, the
+     * hero picker's X. The ranking page's round arrow sits left of its title and the Cộng đồng page's above its logo,
+     * as the web view they are in moves with the navigation bar. Nothing else is tapped on the way back.
+     */
+    private fun pageBack(r:GameScreens.Reading):Pair<String,Pair<Double,Double>>? {
+        val w=r.words
+        when(BoardScreens.page(w,false)) {
+            BoardScreens.Page.PICKER -> return "Chọn tướng: đóng" to (BoardScreens.PICKER_CLOSE_X to BoardScreens.PICKER_CLOSE_Y)
+            BoardScreens.Page.TOP -> return "Số 1 máy chủ: quay lại" to (BoardScreens.TOP_BACK_X to BoardScreens.TOP_BACK_Y)
+            BoardScreens.Page.BOARD -> return "Chiến khu: quay lại" to (HeroGrid.BACK_X to HeroGrid.BACK_Y)
+            BoardScreens.Page.RANKED -> return "Trang Đấu hạng: quay lại sảnh" to (HeroGrid.BACK_X to HeroGrid.BACK_Y)
+            else -> {}
+        }
+        return when(RankScreens.page(w,false)) {
+            RankScreens.Page.RANKING -> { val title=w.firstOrNull { it.plain.contains("bangphanbac")&&it.y<.15 }
+                "Bảng Phân Bậc Tướng: quay lại" to ((title?.left?.minus(.0315)?:.0925) to (title?.y?:.078)) }
+            RankScreens.Page.HEROES,RankScreens.Page.COMMUNITY -> "Cộng đồng: quay lại sảnh" to ((RankScreens.logo(w)?.x?:.0825) to .072)
+            else -> null
+        }
+    }
     private fun back(s:Shot,what:String) {
-        if(++backs>MAX_BACKS) return stop(s,"entry-page","Đã bấm nút quay lại của game $MAX_BACKS lần mà chưa về được sảnh hay danh sách tướng. Mở danh sách Tất cả tướng rồi bấm Tiếp tục.")
+        if(++backs>(if(restart) MAX_BACKS else HOME_BACKS)) return stop(s,"entry-page","Đã bấm nút quay lại của game $MAX_BACKS lần mà chưa về được sảnh hay danh sách tướng. Mở danh sách Tất cả tướng rồi bấm Tiếp tục.")
         s.record(what,HeroGrid.BACK_X to HeroGrid.BACK_Y); s.done(null); screen.note("$what (lần $backs)"); screen.say("Đang quay lại sảnh…")
         screen.back { ok -> if(ok) again(1500) else fail("Không chạm được nút quay lại của game") }
     }
@@ -532,6 +565,7 @@ class GameEntry(private val screen:Screen,private val expectedUid:String?=null,p
         val signature=s.reading.signature
         val last=still
         if(last==null||GameScreens.change(last,signature)>=3.0) { still=signature; stillSince=now; s.record("Đang chờ game (logo, màn tải, video)") }
+        if(!restart&&now-stillSince>HOME_STILL_MS) return stop(s,"home-unknown","Không nhận ra màn hình để về sảnh game.")
         if(now-stillSince>STILL_MS) return stop(s,"entry-unknown","Màn hình đứng yên ${STILL_MS/1000} giây mà app không nhận ra. Xử lý bằng tay rồi bấm Tiếp tục; ảnh màn hình đã được lưu trong lượt.")
         s.done(null); screen.say("Đang chờ game tải…"); again(1500)
     }

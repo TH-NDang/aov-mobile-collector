@@ -61,35 +61,53 @@ object ZipFiles {
      */
     fun export(files:List<File>,root:File,out:OutputStream,cancelled:()->Boolean,limit:Long=PART_LIMIT,report:(Long,Long,Int,Int,String)->Unit):List<Part> {
         val parts=plan(files,root,limit)
-        val total=files.sumOf { it.length() };var done=0L;var number=0;val buffer=ByteArray(256*1024)
+        val progress=Progress(files.sumOf { it.length() },report)
         ZipOutputStream(out.buffered(256*1024)).use { outer ->
             // The parts are mostly PNG data, which would not shrink either.
             outer.setLevel(Deflater.NO_COMPRESSION)
             for((p,part) in parts.withIndex()) {
                 outer.putNextEntry(ZipEntry(part.name))
                 val counter=Counter(outer)
-                ZipOutputStream(counter.buffered(256*1024)).use { zip ->
-                    for(file in part.files) {
-                        number++
-                        val name=file.relativeTo(root).invariantSeparatorsPath
-                        zip.setLevel(if(file.extension.equals("png",true)) Deflater.NO_COMPRESSION else Deflater.DEFAULT_COMPRESSION)
-                        zip.putNextEntry(ZipEntry(name))
-                        file.inputStream().use { input ->
-                            while(true) {
-                                if(cancelled()) throw Cancelled()
-                                val n=input.read(buffer);if(n<0) break
-                                zip.write(buffer,0,n);done+=n;report(done,total,number,p+1,name)
-                            }
-                        }
-                        zip.closeEntry()
-                    }
-                }
+                write(part,root,counter,p+1,progress,cancelled)
                 part.bytes=counter.count
                 check(part.bytes<=limit) { "${part.name} vượt giới hạn ${Format.size(limit)}" }
                 outer.closeEntry()
             }
         }
         return parts
+    }
+    /**
+     * The part ZIPs of [plan] as files of their own in [dir], each named [prefix] and the part's name, for apps that
+     * take several files but limit each one's size. Returns them in order; [report] as for [export].
+     */
+    fun exportParts(files:List<File>,root:File,dir:File,prefix:String,cancelled:()->Boolean,limit:Long=PART_LIMIT,report:(Long,Long,Int,Int,String)->Unit):List<File> {
+        val parts=plan(files,root,limit)
+        val progress=Progress(files.sumOf { it.length() },report)
+        dir.mkdirs()
+        return parts.mapIndexed { p,part -> File(dir,prefix+part.name).also { target ->
+            target.outputStream().use { out -> val counter=Counter(out); write(part,root,counter,p+1,progress,cancelled); part.bytes=counter.count }
+            check(part.bytes<=limit) { "${part.name} vượt giới hạn ${Format.size(limit)}" }
+        } }
+    }
+    private class Progress(val total:Long,val report:(Long,Long,Int,Int,String)->Unit) { var done=0L; var number=0; val buffer=ByteArray(256*1024) }
+    /** Writes one part ZIP to [out], which stays open. */
+    private fun write(part:Part,root:File,out:OutputStream,number:Int,progress:Progress,cancelled:()->Boolean) {
+        ZipOutputStream(out.buffered(256*1024)).use { zip ->
+            for(file in part.files) {
+                progress.number++
+                val name=file.relativeTo(root).invariantSeparatorsPath
+                zip.setLevel(if(file.extension.equals("png",true)) Deflater.NO_COMPRESSION else Deflater.DEFAULT_COMPRESSION)
+                zip.putNextEntry(ZipEntry(name))
+                file.inputStream().use { input ->
+                    while(true) {
+                        if(cancelled()) throw Cancelled()
+                        val n=input.read(progress.buffer);if(n<0) break
+                        zip.write(progress.buffer,0,n);progress.done+=n;progress.report(progress.done,progress.total,progress.number,number,name)
+                    }
+                }
+                zip.closeEntry()
+            }
+        }
     }
 
     /** Counts the bytes of a part ZIP and leaves the outer ZIP open when the part is closed. */
