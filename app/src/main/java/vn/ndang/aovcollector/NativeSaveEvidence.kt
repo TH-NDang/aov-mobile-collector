@@ -19,8 +19,17 @@ object NativeSaveEvidence {
      * A contradictory readable title always vetoes the visual fallback.
      */
     fun preservedDetail(expected: String, title: String?, before: IntArray?, after: IntArray): Boolean {
-        if (title != null) return ChessWiki.safeName(title) == ChessWiki.safeName(expected)
+        if (title != null && headingLike(title)) return ChessWiki.safeName(title) == ChessWiki.safeName(expected)
         return before != null && before.size >= 512 && !ChessWiki.changed(before, after)
+    }
+
+    /**
+     * A hero heading is a short name of at most three words. Once the drawer has scrolled, the heading strip can
+     * hold a cut line of the skill description instead ("địch trúng chiêu sẽ chịu"), which names no hero.
+     */
+    fun headingLike(title: String): Boolean {
+        val text = title.trim()
+        return text.length <= 16 && text.split(Regex("\\s+")).size <= 3
     }
 
     /** Be conservative with partial OCR: background encyclopedia text must not hide a Save prompt. */

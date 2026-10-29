@@ -1,4 +1,18 @@
-# AOV Mobile Collector — v0.13.34
+# AOV Mobile Collector — v0.13.35
+
+## v0.13.35: không còn dừng vô lý ở ảnh chiêu Cờ, Đề cử Pro bấm được Dùng combo
+
+**Cờ Liên Quân:**
+- Ảnh chiêu của tướng lưu ở ảnh chi tiết 1 vẫn đúng như trước. Lỗi nằm ở **ô dò thêm** trên ảnh chi tiết sau (sau khi cuộn mô tả): app chờ 30 giây mà màn chưa đủ ổn định để bấm giữ, rồi tạm dừng với câu "ảnh có thể đã lưu", dù **chưa hề bấm giữ** nên không thể có ảnh nào được lưu.
+- Giờ trường hợp "chưa bấm giữ" là một kết quả riêng:
+  - Tướng đã có ảnh chiêu trong lượt: bỏ qua ô dò đó, ghi vào nhật ký, làm tiếp. Không dừng.
+  - Tướng chưa có ảnh chiêu: thử lại một lần; vẫn không được thì tạm dừng với câu đúng sự thật: "chưa có ảnh nào được lưu ở bước này".
+- Khi màn chi tiết đã cuộn, một dòng mô tả chiêu bị cắt (ví dụ "địch trúng chiêu sẽ chịu") không còn bị coi là tên tướng khác để chặn việc lưu. Tên tướng thật khác (như "Raz" trên màn của Lumburr) vẫn chặn như trước.
+- Nhật ký ghi thêm tên đọc được ở vùng tiêu đề khi màn chưa ổn định, để dễ xem lại.
+
+**Đề cử Pro:**
+- Tên người đề cử có ký tự trang trí ("彡MinhVĩĐại彡", "càrốt€"). OCR đọc chúng khác nhau giữa các ảnh (mất ký tự, hoặc đọc thành số hay chữ), nên app không bao giờ thấy cùng một dòng hai lần: vuốt xuống 1 lần, vuốt lên 15 lần rồi dừng, chưa bấm Dùng combo.
+- Giờ hai tên được coi là cùng một người khi chỉ khác ký tự trang trí ở hai đầu, hoặc lệch 1–2 chữ trong tên dài. Combo vẫn phải khớp đủ trang bị, phép bổ trợ và bảng ngọc như trước, nên không bấm nhầm combo.
 
 ## v0.13.34: tiếp tục cả lượt khi ảnh gốc còn chờ đối chiếu
 

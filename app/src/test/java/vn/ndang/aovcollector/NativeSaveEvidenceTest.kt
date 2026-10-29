@@ -54,6 +54,17 @@ class NativeSaveEvidenceTest {
         assertTrue(NativeSaveEvidence.preservedDetail("lumburr", "Lumburr", before, before.copyOf()))
     }
 
+    @Test fun aCutDescriptionLineInTheHeadingStripDoesNotContradictTheHero() {
+        val before = IntArray(2560) { (it * 13) % 240 }
+        val moved = IntArray(2560) { (it * 31) % 240 }
+        // A scrolled Lumburr drawer: its skill text, not another hero's name, sits where the title was.
+        assertTrue(NativeSaveEvidence.preservedDetail("lumburr", "địch trúng chiêu sẽ chịu", before, before.copyOf()))
+        assertFalse(NativeSaveEvidence.preservedDetail("lumburr", "địch trúng chiêu sẽ chịu", before, moved))
+        assertFalse(NativeSaveEvidence.preservedDetail("hayate", "Tel’Annas", before, before.copyOf()))
+        assertTrue(NativeSaveEvidence.headingLike("Wonder Woman"))
+        assertFalse(NativeSaveEvidence.headingLike("Hayate liên tục phóng"))
+    }
+
     @Test fun changedDrawerMissingReferenceAndSparseEvidenceNeverAuthorizeContinuation() {
         val before = IntArray(2560) { (it * 13) % 240 }
         val moved = IntArray(2560) { (it * 31) % 240 }

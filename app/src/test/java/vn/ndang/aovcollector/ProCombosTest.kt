@@ -65,6 +65,9 @@ class ProCombosTest {
         var scrollGestures = 0
         var replayNotices = 0
 
+        /** Creator names OCR reads differently from frame to frame, by the row's real name. */
+        var flicker: Map<String, List<String>> = emptyMap()
+
         override fun say(text: String) {
             // Only a replay notice changes fake replay scenarios; routine progress is just a log.
             if (!text.startsWith("Đang đọc lại Pro")) return
@@ -105,7 +108,8 @@ class ProCombosTest {
             } else {
                 visible
             }
-            seenEntries = observed
+            val read = observed.map { e -> flicker[e.id]?.let { names -> e.copy(id = names[looks % names.size]) } ?: e }
+            seenEntries = read
             val words = if (p) {
                 popup + if (explicitEmpty) listOf(word("Không có đề cử", .5, .5)) else emptyList()
             } else if (wrongHero) {
@@ -119,7 +123,7 @@ class ProCombosTest {
             then(object : ProComboReader.Look {
                 override val words = words
                 override val proSelected = p
-                override val entries = if (p) observed else emptyList()
+                override val entries = if (p) read else emptyList()
                 override val preparationSignature = if (p) null else actual
                 override val listSignature = IntArray(40) {
                     if (animatedBackground) {
@@ -258,6 +262,35 @@ class ProCombosTest {
         assertEquals(0, f.applies)
         assertTrue(f.captures.isEmpty())
         assertTrue(f.looks <= 5)
+    }
+
+    @Test fun decoratedCreatorNamesReadDifferentlyEachFrameStillProveTheTopAndApply() {
+        // As on the user's phone: "彡MinhVĩĐại彡" and "càrốt€" lose or gain their symbols between screenshots.
+        // The strict name check never saw the same row twice: 16 upward swipes and no "Dùng combo".
+        for (geometric in listOf(false, true)) {
+            val f = Fake(listOf("minhvidai", "carote", "c", "d", "e", "f")).apply {
+                this.geometric = geometric
+                flicker =
+                    mapOf("minhvidai" to listOf("5minhvidai", "minhvidai5", "minhvidai"), "carote" to listOf("carote", "carot", "carote3"))
+            }
+            f.run()
+            assertEquals(ProComboReader.Outcome.Done(5, false), f.outcome)
+            assertEquals(listOf("top-1", "top-2", "top-3", "top-4", "top-5"), f.captures)
+        }
+    }
+
+    @Test fun creatorNamesMatchDespiteDecorationsButStayApart() {
+        assertTrue(ProComboScreens.sameCreator("5minhvidai", "minhvidai5"))
+        assertTrue(ProComboScreens.sameCreator("carote", "carot"))
+        assertTrue(ProComboScreens.sameCreator("minhvidai", "minhvidal"))
+        assertTrue(ProComboScreens.sameCreator("sminhvidais", "minhvidai"))
+        assertFalse(ProComboScreens.sameCreator("first", "second"))
+        assertFalse(ProComboScreens.sameCreator("a", "b"))
+        assertFalse(ProComboScreens.sameCreator("abc", "abd"))
+        assertFalse(ProComboScreens.sameCreator("minh", "linh"))
+        assertFalse(ProComboScreens.sameCreator("creator1", "creator2"))
+        assertFalse(ProComboScreens.sameCreator("creator1", "creator12"))
+        assertTrue(ProComboScreens.sameCreator("carote", "carote3"))
     }
 
     @Test fun collectFiveAndRestoreWithoutSixthPhoto() {

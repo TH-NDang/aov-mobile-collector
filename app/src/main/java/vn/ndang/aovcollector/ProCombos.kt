@@ -222,7 +222,7 @@ object ProComboScreens {
         before.indices.all { i ->
             val a = before[i]
             val b = after[i]
-            a.id == b.id &&
+            sameCreator(a.id, b.id) &&
                 abs(a.button.y - b.button.y) < .012 &&
                 a.signature.size == 325 &&
                 b.signature.size == 325 &&
@@ -233,10 +233,62 @@ object ProComboScreens {
                 } >= 10
         }
 
+    /**
+     * Creator names are decorated ("彡MinhVĩĐại彡", "càrốt€"): from one frame to the next OCR drops such a
+     * symbol or reads it as a digit or a letter. The same creator: the same core once a digit read on one side
+     * only is dropped at either end ("5minhvidai", "minhvidai5"), one core inside the other with at most two
+     * more letters ("carote", "carot"), or one letter apart in a core of five letters (two in one of nine).
+     * Different digits at the same end are different names ("creator1", "creator2"); a core under three
+     * letters must match exactly. Every use pairs it with the combo's own components.
+     */
+    fun sameCreator(a: String, b: String): Boolean {
+        if (a == b) return true
+        val x = a.trim { it.isDigit() }
+        val y = b.trim { it.isDigit() }
+
+        fun fits(p: String, q: String) = p.isEmpty() || q.isEmpty() || p == q
+        if (!fits(a.takeWhile { it.isDigit() }, b.takeWhile { it.isDigit() })) return false
+        if (!fits(a.takeLastWhile { it.isDigit() }, b.takeLastWhile { it.isDigit() })) return false
+        if (x.length < 3 || y.length < 3) return false
+        if (x == y) return true
+        val shorter = minOf(x.length, y.length)
+        val longer = if (x.length >= y.length) x else y
+        val inner = if (x.length >= y.length) y else x
+        if (shorter >= 4 &&
+            longer.length - shorter <= 2 &&
+            inner in longer &&
+            longer.replaceFirst(inner, "").none { it.isDigit() }
+        ) {
+            return true
+        }
+        val allowed = if (shorter >= 9) {
+            2
+        } else if (shorter >= 5) {
+            1
+        } else {
+            0
+        }
+        return allowed > 0 && longer.length - shorter <= allowed && distance(x, y) <= allowed
+    }
+
+    private fun distance(a: String, b: String): Int {
+        val d = IntArray(b.length + 1) { it }
+        for (i in 1..a.length) {
+            var diagonal = d[0]
+            d[0] = i
+            for (j in 1..b.length) {
+                val above = d[j]
+                d[j] = minOf(d[j] + 1, d[j - 1] + 1, diagonal + if (a[i - 1] == b[j - 1]) 0 else 1)
+                diagonal = above
+            }
+        }
+        return d[b.length]
+    }
+
     /** Fuzzy observations must resolve to one exact frozen descriptor across the whole list, not just top five. */
     fun uniqueMatch(expected: Entry, candidate: Entry, catalog: List<Entry>): Boolean {
-        if (candidate.id != expected.id) return false
-        val matched = catalog.filter { it.id == candidate.id && matches(it.signature, candidate.signature) }
+        if (!sameCreator(candidate.id, expected.id)) return false
+        val matched = catalog.filter { sameCreator(it.id, candidate.id) && matches(it.signature, candidate.signature) }
         return matched.size == 1 && matched[0].id == expected.id && matched[0].signature.contentEquals(expected.signature)
     }
 
@@ -307,7 +359,8 @@ class ProComboReader(
         data class Failed(val reason: String) : Outcome()
     }
 
-    private fun same(a: ProComboScreens.Entry, b: ProComboScreens.Entry) = a.id == b.id && ProComboScreens.matches(a.signature, b.signature)
+    private fun same(a: ProComboScreens.Entry, b: ProComboScreens.Entry) =
+        ProComboScreens.sameCreator(a.id, b.id) && ProComboScreens.matches(a.signature, b.signature)
 
     private fun ambiguous(entries: List<ProComboScreens.Entry>) = entries.indices.any { i ->
         (i + 1 until entries.size).any { same(entries[i], entries[it]) }

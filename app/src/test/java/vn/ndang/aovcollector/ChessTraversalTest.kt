@@ -76,6 +76,8 @@ class ChessTraversalTest {
         val absentNativeItem: String? = null,
         val deferredNativeItem: String? = null,
         val deferAllNativeSkills: Boolean = false,
+        /** Native skills that never get steady enough to long-press, by how many attempts. */
+        val untouchedNative: Map<String, Int> = emptyMap(),
         val interruptAfterNative: Boolean = false,
         val failedDetailPage: Int? = null,
         val failCheckpoint: Boolean = false,
@@ -113,6 +115,7 @@ class ChessTraversalTest {
         val nativePhotos = ArrayList<Pair<Int, String>>()
         val nativeSkills = ArrayList<String>()
         val nativeOperationKeys = ArrayList<String>()
+        private val untouchedLeft = untouchedNative.toMutableMap()
         val detailSignatures = savedDetailSignatures.mapValues { it.value.copyOf() }.toMutableMap()
         val notes = ArrayList<String>()
         val progress = ArrayList<String>()
@@ -293,8 +296,11 @@ class ChessTraversalTest {
                 assertNotNull(opened)
                 nativeSkills.add(item)
                 if (interruptAfterNative) alive = false
+                val untouched = (untouchedLeft[item] ?: 0) > 0
+                if (untouched) untouchedLeft[item] = untouchedLeft.getValue(item) - 1
                 then(
                     when {
+                        untouched -> ChessWikiReader.NativeResult.UNTOUCHED
                         item == failedNativeItem -> ChessWikiReader.NativeResult.FAILED
                         item == absentNativeItem -> ChessWikiReader.NativeResult.ABSENT
                         item == deferredNativeItem || deferAllNativeSkills -> ChessWikiReader.NativeResult.DEFERRED
@@ -769,6 +775,41 @@ class ChessTraversalTest {
         )
         assertTrue(resumed.run(skills = true) is ChessWikiReader.Outcome.Done)
         assertTrue(resumed.nativeSkills.isEmpty())
+    }
+
+    @Test fun unpressedExtraProbeAfterTheHerosSkillWasSavedIsSkippedWithoutPausing() {
+        // As on the user's phone: Lumburr's skill is saved on the first detail page; the probe on the next
+        // page never gets steady enough to long-press. Nothing was pressed, so nothing is uncertain.
+        val skill = ChessWiki.Tile(.405, .525, "skill-a")
+        val probe = ChessWiki.Tile(.405, .50, "probe")
+        val run = HeroScreen(
+            names = listOf("Raz", "Lumburr", "Fennik"),
+            drawerPages = listOf(0, 1),
+            skillIconsByPage = mapOf(0 to listOf(skill), 1 to listOf(probe)),
+            untouchedNative = mapOf("lumburr-skill-probe" to Int.MAX_VALUE)
+        )
+        assertTrue(run.run(skills = true) is ChessWikiReader.Outcome.Done)
+        assertTrue("native:chieu-quan-co:lumburr:skill-a" in run.ledger)
+        assertFalse("native:chieu-quan-co:lumburr:probe" in run.ledger)
+        assertEquals(1, run.nativeSkills.count { it == "lumburr-skill-probe" })
+        assertTrue(run.notes.any { it.startsWith("Bỏ qua vị trí dò chiêu") && "lumburr" in it })
+        assertTrue(run.names.all { itemId(it) in run.ledger })
+    }
+
+    @Test fun unpressedFirstSkillIsTriedAgainOnceThenStopsSayingNothingWasSaved() {
+        val stuck = HeroScreen(names = listOf("Hayate"), untouchedNative = mapOf("hayate-skill-loaded-skill" to Int.MAX_VALUE))
+        val outcome = stuck.run(skills = true)
+        assertTrue(outcome is ChessWikiReader.Outcome.Failed)
+        assertTrue((outcome as ChessWikiReader.Outcome.Failed).reason.contains("chưa có ảnh nào được lưu"))
+        assertFalse(outcome.reason.contains("có thể đã lưu"))
+        assertEquals(listOf("hayate-skill-loaded-skill", "hayate-skill-loaded-skill"), stuck.nativeSkills)
+        assertFalse(itemId("Hayate") in stuck.ledger)
+        // Steady on the second try: saved once, and the hero is complete.
+        val settles = HeroScreen(names = listOf("Hayate"), untouchedNative = mapOf("hayate-skill-loaded-skill" to 1))
+        assertTrue(settles.run(skills = true) is ChessWikiReader.Outcome.Done)
+        assertEquals(2, settles.nativeSkills.size)
+        assertTrue("native:chieu-quan-co:hayate:loaded-skill" in settles.ledger)
+        assertTrue(itemId("Hayate") in settles.ledger)
     }
 
     @Test fun deferredNativeReceiptsDoNotStopTheRemainingHeroesOrClaimVerifiedPhotos() {

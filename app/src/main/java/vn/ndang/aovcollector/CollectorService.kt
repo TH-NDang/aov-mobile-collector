@@ -3124,6 +3124,7 @@ class CollectorService : AccessibilityService() {
                     var lastScene = NativeSaveEvidence.Scene.UNKNOWN
                     var lastReferenceUnchanged = false
                     var lastIconUnchanged = false
+                    var lastTitle: String? = null
                     val dispatchGuard = NativeSaveDispatchGuard {
                         val attempt = nativeAttempt
                         if (attempt != null) {
@@ -3150,6 +3151,9 @@ class CollectorService : AccessibilityService() {
                         if (ended) return
                         if (result == NativeResult.FAILED && reason != null) {
                             note("Native Save Photo failed: $reason")
+                        }
+                        if (result == NativeResult.UNTOUCHED && reason != null) {
+                            note("Native Save Photo not attempted: $reason")
                         }
                         ended = true
                         dispatchGuard.close()
@@ -3214,6 +3218,7 @@ class CollectorService : AccessibilityService() {
                             if (image == null) return@grab done(null)
                             var referenceUnchanged = false
                             var iconUnchanged = false
+                            var titleRead: String? = null
                             try {
                                 io.execute {
                                     val evidence = try {
@@ -3231,6 +3236,7 @@ class CollectorService : AccessibilityService() {
                                         if (modal && !NativeSaveEvidence.hasPromptText(plain)) {
                                             val expected = item.substringBefore("-skill-")
                                             val title = ChessWiki.modalHeroTitle(words, if (preserveDetail) expected else null)
+                                            titleRead = title
                                             detailVerified = title != null &&
                                                 (
                                                     !preserveDetail ||
@@ -3239,6 +3245,7 @@ class CollectorService : AccessibilityService() {
                                             if (preserveDetail && !detailVerified) {
                                                 val precise = GameText.chessHeroTitle(image)
                                                 val visibleTitle = precise ?: title
+                                                titleRead = visibleTitle
                                                 detailVerified = NativeSaveEvidence.preservedDetail(
                                                     expected,
                                                     visibleTitle,
@@ -3260,6 +3267,7 @@ class CollectorService : AccessibilityService() {
                                             lastScene = evidence?.second ?: NativeSaveEvidence.Scene.UNKNOWN
                                             lastReferenceUnchanged = referenceUnchanged
                                             lastIconUnchanged = iconUnchanged
+                                            lastTitle = titleRead
                                             done(evidence)
                                         }
                                     }
@@ -3622,9 +3630,9 @@ class CollectorService : AccessibilityService() {
                                     done(latest)
                                 } else {
                                     finishNative(
-                                        NativeResult.FAILED,
+                                        NativeResult.UNTOUCHED,
                                         "native icon readiness timed out; no long-press dispatched " +
-                                            "(scene=$lastScene, detail=$lastReferenceUnchanged, icon=$lastIconUnchanged)"
+                                            "(scene=$lastScene, title=$lastTitle, detail=$lastReferenceUnchanged, icon=$lastIconUnchanged)"
                                     )
                                 }
                             }
@@ -3637,7 +3645,7 @@ class CollectorService : AccessibilityService() {
                                 } else {
                                     if (reference?.iconSignature.isNullOrBlank()) {
                                         finishNative(
-                                            NativeResult.FAILED,
+                                            NativeResult.UNTOUCHED,
                                             "native icon signature unavailable; no Save Photo gesture dispatched"
                                         )
                                         return@readPrompt
@@ -3668,14 +3676,14 @@ class CollectorService : AccessibilityService() {
                                                                 holdIcon()
                                                             } else {
                                                                 finishNative(
-                                                                    NativeResult.FAILED,
+                                                                    NativeResult.UNTOUCHED,
                                                                     "native icon moved or changed after journal; no long-press dispatched"
                                                                 )
                                                             }
                                                         }
                                                     } else {
                                                         finishNative(
-                                                            NativeResult.FAILED,
+                                                            NativeResult.UNTOUCHED,
                                                             "attempt journal write failed"
                                                         )
                                                     }
@@ -3683,11 +3691,15 @@ class CollectorService : AccessibilityService() {
                                             }
                                         }
                                     } catch (_: Exception) {
-                                        finishNative(NativeResult.FAILED, "attempt dispatch unavailable")
+                                        finishNative(NativeResult.UNTOUCHED, "attempt dispatch unavailable")
                                     }
                                 }
                             } else {
-                                finishNative(NativeResult.FAILED, "before long-press: expected detail not verified")
+                                // A recovered receipt came from an earlier gesture; only a fresh attempt is untouched.
+                                finishNative(
+                                    if (recovered) NativeResult.FAILED else NativeResult.UNTOUCHED,
+                                    "before long-press: expected detail not verified (scene=${evidence?.second}, title=$lastTitle)"
+                                )
                             }
                         }
                     } else {

@@ -80,7 +80,7 @@ class ProCollectionSession(private val host: Host, private val alive: () -> Bool
             }
             val expected = observed?.let { current ->
                 frozenProCatalog.filter {
-                    it.id == current.id && ProComboScreens.matches(it.signature, current.signature)
+                    ProComboScreens.sameCreator(it.id, current.id) && ProComboScreens.matches(it.signature, current.signature)
                 }.singleOrNull()
             }
             if (action.id == "pro.v1.apply" && expected == null) {

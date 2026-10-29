@@ -548,7 +548,11 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
         data class Failed(val reason: String) : Outcome()
     }
 
-    enum class NativeResult { SAVED, ABSENT, DEFERRED, FAILED }
+    /**
+     * [UNTOUCHED]: the screen never became steady enough to long-press, so no Save Photo gesture was sent and
+     * nothing can have been saved. Unlike [FAILED], it leaves nothing to reconcile in Pictures.
+     */
+    enum class NativeResult { SAVED, ABSENT, DEFERRED, FAILED, UNTOUCHED }
 
     interface Look {
         val words: List<GameScreens.Word>
@@ -659,6 +663,9 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
     private var heroes = screen.completedHeroes
     private val timing = ChessWiki.Timing(options.fast)
     private val tried = HashSet<String>()
+
+    /** Heroes with a skill photo saved (or awaiting its receipt) in this run: later probes of theirs are extras. */
+    private val skillHeroes = HashSet<String>()
     private val heroState = ListNavigator.State()
     private val heroSlots = screen.completedHeroSlots.toMutableMap()
     private val heroRetries = HashMap<Int, Int>()
@@ -1317,6 +1324,12 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                 screen.note("Không có Save Photo tại vị trí dò " + originalGroup + "; tiếp tục mục kế tiếp.")
                 return@nativeSave detail()
             }
+            if (saved == NativeResult.UNTOUCHED) {
+                return@nativeSave fail(
+                    "Chưa bấm giữ được ảnh gốc " + nativeName +
+                        " vì màn chưa ổn định; chưa có ảnh nào được lưu. Bấm Tiếp tục để thử lại."
+                )
+            }
             if (saved != NativeResult.SAVED) {
                 return@nativeSave fail(
                     "Chưa lưu được ảnh gốc " + nativeName +
@@ -1471,14 +1484,21 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                 }
             }
 
-            fun nativeSkill(at: Int, images: List<ChessWiki.Tile>, next: () -> Unit) {
+            fun nativeSkill(at: Int, images: List<ChessWiki.Tile>, next: () -> Unit, retried: Boolean = false) {
                 if (at >= images.size) return next()
                 val candidate = images[at]
                 val key = "native:chieu-quan-co:" + folder + ":" + candidate.id
                 val priorKeys = (candidate.aliases + candidate.id).map { "native:chieu-quan-co:" + folder + ":" + it }
                 val deferredKey = "native-deferred-slot:" + NativeSaveEvidence.operationKey(folder, number, candidate.x, candidate.y)
-                if (screen.seen(deferredKey) || priorKeys.any { screen.seen(it) || it in tried }) return nativeSkill(at + 1, images, next)
-                tried.addAll(priorKeys)
+                if (!retried) {
+                    if (screen.seen(deferredKey) || priorKeys.any { screen.seen(it) }) skillHeroes.add(folder)
+                    if (screen.seen(deferredKey) ||
+                        priorKeys.any { screen.seen(it) || it in tried }
+                    ) {
+                        return nativeSkill(at + 1, images, next)
+                    }
+                    tried.addAll(priorKeys)
+                }
                 screen.say("Quân cờ: lưu ảnh chiêu " + folder + " · ảnh chi tiết " + number)
                 screen.nativeSave(
                     "chieu-quan-co",
@@ -1497,10 +1517,31 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                         )
                         return@nativeSave nativeSkill(at + 1, images, next)
                     }
+                    if (ok == NativeResult.UNTOUCHED) {
+                        // Nothing was pressed, so nothing can have been saved: no Pictures check is owed.
+                        if (folder in skillHeroes) {
+                            screen.note(
+                                "Bỏ qua vị trí dò chiêu " + candidate.x + "," + candidate.y + " ở ảnh chi tiết " + number +
+                                    ": màn chưa ổn định nên chưa bấm giữ, không lưu gì; ảnh chiêu của " + folder + " đã lưu trước đó."
+                            )
+                            return@nativeSave nativeSkill(at + 1, images, next)
+                        }
+                        if (!retried) {
+                            screen.note("Chưa bấm giữ được ảnh chiêu " + folder + " vì màn chưa ổn định; thử lại một lần.")
+                            return@nativeSave screen.later(1_500L) {
+                                if (screen.alive && !completed) nativeSkill(at, images, next, retried = true)
+                            }
+                        }
+                        return@nativeSave fail(
+                            "Chưa bấm giữ được ảnh chiêu của " + folder + " sau 2 lần vì màn chi tiết chưa ổn định; " +
+                                "chưa có ảnh nào được lưu ở bước này. Kiểm tra màn hình rồi bấm Tiếp tục để thử lại."
+                        )
+                    }
                     if (ok == NativeResult.DEFERRED) {
                         // Attempt-only checkpoint, deliberately NOT a verified native save key.
                         // The receipt journal owns reconciliation and survives a failed checkpoint write.
                         screen.finished(deferredKey)
+                        skillHeroes.add(folder)
                         screen.note("Ảnh chiêu " + folder + " đang chờ đối chiếu; đã giữ tiến độ, tiếp tục mục kế tiếp và không tải lại.")
                         return@nativeSave nativeSkill(at + 1, images, next)
                     }
@@ -1511,11 +1552,12 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                         )
                     }
                     (priorKeys + key).toSet().forEach { screen.finished(it) }
+                    skillHeroes.add(folder)
                     screen.note("Ảnh gốc chieu-quan-co: " + folder + "-skill-" + candidate.id)
                     nativeSkill(at + 1, images, next)
                 }
             }
-            nativeSkill(0, skillImages) { advance() }
+            nativeSkill(0, skillImages, { advance() })
         }
         if (screen.seen(captureKey) || screen.seen(legacyKey)) {
             l.discard()
