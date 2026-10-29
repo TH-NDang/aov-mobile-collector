@@ -74,6 +74,8 @@ class ChessTraversalTest {
         val lateModalRead: Int? = null,
         val failedNativeItem: String? = null,
         val absentNativeItem: String? = null,
+        val deferredNativeItem: String? = null,
+        val deferAllNativeSkills: Boolean = false,
         val interruptAfterNative: Boolean = false,
         val failedDetailPage: Int? = null,
         val failCheckpoint: Boolean = false,
@@ -110,6 +112,7 @@ class ChessTraversalTest {
         val modalDrags = ArrayList<DrawerDrag>()
         val nativePhotos = ArrayList<Pair<Int, String>>()
         val nativeSkills = ArrayList<String>()
+        val nativeOperationKeys = ArrayList<String>()
         val detailSignatures = savedDetailSignatures.mapValues { it.value.copyOf() }.toMutableMap()
         val notes = ArrayList<String>()
         val progress = ArrayList<String>()
@@ -285,13 +288,16 @@ class ChessTraversalTest {
                 assertTrue("Skills belong to the open detail", preserveDetail)
                 assertNotNull("Native skill receives the exact current drawer reference before bitmap disposal", reference)
                 assertTrue(reference!!.detailSignature.isNotEmpty())
+                assertFalse("Native skill must have a stable operation key", reference.operationKey.isNullOrBlank())
+                nativeOperationKeys.add(reference.operationKey!!)
                 assertNotNull(opened)
                 nativeSkills.add(item)
                 if (interruptAfterNative) alive = false
                 then(
-                    when (item) {
-                        failedNativeItem -> ChessWikiReader.NativeResult.FAILED
-                        absentNativeItem -> ChessWikiReader.NativeResult.ABSENT
+                    when {
+                        item == failedNativeItem -> ChessWikiReader.NativeResult.FAILED
+                        item == absentNativeItem -> ChessWikiReader.NativeResult.ABSENT
+                        item == deferredNativeItem || deferAllNativeSkills -> ChessWikiReader.NativeResult.DEFERRED
                         else -> ChessWikiReader.NativeResult.SAVED
                     }
                 )
@@ -765,6 +771,107 @@ class ChessTraversalTest {
         assertTrue(resumed.nativeSkills.isEmpty())
     }
 
+    @Test fun deferredNativeReceiptsDoNotStopTheRemainingHeroesOrClaimVerifiedPhotos() {
+        val run = HeroScreen(names = NAMES.take(3), deferAllNativeSkills = true)
+        assertTrue(run.run(skills = true) is ChessWikiReader.Outcome.Done)
+        assertEquals(run.names.indices.toList(), run.clicked.map { it.index })
+        assertEquals(3, run.nativeSkills.size)
+        assertEquals(3, run.nativeOperationKeys.toSet().size)
+        assertEquals(3, run.ledger.count { it.startsWith("native-deferred-slot:") })
+        assertTrue(run.ledger.none { it.startsWith("native:chieu-quan-co:") })
+        assertEquals(run.names, run.saved.filter { it.modal }.map { it.hero })
+        assertTrue(run.names.all { itemId(it) in run.ledger })
+    }
+
+    @Test fun mixedSavedAndDeferredNativeSkillsKeepSeparateEvidenceAndContinue() {
+        val run = HeroScreen(names = NAMES.take(3), deferredNativeItem = "arduin-skill-loaded-skill")
+        assertTrue(run.run(skills = true) is ChessWikiReader.Outcome.Done)
+        assertEquals(3, run.nativeSkills.size)
+        assertTrue("native:chieu-quan-co:violet:loaded-skill" in run.ledger)
+        assertTrue("native:chieu-quan-co:hayate:loaded-skill" in run.ledger)
+        assertFalse("native:chieu-quan-co:arduin:loaded-skill" in run.ledger)
+        assertEquals(1, run.ledger.count { it.startsWith("native-deferred-slot:") })
+        assertEquals(3, run.saved.count { it.modal })
+    }
+
+    @Test fun deferredSkillSlotDoesNotSuppressAnotherSkillOnTheSameHero() {
+        val run = HeroScreen(
+            names = listOf("Hayate"),
+            skillIconsByPage = mapOf(
+                0 to listOf(
+                    ChessWiki.Tile(.405, .525, "uncertain-icon"),
+                    ChessWiki.Tile(.405, .66, "verified-icon")
+                )
+            ),
+            deferredNativeItem = "hayate-skill-uncertain-icon"
+        )
+        assertTrue(run.run(skills = true) is ChessWikiReader.Outcome.Done)
+        assertEquals(listOf("hayate-skill-uncertain-icon", "hayate-skill-verified-icon"), run.nativeSkills)
+        assertEquals(2, run.nativeOperationKeys.toSet().size)
+        assertEquals(1, run.ledger.count { it.startsWith("native-deferred-slot:") })
+        assertFalse("native:chieu-quan-co:hayate:uncertain-icon" in run.ledger)
+        assertTrue("native:chieu-quan-co:hayate:verified-icon" in run.ledger)
+        assertTrue(itemId("Hayate") in run.ledger)
+    }
+
+    @Test fun deferredSlotSurvivesRestartAndIconHashDriftWithoutSavingAgain() {
+        val first = HeroScreen(
+            names = listOf("Violet"),
+            drawerPages = listOf(0, 1),
+            skillIconsByPage = mapOf(0 to listOf(ChessWiki.Tile(.405, .50, "old-hash"))),
+            deferAllNativeSkills = true,
+            closeOnDrawerDrag = 1
+        )
+        assertTrue(first.run(skills = true) is ChessWikiReader.Outcome.Failed)
+        assertEquals(1, first.nativeSkills.size)
+        assertEquals(1, first.ledger.count { it.startsWith("native-deferred-slot:") })
+        assertFalse(itemId("Violet") in first.ledger)
+        val resumed = HeroScreen(
+            names = listOf("Violet"),
+            drawerPages = listOf(0, 1),
+            oldIds = first.ledger,
+            savedDetailSignatures = first.detailSignatures,
+            signatureNoise = 2,
+            skillIconsByPage = mapOf(0 to listOf(ChessWiki.Tile(.405, .525, "new-hash"))),
+            deferAllNativeSkills = true
+        )
+        assertTrue(resumed.run(skills = true) is ChessWikiReader.Outcome.Done)
+        assertTrue("A deferred operation must not dispatch another native save after hash drift", resumed.nativeSkills.isEmpty())
+        assertTrue(resumed.ledger.none { it.startsWith("native:chieu-quan-co:") })
+        assertEquals(listOf(1), resumed.saved.filter { it.modal }.map { it.detailPage })
+        assertTrue(itemId("Violet") in resumed.ledger)
+    }
+
+    @Test fun cancelledDeferredNativeCallbackCannotAdvanceOrMarkCompletion() {
+        val run = HeroScreen(
+            names = NAMES.take(3),
+            deferAllNativeSkills = true,
+            interruptAfterNative = true
+        )
+        assertNull(run.run(skills = true, expectInterrupted = true))
+        assertEquals(1, run.nativeSkills.size)
+        assertEquals(listOf(0), run.clicked.map { it.index })
+        assertTrue(run.modalDrags.isEmpty())
+        assertTrue(run.ledger.none { it.startsWith("native:") || it.startsWith("native-deferred-slot:") })
+        assertTrue(run.names.none { itemId(it) in run.ledger })
+        assertEquals(1, run.detailSignatures.size)
+    }
+
+    @Test fun actualNativeFailureStillStopsAfterEarlierDeferredHero() {
+        val run = HeroScreen(
+            names = NAMES.take(3),
+            deferredNativeItem = "violet-skill-loaded-skill",
+            failedNativeItem = "arduin-skill-loaded-skill"
+        )
+        assertTrue(run.run(skills = true) is ChessWikiReader.Outcome.Failed)
+        assertEquals(listOf(0, 1), run.clicked.map { it.index })
+        assertTrue(itemId("Violet") in run.ledger)
+        assertFalse(itemId("Arduin") in run.ledger)
+        assertFalse(itemId("Hayate") in run.ledger)
+        assertEquals(1, run.ledger.count { it.startsWith("native-deferred-slot:") })
+        assertTrue(run.ledger.none { it.startsWith("native:chieu-quan-co:") })
+    }
+
     @Test fun stopDuringNativeSaveCannotAdvanceOrMarkAHeroComplete() {
         val run = HeroScreen(
             names = listOf("Violet"),
@@ -925,5 +1032,14 @@ class ChessTraversalTest {
         assertEquals(9, kept.map { it.first }.toSet().size)
         assertEquals(looks, released)
         assertTrue(topics.all { "topic:${it.key}" in completed })
+    }
+
+    @Test fun deferredSlotIsStableAcrossMergedProbeChangesButNotAdjacentIcons() {
+        val upper = NativeSaveEvidence.operationKey("lumburr", 1, .405, .50)
+        assertEquals(upper, NativeSaveEvidence.operationKey("lumburr", 1, .405, .525))
+        assertEquals(upper, NativeSaveEvidence.operationKey("lumburr", 1, .405, .55))
+        assertFalse(upper == NativeSaveEvidence.operationKey("lumburr", 1, .405, .66))
+        assertFalse(upper == NativeSaveEvidence.operationKey("lumburr", 2, .405, .50))
+        assertFalse(upper == NativeSaveEvidence.operationKey("raz", 1, .405, .50))
     }
 }

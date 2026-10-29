@@ -1,4 +1,8 @@
-# AOV Mobile Collector — v0.13.33
+# AOV Mobile Collector — v0.13.34
+
+## v0.13.34: tiếp tục cả lượt khi ảnh gốc còn chờ đối chiếu
+
+Ảnh chiêu đã gửi xác nhận lưu nhưng chưa khớp biên nhận được ghi riêng là **chờ đối chiếu**, không còn chặn các tướng tiếp theo khi màn chi tiết đã xác minh an toàn. Giữ nhật ký và ứng viên ảnh trong vùng riêng; không giả là đã xác minh, không nhấn Save Photo lại, không gán ảnh theo thời gian cho tướng khác. Đối chiếu nền có ngân sách qua khởi động lại và tổng kết riêng số đã xác minh/chờ kiểm tra. Giữ nguyên sửa Đề cử Pro của v0.13.33. Xem [vòng đời và giới hạn](docs/CHESS_NATIVE_RECEIPTS.md).
 
 ## v0.13.33: đọc đủ combo Pro trước khi cuộn
 

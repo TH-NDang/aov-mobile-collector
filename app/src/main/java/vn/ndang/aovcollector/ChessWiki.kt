@@ -548,7 +548,7 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
         data class Failed(val reason: String) : Outcome()
     }
 
-    enum class NativeResult { SAVED, ABSENT, FAILED }
+    enum class NativeResult { SAVED, ABSENT, DEFERRED, FAILED }
 
     interface Look {
         val words: List<GameScreens.Word>
@@ -1441,7 +1441,11 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
         history.add(current)
         val skillImages = if ("chieu-quan-co" in options.nativeGroups) l.skillIcons() else emptyList()
         val nativeReferences = skillImages.associate {
-            it.id to NativeSaveEvidence.Reference(current.copyOf(), l.nativeIconSignature(it.x, it.y))
+            it.id to NativeSaveEvidence.Reference(
+                current.copyOf(),
+                l.nativeIconSignature(it.x, it.y),
+                NativeSaveEvidence.operationKey(folder, number, it.x, it.y)
+            )
         }
         val captureKey = "detail-page-v2:" + t.key + ":" + tile.id + ":" + number
         val legacyKey = "detail-page:" + t.key + ":" + tile.id + ":" + number + ":" + current.contentHashCode()
@@ -1472,7 +1476,8 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                 val candidate = images[at]
                 val key = "native:chieu-quan-co:" + folder + ":" + candidate.id
                 val priorKeys = (candidate.aliases + candidate.id).map { "native:chieu-quan-co:" + folder + ":" + it }
-                if (priorKeys.any { screen.seen(it) || it in tried }) return nativeSkill(at + 1, images, next)
+                val deferredKey = "native-deferred-slot:" + NativeSaveEvidence.operationKey(folder, number, candidate.x, candidate.y)
+                if (screen.seen(deferredKey) || priorKeys.any { screen.seen(it) || it in tried }) return nativeSkill(at + 1, images, next)
                 tried.addAll(priorKeys)
                 screen.say("Quân cờ: lưu ảnh chiêu " + folder + " · ảnh chi tiết " + number)
                 screen.nativeSave(
@@ -1490,6 +1495,13 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                             "Không có Save Photo tại vị trí dò chiêu " + candidate.x + "," + candidate.y +
                                 "; giữ ảnh chi tiết và kiểm tra vị trí kế tiếp."
                         )
+                        return@nativeSave nativeSkill(at + 1, images, next)
+                    }
+                    if (ok == NativeResult.DEFERRED) {
+                        // Attempt-only checkpoint, deliberately NOT a verified native save key.
+                        // The receipt journal owns reconciliation and survives a failed checkpoint write.
+                        screen.finished(deferredKey)
+                        screen.note("Ảnh chiêu " + folder + " đang chờ đối chiếu; đã giữ tiến độ, tiếp tục mục kế tiếp và không tải lại.")
                         return@nativeSave nativeSkill(at + 1, images, next)
                     }
                     if (ok != NativeResult.SAVED) {

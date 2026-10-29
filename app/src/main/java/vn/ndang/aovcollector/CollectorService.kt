@@ -3271,6 +3271,56 @@ class CollectorService : AccessibilityService() {
                         }
                     }
 
+                    fun deferReceipt(reason: String) {
+                        val attempt = nativeAttempt ?: return finishNative(NativeResult.FAILED, reason)
+                        // A durable pending file does not authorize navigation on an unknown screen.
+                        readPrompt { evidence ->
+                            if (evidence?.second != NativeSaveEvidence.Scene.DETAIL) {
+                                finishNative(NativeResult.FAILED, "receipt unresolved; current detail not verified")
+                                return@readPrompt
+                            }
+                            try {
+                                io.execute {
+                                    val deferred = try {
+                                        if (GamePhotoSession.deferAttempt(this@CollectorService, saveRunId, attempt.id, reason, ::active)) {
+                                            NativeResult.DEFERRED
+                                        } else if (GamePhotoSession.reconcileAttempt(this@CollectorService, saveRunId, attempt.id).status ==
+                                            GamePhotoSession.ReceiptStatus.RECEIPT
+                                        ) {
+                                            // Background reconciliation may have won the race after the last foreground read.
+                                            NativeResult.SAVED
+                                        } else {
+                                            NativeResult.FAILED
+                                        }
+                                    } catch (e: Exception) {
+                                        CrashLog.record(this@CollectorService, "Không giữ được ảnh chờ đối chiếu", e)
+                                        NativeResult.FAILED
+                                    }
+                                    handler.post {
+                                        if (!active()) return@post
+                                        if (deferred == NativeResult.SAVED) {
+                                            GamePhotoSync.request(this@CollectorService)
+                                            finishNative(NativeResult.SAVED)
+                                        } else if (deferred == NativeResult.DEFERRED) {
+                                            GamePhotoSync.request(this@CollectorService)
+                                            note(
+                                                "Ảnh gốc chờ đối chiếu: $item; chưa tính là đã xác minh, không lưu lại; tiếp tục thu thập."
+                                            )
+                                            finishNative(NativeResult.DEFERRED)
+                                        } else {
+                                            finishNative(
+                                                NativeResult.FAILED,
+                                                "cannot durably defer native save; journal/storage needs attention"
+                                            )
+                                        }
+                                    }
+                                }
+                            } catch (_: Exception) {
+                                finishNative(NativeResult.FAILED, "deferred receipt dispatch unavailable")
+                            }
+                        }
+                    }
+
                     fun complete(result: NativeResult, reason: String? = null) {
                         val attempt = nativeAttempt
                         if (attempt == null) return finishNative(result, reason)
@@ -3284,6 +3334,9 @@ class CollectorService : AccessibilityService() {
                             now = SystemClock::uptimeMillis,
                             active = ::active,
                             later = ::later,
+                            timeoutMs = 12_000L,
+                            intervalMs = 1_500L,
+                            maxReads = 3,
                             read = { done ->
                                 try {
                                     io.execute {
@@ -3348,8 +3401,7 @@ class CollectorService : AccessibilityService() {
                                         finishNative(NativeResult.FAILED, reason)
                                     }
                                 } else {
-                                    finishNative(
-                                        NativeResult.FAILED,
+                                    deferReceipt(
                                         listOfNotNull(reason, receipt?.reason ?: "no verified Pictures receipt").joinToString("; ")
                                     )
                                 }
@@ -3656,13 +3708,15 @@ class CollectorService : AccessibilityService() {
                                     group,
                                     item,
                                     aliases,
-                                    reference?.iconSignature
+                                    reference?.iconSignature,
+                                    reference?.operationKey
                                 )
                                 nativeAttempt = attempt
                                 when (attempt.status) {
                                     GamePhotoSession.ReceiptStatus.NONE -> false
                                     GamePhotoSession.ReceiptStatus.RECEIPT -> if (attempt.matchesRequested) true else null
-                                    GamePhotoSession.ReceiptStatus.UNCERTAIN, GamePhotoSession.ReceiptStatus.ABSENT -> {
+                                    GamePhotoSession.ReceiptStatus.UNCERTAIN, GamePhotoSession.ReceiptStatus.ABSENT,
+                                    GamePhotoSession.ReceiptStatus.DEFERRED -> {
                                         val receipt = GamePhotoSession.reconcileAttempt(this@CollectorService, saveRunId, attempt.id)
                                         when {
                                             !attempt.matchesRequested -> null
@@ -4572,7 +4626,20 @@ class CollectorService : AccessibilityService() {
                                 note(
                                     "Bách khoa Cờ Liên Quân: " + outcome.pages + " ảnh, " + outcome.items + " mục chi tiết"
                                 )
-                                done(true)
+                                val completedRun = runId
+                                GamePhotoSync.request(this@CollectorService)
+                                io.execute {
+                                    val summary = try {
+                                        GamePhotoSession.nativeReviewSummary(this@CollectorService, completedRun).description
+                                    } catch (_: Exception) {
+                                        "Chưa đọc được tổng kết ảnh gốc; kiểm tra Pictures trước khi xóa ảnh."
+                                    }
+                                    handler.post {
+                                        if (finished || token != generation) return@post
+                                        if (summary.isNotBlank()) note(summary)
+                                        done(true)
+                                    }
+                                }
                             }
                             is ChessWikiReader.Outcome.Failed -> done(false, outcome.reason)
                         }

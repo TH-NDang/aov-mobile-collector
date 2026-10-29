@@ -1429,6 +1429,7 @@ class MainActivity : Activity() {
                         }
                         ) +
                     (if (stats.errors > 0) " Lỗi đọc " + stats.errors + " ảnh." else "") +
+                    (if (stats.deferred > 0) " " + GamePhotoSession.nativeReviewSummary(this, runId).description else "") +
                     (
                         if (stats.pending > 0) {
                             " Còn " + stats.pending +

@@ -1,8 +1,17 @@
 package vn.ndang.aovcollector
 
+import kotlin.math.roundToInt
+
 /** Evidence from a fresh, successfully OCR'd screenshot, before or after a native Save Photo. */
 object NativeSaveEvidence {
-    data class Reference(val detailSignature: IntArray, val iconSignature: String?)
+    data class Reference(val detailSignature: IntArray, val iconSignature: String?, val operationKey: String? = null)
+
+    /** Page + probe slot, not artwork hash. Never repeat a dispatched save after a hash changes. */
+    fun operationKey(hero: String, page: Int, x: Double, y: Double): String {
+        // The .50/.55 probes can be seen alone or merged at .525: they are ONE icon.
+        val slot = if (y in 0.49..0.56) "upper" else "y${(y * 20).roundToInt()}"
+        return "native-slot-v1:chieu-quan-co:$hero:page-$page:x${(x * 20).roundToInt()}:$slot"
+    }
 
     enum class Scene { PROMPT, DETAIL, PAGE, UNKNOWN }
 

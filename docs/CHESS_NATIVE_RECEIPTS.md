@@ -1,5 +1,17 @@
 # Ảnh chiêu Cờ Liên Quân: xác minh file và tránh tải lại
 
+
+## v0.13.34: hàng đợi đối chiếu, không chặn cả danh sách
+
+- Không nới ngưỡng so ảnh hoặc đặc cách theo tướng. Sau tối đa ba lượt đọc foreground (12 giây), nếu có ý định Sure đã ghi bền vững và khung mới vẫn xác nhận đúng màn chi tiết, receipt chưa rõ chuyển sang `deferred`. Nếu không chứng minh được màn hiện tại, chưa có ý định Sure, hoặc ghi dữ liệu thất bại thật, vẫn tạm dừng an toàn.
+- `deferred` chỉ là **đã xử lý vị trí nhưng còn thiếu xác minh ảnh**. Checkpoint riêng `native-deferred-slot:` dùng tướng/trang/vị trí dò, không phụ thuộc hash artwork; không tạo dấu ảnh đã lưu, không tăng số ảnh xác minh và không nhấn giữ lại khi tiếp tục. Các vị trí/tướng tiếp theo vẫn được thu thập.
+- Baseline, cửa sổ thời gian, chữ ký gốc và định danh thao tác không đổi khi thử lại. Ứng viên thuộc các giao dịch chưa rõ bị loại khỏi bộ gán ảnh suy đoán theo thời gian; không mượn ảnh của tướng sau để khớp tướng trước.
+- Ứng viên native gần vuông trong cửa sổ gốc được giữ riêng dưới `captures/<run>/native-review/<attempt>/` kèm định danh nguồn, SHA-256 và số byte. Chúng **chưa được gán cho tướng**, không vào manifest ảnh đã xác minh, và không tạo quyền xóa nguồn. Giới hạn 8 tệp/giao dịch, 2 MiB/tệp, 64 MiB/lượt; quá giới hạn hoặc không đọc được phải thể hiện còn cần kiểm tra, không báo đã giữ thành công.
+- Mỗi lượt nền xử lý tối đa 8 giao dịch; mỗi giao dịch tối đa 3 lần đối chiếu tự động, cách tối thiểu 10 giây, ngân sách lưu qua restart. Chỉ một file duy nhất, đúng thời gian, đọc đầy đủ và khớp nội dung mới được nâng thành receipt. Mục còn mơ hồ sau ngân sách vẫn giữ trong báo cáo, không biến thành thành công hay tự tải lại.
+- Tổng kết phân biệt ảnh đã xác minh, giao dịch chờ đối chiếu, số tệp ứng viên giữ riêng, giao dịch chưa có bản giữ và số cần kiểm tra. Hoàn tất duyệt danh sách không đồng nghĩa mọi ảnh đã xác minh. Giữ Pictures cho tới khi kiểm tra xong; nếu nguồn bị xóa, bản giữ vẫn là bằng chứng chưa gán, không tự nhận là đúng ảnh.
+- Nhật ký cũ không có khóa vị trí chỉ được tiếp tục khi còn chứng minh đúng yêu cầu cũ; không đoán chuyển một giao dịch sang chiêu khác cùng tướng. Không thể suy ra chắc chắn thứ tự ảnh cũ chỉ từ gallery.
+- Hồi quy: cả loạt chưa rõ vẫn đi hết; xen kẽ đã xác minh/chờ đối chiếu; nhiều icon cùng tướng; restart và hash đổi không lưu lại; hủy không ghi hoàn tất giả; lỗi thật vẫn dừng; ngân sách nền, cửa sổ bất biến, ứng viên mơ hồ/không có, tránh nhận chéo ảnh và không tạo marks từ deferred. Kiểm thử tổng hợp/JVM không thay thế lượt chạy game trên máy thật.
+
 ## Lỗi được xử lý
 
 Một lần OCR trả `UNKNOWN` sau nhấn giữ không chứng minh rằng game chưa lưu ảnh. Bản trước chỉ ghi tiến độ khi đọc rõ chuỗi Save Photo → Sure → màn chi tiết; ảnh thực đã xuất có thể bị bỏ sót tiến độ, và Tiếp tục có thể nhấn giữ lại.
@@ -20,7 +32,7 @@ Một lần OCR trả `UNKNOWN` sau nhấn giữ không chứng minh rằng game
 ## Giới hạn và kiểm thử
 
 - Lượt cũ không có nhật ký từng thao tác không thể suy ra chính xác ảnh nào thuộc lần lỗi chỉ từ số ảnh tổng hoặc ảnh gallery. Không tự đánh dấu hàng loạt ảnh cũ.
-- Provider thiếu timestamp, quyền Pictures thay đổi, file chưa ghi xong, nội dung không khớp rõ hoặc màn hình chưa xác minh có thể vẫn cần tạm dừng. Thông báo phân biệt “chưa xác minh xong” với “chưa lưu”.
+- Provider thiếu timestamp, file chưa ghi xong hoặc nội dung không khớp rõ được giữ chờ đối chiếu nếu đủ điều kiện an toàn ở trên. Quyền Pictures thay đổi hoặc màn hình chưa xác minh vẫn có thể cần tạm dừng. Thông báo phân biệt “chưa xác minh xong” với “chưa lưu”.
 - Kiểm thử hồi quy gồm định danh cũ/mới/đã gán, mốc thời gian, hai ảnh khớp, ảnh chưa đọc được, nội dung khác, khôi phục nhật ký, prepared/pending/absent, ghim file, hình học điểm dò lệch tâm và ảnh tham chiếu bị thay đổi/tên tướng mâu thuẫn.
 - Có kiểm tra thuật toán trực tiếp trên các pixel bằng chứng người dùng cung cấp ở ngoài repo. Ảnh đó không đưa vào source hoặc fixture. Ảnh gallery thu nhỏ không thay thế kiểm chứng file xuất thật trên thiết bị.
 - Chưa xác nhận trên game/điện thoại thật; kiểm thử JVM và CI Android không được mô tả như một lượt game thật.

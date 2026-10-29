@@ -21,7 +21,7 @@ object GamePhotoSession {
     private const val CLOCK_WINDOW_MS = 20_000L
     private val validGroups = GamePhotoImport.GROUPS.map { it.key }.filter { it != "chua-phan-loai" }.toSet()
 
-    enum class ReceiptStatus { RECEIPT, NONE, UNCERTAIN, ABSENT }
+    enum class ReceiptStatus { RECEIPT, NONE, UNCERTAIN, ABSENT, DEFERRED }
 
     data class Attempt(val id: String, val status: ReceiptStatus, val item: String, val matchesRequested: Boolean)
 
@@ -49,7 +49,8 @@ object GamePhotoSession {
         val uncertain: Int,
         val errors: Int,
         val cancelled: Boolean,
-        val pending: Int = 0
+        val pending: Int = 0,
+        val deferred: Int = 0
     )
 
     /** Do not acknowledge a batch until every Save Photo event has a corresponding readable file. */
@@ -148,13 +149,14 @@ object GamePhotoSession {
         group: String,
         item: String,
         aliases: Set<String> = emptySet(),
-        expectedSignature: String? = null
+        expectedSignature: String? = null,
+        operationKey: String? = null
     ): Attempt {
         require(group in validGroups)
         val state = read(context, runId)
         val tree = GamePhotoImport.chosen(context) ?: error("Quyền đọc Pictures đã hết hạn")
         require(tree.toString() == state.getString("tree")) { "Thư mục Pictures đã thay đổi" }
-        NativePhotoReceiptJournal.existing(state, group, item, aliases)?.let { return it }
+        NativePhotoReceiptJournal.existing(state, group, item, aliases, operationKey)?.let { return it }
         val images = GamePhotoImport.scan(context, tree)
         val attempt = NativePhotoReceiptJournal.prepare(
             state,
@@ -163,7 +165,8 @@ object GamePhotoSession {
             aliases,
             expectedSignature,
             images.map { it.id }.toSet(),
-            System.currentTimeMillis()
+            System.currentTimeMillis(),
+            operationKey
         )
         store(context, runId, state)
         return attempt
@@ -197,6 +200,133 @@ object GamePhotoSession {
         store(context, runId, state)
     }
 
+    data class NativeReviewSummary(
+        val deferred: Int = 0,
+        val staged: Int = 0,
+        val verified: Int = 0,
+        val missing: Int = 0,
+        val reviewRequired: Int = 0,
+        val unavailable: Boolean = false
+    ) {
+        val description: String get() = if (unavailable) {
+            "Chưa đọc được báo cáo ảnh gốc; tiến độ đối chiếu chưa rõ."
+        } else {
+            "Ảnh gốc: đã xác minh $verified; chờ đối chiếu $deferred " +
+                "(đã giữ riêng $staged tệp ứng viên, chưa có bản giữ $missing); cần kiểm tra $reviewRequired."
+        }
+    }
+
+    @Synchronized fun nativeReviewSummary(context: Context, runId: String): NativeReviewSummary {
+        if (!location(context, runId).exists()) return NativeReviewSummary()
+        return try {
+            reviewSummary(read(context, runId))
+        } catch (_: Exception) {
+            NativeReviewSummary(unavailable = true)
+        }
+    }
+
+    private fun reviewSummary(state: JSONObject): NativeReviewSummary {
+        val pending = NativePhotoReceiptJournal.deferredPending(state)
+        return NativeReviewSummary(
+            pending.size,
+            pending.sumOf { it.optJSONArray("reviewCandidates")?.length() ?: 0 },
+            NativePhotoReceiptJournal.attempts(state).count { it.optString("status") in setOf("receipt", "confirmed") },
+            pending.count { (it.optJSONArray("reviewCandidates")?.length() ?: 0) == 0 },
+            pending.count { it.optInt("deferredChecks") >= NativePhotoReceiptJournal.DEFERRED_MAX_CHECKS || it.optBoolean("reviewSkipped") }
+        )
+    }
+
+    /** Durable pending-review state is distinct from a verified save mark. */
+    @Synchronized
+    fun deferAttempt(context: Context, runId: String, attemptId: String, reason: String, allow: () -> Boolean = { true }): Boolean {
+        check(allow())
+        val state = read(context, runId)
+        val attempt = NativePhotoReceiptJournal.find(state, attemptId)
+        if (!NativePhotoReceiptJournal.defer(state, attemptId, reason, System.currentTimeMillis())) return false
+        if (attempt.optString("status") == "deferred") stageCandidates(context, runId, state, attempt, allow)
+        check(allow())
+        store(context, runId, state)
+        return true
+    }
+
+    /** Preserve only bounded native-shaped candidates from the original granted-tree time window. */
+    private fun stageCandidates(context: Context, runId: String, state: JSONObject, attempt: JSONObject, allow: () -> Boolean) {
+        val tree = GamePhotoImport.chosen(context) ?: error("Quyền đọc Pictures đã hết hạn")
+        require(tree.toString() == state.getString("tree")) { "Thư mục Pictures đã thay đổi" }
+        val baseline = NativePhotoReceiptJournal.strings(state.optJSONArray("baseline")) +
+            NativePhotoReceiptJournal.strings(attempt.optJSONArray("baseline"))
+        val excluded = NativePhotoReceiptJournal.exclusions(state, attempt.getString("id"))
+        val start = attempt.getLong("startedAt") / 1000 * 1000
+        val end = attempt.getLong("endsAt")
+        val candidates = GamePhotoImport.scan(context, tree, allow).filter {
+            it.id !in baseline && it.id !in excluded && it.modified > 0 && it.modified in start..end
+        }
+        NativePhotoReceiptJournal.observe(attempt, candidates.map { it.id }.toSet())
+        if (candidates.size > 8) attempt.put("reviewSkipped", true)
+        for (photo in candidates.take(8)) {
+            check(allow())
+            // Reading may fail while Android is still publishing. That stays unresolved; local
+            // journal/copy writes below must succeed and are intentionally not swallowed.
+            val bytes = try {
+                context.contentResolver.openInputStream(photo.uri)?.use { input ->
+                    val out = ByteArrayOutputStream()
+                    val buffer = ByteArray(16 * 1024)
+                    while (true) {
+                        check(allow())
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        require(out.size() + n <= 2 * 1024 * 1024)
+                        out.write(buffer, 0, n)
+                    }
+                    out.toByteArray().takeIf { it.isNotEmpty() && (photo.size == 0L || photo.size == it.size.toLong()) }
+                }
+            } catch (_: Exception) {
+                null
+            }
+            check(allow())
+            if (bytes == null) {
+                attempt.put("reviewUnreadable", true)
+                continue
+            }
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+            NativePhotoReviewStore.stage(
+                File(context.filesDir, "captures/$runId"),
+                attempt,
+                photo.id,
+                photo.modified,
+                bounds.outWidth,
+                bounds.outHeight,
+                bytes,
+                allow
+            )
+        }
+    }
+
+    /** At most eight due items, three background checks each; budget survives process restart. */
+    @Synchronized fun reconcileDeferred(context: Context, runId: String, cancelled: () -> Boolean = { false }): NativeReviewSummary {
+        if (!location(context, runId).exists()) return NativeReviewSummary()
+        val state = read(context, runId)
+        val due = NativePhotoReceiptJournal.dueDeferred(state, System.currentTimeMillis()).map { it.getString("id") }
+        for (id in due) {
+            if (cancelled()) break
+            val current = read(context, runId)
+            val attempt = NativePhotoReceiptJournal.find(current, id)
+            if (attempt.optString("status") != "deferred") continue
+            NativePhotoReceiptJournal.noteDeferredCheck(attempt, System.currentTimeMillis())
+            store(context, runId, current) // Charge work before attempting it, including process death.
+            reconcileAttempt(context, runId, id)
+            if (cancelled()) break
+            val after = read(context, runId)
+            val remaining = NativePhotoReceiptJournal.find(after, id)
+            if (remaining.optString("status") == "deferred") {
+                stageCandidates(context, runId, after, remaining) { !cancelled() }
+                store(context, runId, after)
+            }
+        }
+        return nativeReviewSummary(context, runId)
+    }
+
     /**
      * Pending attempts survive pause/process death. Timestamp/count alone never prove a save:
      * require one full, readable, content-matching native asset, then pin and mark in one write.
@@ -217,7 +347,14 @@ object GamePhotoSession {
                 val startedAt = attempt.getLong("startedAt")
                 val endsAt = attempt.getLong("endsAt")
                 val fresh = all.filter { it.id !in baseline && it.id !in excluded }
-                NativePhotoReceiptJournal.observe(attempt, fresh.map { it.id }.toSet())
+                // A retry of an older deferred attempt must never reserve later heroes' files.
+                NativePhotoReceiptJournal.observe(
+                    attempt,
+                    fresh.filter {
+                        it.modified in (startedAt / 1000 * 1000)..endsAt ||
+                            (it.modified <= 0 && attempt.optString("status") == "pending")
+                    }.map { it.id }.toSet()
+                )
                 val verified = HashMap<String, OriginalPhotoCopy.Integrity>()
                 val contentDiagnostics = ArrayList<String>()
                 val candidates = fresh.map { photo ->
@@ -276,7 +413,7 @@ object GamePhotoSession {
                     ReceiptResult(ReceiptStatus.ABSENT, absenceSafe = true)
                 } else if (id == null) {
                     ReceiptResult(
-                        ReceiptStatus.UNCERTAIN,
+                        if (attempt.optString("status") == "deferred") ReceiptStatus.DEFERRED else ReceiptStatus.UNCERTAIN,
                         reason = NativePhotoReceipt.explain(startedAt, endsAt, candidates, attempt.optString("signature").isNotBlank()) +
                             if (contentDiagnostics.isEmpty()) "" else "; content=[${contentDiagnostics.joinToString("; ")}]",
                         absenceSafe = absenceSafe
@@ -474,6 +611,7 @@ object GamePhotoSession {
         cancelled: () -> Boolean = { false },
         progress: (Int, Int, String) -> Unit = { _, _, _ -> }
     ): Imported {
+        reconcileDeferred(context, runId, cancelled)
         val state = read(context, runId)
         val tree = GamePhotoImport.chosen(context) ?: error("Quyền đọc Pictures đã hết hạn. Hãy chọn lại thư mục.")
         require(tree.toString() == state.optString("tree")) { "Thư mục Pictures đã thay đổi. Chọn lại đúng thư mục trước khi tiếp tục." }
@@ -492,7 +630,8 @@ object GamePhotoSession {
         }.toList()
         val usedTimes = assignments.keys().asSequence().map { assignments.getJSONObject(it).optLong("time") }.toSet()
         val freshDiff = diff(
-            old + assignments.keys().asSequence().toSet(),
+            old + assignments.keys().asSequence().toSet() +
+                NativePhotoReceiptJournal.reservedForImport(state, all.map { Scanned(it.id, it.size, it.modified) }),
             all.map { Scanned(it.id, it.size, it.modified) },
             recorded.filter { it.time !in usedTimes }
         )
@@ -723,12 +862,18 @@ object GamePhotoSession {
                 when {
                     cancelled() -> "paused"
                     errors > 0 || pending > 0 -> "waiting-for-pictures"
+                    NativePhotoReceiptJournal.deferredPending(state).isNotEmpty() -> "pending-review"
                     else -> "imported"
                 }
             )
         store(context, runId, state)
         progress(diff.matching.size, diff.matching.size, "Đã lưu $copied ảnh mới")
-        return Imported(diff.before, diff.after, diff.new, copied, already, diff.unrelated, errors, cancelled(), pending)
+        return Imported(
+            diff.before, diff.after, diff.new, copied, already, diff.unrelated, errors, cancelled(), pending,
+            NativePhotoReceiptJournal.deferredPending(
+                state
+            ).size
+        )
     }
 
     fun nativeOrdinal(marks: List<Mark>, group: String, item: String): Int {
@@ -751,7 +896,7 @@ object GamePhotoSession {
         val source = GamePhotoImport.chosen(context)?.toString() ?: return false
         return sessions(context).any { (_, s) ->
             s.optString("tree") == source &&
-                (s.optJSONArray("saves")?.length() ?: 0) > s.optInt("syncedMarks", 0)
+                ((s.optJSONArray("saves")?.length() ?: 0) > s.optInt("syncedMarks", 0) || NativePhotoReceiptJournal.autoDeferredPending(s))
         }
     }
 
@@ -774,13 +919,16 @@ object GamePhotoSession {
         val source = GamePhotoImport.chosen(context)?.toString() ?: return null
         return sessions(context).filter { (_, state) ->
             state.optString("tree") == source &&
-                needsRetry(
-                    state.optJSONArray("saves")?.length() ?: 0,
-                    state.optInt("syncedMarks", 0),
-                    state.optInt("lastAttemptedMarks", 0),
-                    state.optLong("lastSyncAt", 0),
-                    now
-                )
+                (
+                    NativePhotoReceiptJournal.dueDeferred(state, now).isNotEmpty() ||
+                        needsRetry(
+                            state.optJSONArray("saves")?.length() ?: 0,
+                            state.optInt("syncedMarks", 0),
+                            state.optInt("lastAttemptedMarks", 0),
+                            state.optLong("lastSyncAt", 0),
+                            now
+                        )
+                    )
         }.maxByOrNull { (_, state) -> state.optLong("startedAt", 0) }?.first?.name
     }
 

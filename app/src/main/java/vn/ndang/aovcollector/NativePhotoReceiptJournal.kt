@@ -26,7 +26,15 @@ internal object NativePhotoReceiptJournal {
             names
         )
 
-    fun existing(state: JSONObject, group: String, item: String, aliases: Set<String>): GamePhotoSession.Attempt? {
+    fun existing(
+        state: JSONObject,
+        group: String,
+        item: String,
+        aliases: Set<String>,
+        operationKey: String? = null
+    ): GamePhotoSession.Attempt? {
+        fun requested(attempt: JSONObject) = same(attempt, group, aliases + item) ||
+            (attempt.getString("group") == group && !operationKey.isNullOrBlank() && attempt.optString("operationKey") == operationKey)
         // A pending operation blocks all later saves. Never reset its baseline on resume or hash drift.
         val pending = attempts(state).firstOrNull { it.getString("status") == "pending" }
         if (pending != null) {
@@ -34,22 +42,31 @@ internal object NativePhotoReceiptJournal {
                 pending.getString("id"),
                 GamePhotoSession.ReceiptStatus.UNCERTAIN,
                 pending.getString("item"),
-                same(pending, group, aliases + item)
+                requested(pending)
+            )
+        }
+        val deferred = attempts(state).lastOrNull { it.getString("status") == "deferred" && requested(it) }
+        if (deferred != null) {
+            return GamePhotoSession.Attempt(
+                deferred.getString("id"),
+                GamePhotoSession.ReceiptStatus.DEFERRED,
+                deferred.getString("item"),
+                true
             )
         }
         val unresolvedAbsent = attempts(state).lastOrNull {
-            it.getString("status") == "absent" && same(it, group, aliases + item)
+            it.getString("status") == "absent" && requested(it)
         }
         if (unresolvedAbsent != null) {
             return GamePhotoSession.Attempt(
                 unresolvedAbsent.getString("id"),
                 GamePhotoSession.ReceiptStatus.ABSENT,
                 unresolvedAbsent.getString("item"),
-                same(unresolvedAbsent, group, aliases + item)
+                requested(unresolvedAbsent)
             )
         }
         val saved = attempts(state).lastOrNull {
-            it.getString("status") in setOf("receipt", "confirmed") && same(it, group, aliases + item)
+            it.getString("status") in setOf("receipt", "confirmed") && requested(it)
         } ?: return null
         return GamePhotoSession.Attempt(saved.getString("id"), GamePhotoSession.ReceiptStatus.RECEIPT, saved.getString("item"), true)
     }
@@ -61,9 +78,10 @@ internal object NativePhotoReceiptJournal {
         aliases: Set<String>,
         signature: String?,
         ids: Set<String>,
-        now: Long
+        now: Long,
+        operationKey: String? = null
     ): GamePhotoSession.Attempt {
-        existing(state, group, item, aliases)?.let { return it }
+        existing(state, group, item, aliases, operationKey)?.let { return it }
         attempts(state).filter { it.getString("status") == "prepared" }.forEach { it.put("status", "cancelled") }
         val entries = state.optJSONArray("nativeAttempts") ?: JSONArray()
         val id = UUID.randomUUID().toString()
@@ -72,6 +90,7 @@ internal object NativePhotoReceiptJournal {
                 .put("aliases", JSONArray(aliases.sorted())).put("signature", signature ?: "")
                 .put("startedAt", now).put("endsAt", now + NativePhotoReceipt.WINDOW_MS)
                 .put("baseline", JSONArray(ids.sorted())).put("observed", JSONArray()).put("status", "prepared")
+                .put("operationKey", operationKey ?: "")
         )
         state.put("nativeAttempts", entries)
         return GamePhotoSession.Attempt(id, GamePhotoSession.ReceiptStatus.NONE, item, true)
@@ -100,9 +119,54 @@ internal object NativePhotoReceiptJournal {
         attempt.put("sureIntentAt", now).put("endsAt", now + NativePhotoReceipt.WINDOW_MS)
     }
 
+    const val DEFERRED_RETRY_MS = 10_000L
+    const val DEFERRED_MAX_CHECKS = 3
+
+    /** Defer verification, never claim a save or dispatch another Sure. */
+    fun defer(state: JSONObject, id: String, reason: String, now: Long): Boolean {
+        val attempt = find(state, id)
+        if (attempt.getString("status") in setOf("receipt", "confirmed")) return false
+        if (attempt.getString("status") !in setOf("pending", "deferred") || !attempt.has("sureIntentAt")) return false
+        if (attempt.getString("status") != "deferred") {
+            attempt.put("deferredAt", now).put("deferredChecks", 0).put("deferredLastCheck", 0L)
+        }
+        attempt.put("status", "deferred").put("reviewReason", reason.take(1200))
+        return true
+    }
+
+    fun deferredPending(state: JSONObject): List<JSONObject> = attempts(state).filter { it.optString("status") == "deferred" }
+
+    fun dueDeferred(state: JSONObject, now: Long, limit: Int = 8): List<JSONObject> = deferredPending(state).filter {
+        it.optInt("deferredChecks") < DEFERRED_MAX_CHECKS &&
+            now - maxOf(it.optLong("deferredLastCheck"), it.optLong("deferredAt")) >= DEFERRED_RETRY_MS
+    }.take(limit.coerceIn(0, 8))
+
+    fun noteDeferredCheck(attempt: JSONObject, now: Long) {
+        check(attempt.optString("status") == "deferred")
+        check(attempt.optInt("deferredChecks") < DEFERRED_MAX_CHECKS)
+        attempt.put("deferredChecks", attempt.optInt("deferredChecks") + 1).put("deferredLastCheck", now)
+    }
+
+    fun autoDeferredPending(state: JSONObject): Boolean = deferredPending(state).any { it.optInt("deferredChecks") < DEFERRED_MAX_CHECKS }
+
+    /** Unverified native exports must never fall into legacy timestamp/count-only matching. */
+    fun reservedForImport(state: JSONObject, photos: List<GamePhotoSession.Scanned>): Set<String> {
+        val batchBaseline = strings(state.optJSONArray("baseline"))
+        // Keep all armed receipt windows quarantined after promotion too: a late second
+        // candidate is not evidence for an unrelated legacy mark. Exact pins bypass this filter.
+        return attempts(state).filter { it.has("sureIntentAt") }.flatMap { attempt ->
+            val baseline = batchBaseline + strings(attempt.optJSONArray("baseline"))
+            val start = attempt.getLong("startedAt") / 1000 * 1000
+            val end = attempt.getLong("endsAt")
+            strings(attempt.optJSONArray("observed")) + photos.filter {
+                it.id !in baseline && (it.modified <= 0 || it.modified in start..end)
+            }.map { it.id }
+        }.toSet()
+    }
+
     fun earlierAbsentSignatures(state: JSONObject, id: String, modified: Long): List<String> = attempts(state).filter {
         it.getString("id") != id &&
-            it.getString("status") == "absent" &&
+            it.getString("status") in setOf("absent", "deferred", "pending") &&
             modified >= it.getLong("startedAt") / 1000 * 1000 &&
             modified <= it.getLong("endsAt")
     }.map { it.optString("signature") }
@@ -155,7 +219,7 @@ internal object NativePhotoReceiptJournal {
 
     fun receipt(state: JSONObject, id: String, documentId: String, verified: OriginalPhotoCopy.Integrity) {
         val attempt = find(state, id)
-        check(attempt.getString("status") in setOf("pending", "absent")) { "Lần lưu ảnh đã đóng" }
+        check(attempt.getString("status") in setOf("pending", "absent", "deferred")) { "Lần lưu ảnh đã đóng" }
         val assignments = state.optJSONObject("assignments") ?: JSONObject()
         check(!assignments.has(documentId)) { "Ảnh đã thuộc lần lưu khác" }
         val time = save(state, attempt)
