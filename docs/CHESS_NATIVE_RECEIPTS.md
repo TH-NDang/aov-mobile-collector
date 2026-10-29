@@ -56,3 +56,12 @@ Từ screenshot Hayate và ảnh chiêu riêng 128×128 người dùng gửi, ch
 - Chỉ ảnh mới trong cửa sổ attempt mới được giải mã/so; 1591 ảnh baseline không phải 1591 lượt căn mịn. Kiểm tra source, duy nhất một kết quả, nội dung ảnh, timestamp, SHA/bytes khi ghim, lưu journal bền vững và chống tải trùng vẫn giữ nguyên.
 - Khi chưa khớp, log thêm kích thước, sai số RGB, phần ô gần nhau, tương quan và số phép so; tối đa ba bản tóm tắt số học, không ghi tên/path/ID ảnh riêng tư.
 - Kiểm thử dùng hình tổng hợp lệch scale/vị trí và ảnh tương tự nhưng sai; ảnh người dùng chỉ dùng kiểm chứng cục bộ, không đưa vào repo/fixture. JVM cục bộ và emulator CI không thay thế kiểm chứng game trên điện thoại thật.
+
+
+## v0.13.32: sửa lưới vị trí còn quá thưa với ảnh 128×128
+
+- Log 29/10 cho thấy một file mới trong cửa sổ, đọc được, không mơ hồ; phép so tốt nhất cũ báo RGB 15.4367, tỷ lệ ô gần màu 0.83, tương quan 0.9295. Điều kiện 0.85 chưa đạt nên dừng bảo thủ. Log không chứa pixel gốc, vì vậy không đủ chứng minh file ấy là ảnh đúng.
+- Lưới v0.13.31 dịch nửa bước theo phần lề còn lại của crop: với icon 128px, các vị trí vẫn có thể cách vài pixel. Bản này thêm tìm kiếm cục bộ theo pixel, bốn mức giảm dần vị trí/kích thước, tối đa ba seed mỗi vùng tham chiếu và tổng 972 phép so bổ sung. Chỉ vùng có nội dung gần khớp mới vào bước này; không quét vô hạn hoặc nới ngưỡng.
+- Vẫn cần RGB ≤18, tỷ lệ ô gần màu ≥0.85, tương quan ≥0.92 cùng một phép so. Chẩn đoán chọn phép so theo điều kiện yếu nhất thay vì chỉ sai số RGB nhỏ nhất, và ghi số phép `fine` để phân biệt đường khớp mới.
+- Giữ định dạng chữ ký `native-icon-rgb-v1`, baseline, mốc Sure, thời hạn và journal cũ. Tiếp tục lượt đang dở sẽ đối chiếu file đã có bằng thuật toán mới; không nhấn giữ hoặc Sure lại khi receipt chưa rõ. Nhiều file khớp, file chưa đọc được, sai thời gian hoặc nguồn đã gán vẫn bị chặn.
+- Kiểm thử mới dùng ảnh tổng hợp 128×128 và crop phân số, gồm trường hợp thuật toán cũ thất bại; ảnh đảo/lật/đổi màu/nền trơn và receipt trùng/ngoài cửa sổ vẫn bị từ chối. Không đưa ảnh người dùng vào repository. Không tuyên bố lỗi Hayate trên điện thoại đã được xác nhận hết nếu chưa có kiểm thử thực tế.

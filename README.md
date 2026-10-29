@@ -1,4 +1,8 @@
-# AOV Mobile Collector — v0.13.31
+# AOV Mobile Collector — v0.13.32
+
+## v0.13.32: căn ảnh Pictures theo pixel khi tiếp tục lượt Cờ
+
+Sửa khoảng trống giữa các vị trí dò ảnh 128×128: thêm tối đa 972 phép so có giới hạn theo pixel và kích thước phân số, thay vì chỉ chia vị trí theo lề còn lại của icon. Giữ nguyên ngưỡng RGB/tương quan/tỷ lệ ô khớp và các điều kiện file mới, đúng thời gian, duy nhất. Nhật ký cũ vẫn được đối chiếu khi bấm Tiếp tục, không gửi Save Photo lần nữa. Chẩn đoán mới có `fine` và báo ứng viên tốt nhất theo cả ba điều kiện. Xem [kiểm thử và giới hạn](docs/CHESS_NATIVE_RECEIPTS.md). Chưa xác nhận ảnh Hayate thực tế chỉ từ log; kiểm thử tổng hợp không thay thế thử trên máy.
 
 ## v0.13.31: căn ảnh chiêu chính xác hơn, bảng gọn thật sự
 

@@ -70,7 +70,8 @@ object NativePhotoReceipt {
         val bestCloseFraction: Double?,
         val bestCorrelation: Double?,
         val coarseComparisons: Int,
-        val refinedComparisons: Int
+        val refinedComparisons: Int,
+        val fineComparisons: Int = 0
     )
 
     private data class Comparison(val rgb: Double, val close: Double, val correlation: Double) {
@@ -79,6 +80,8 @@ object NativePhotoReceipt {
     }
 
     private data class Seed(val percent: Int, val row: Int, val column: Int, val rank: Double)
+
+    private data class FineSeed(val left: Double, val top: Double, val side: Double, val comparison: Comparison)
 
     fun matches(signature: String?, bitmap: Bitmap): Boolean = matchDetailed(signature, bitmap).matched
 
@@ -92,13 +95,26 @@ object NativePhotoReceipt {
     fun matchDetailed(signature: String?, width: Int, height: Int, pixel: (Int, Int) -> Int): MatchResult {
         var coarse = 0
         var refined = 0
+        var fine = 0
         var best: Comparison? = null
 
-        fun result(matched: Boolean) = MatchResult(matched, width, height, best?.rgb, best?.close, best?.correlation, coarse, refined)
+        fun result(matched: Boolean) = MatchResult(matched, width, height, best?.rgb, best?.close, best?.correlation, coarse, refined, fine)
         val expected = decode(signature) ?: return result(false)
         if (width < 32 || height < 32 || width.toDouble() / height !in .75..1.34) return result(false)
         val edge = minOf(width, height).toDouble()
         val seeds = expected.map { ArrayList<Seed>(4) }
+        val fineSeeds = expected.map { ArrayList<FineSeed>(3) }
+
+        fun remember(index: Int, left: Double, top: Double, side: Double, comparison: Comparison) {
+            if (best == null || comparison.alignmentRank < best!!.alignmentRank) best = comparison
+            // Fine alignment is useful only for plausible content, not arbitrary gallery photos.
+            if (comparison.alignmentRank > 2) return
+            val shortlist = fineSeeds[index]
+            if (shortlist.any { abs(it.left - left) < .5 && abs(it.top - top) < .5 && abs(it.side - side) < .5 }) return
+            shortlist.add(FineSeed(left, top, side, comparison))
+            shortlist.sortBy { it.comparison.alignmentRank }
+            if (shortlist.size > 3) shortlist.removeAt(3)
+        }
         for (percent in 30..100 step 5) {
             val side = edge * percent / 100
             for (row in 0..8) {
@@ -107,7 +123,7 @@ object NativePhotoReceipt {
                     for ((index, reference) in expected.withIndex()) {
                         coarse++
                         val comparison = compare(reference, actual)
-                        if (best == null || comparison.rgb < best!!.rgb || comparison.accepted) best = comparison
+                        remember(index, (width - side) * column / 8, (height - side) * row / 8, side, comparison)
                         if (comparison.accepted) return result(true)
                         val shortlist = seeds[index]
                         if (shortlist.size < 4 || comparison.alignmentRank < shortlist.last().rank) {
@@ -136,10 +152,44 @@ object NativePhotoReceipt {
                                 sample(width, height, (width - side) * column / 8, (height - side) * row / 8, side, pixel) ?: continue
                             refined++
                             val comparison = compare(reference, actual)
-                            if (best == null || comparison.rgb < best!!.rgb || comparison.accepted) best = comparison
+                            remember(index, (width - side) * column / 8, (height - side) * row / 8, side, comparison)
                             if (comparison.accepted) return result(true)
                         }
                     }
+                }
+            }
+        }
+        // The old half-grid still leaves several pixels between positions on a 128px export.
+        // Refine in pixel space, independent of the remaining crop margin. The retained v1
+        // signature remains valid, including pending receipts from previous app versions.
+        // At most 3 variants × 3 seeds × 4 levels × 27 comparisons = 972 extra samples.
+        for ((index, reference) in expected.withIndex()) {
+            for (seed in fineSeeds[index]) {
+                var center = seed
+                repeat(4) { level ->
+                    val divisor = (1 shl level).toDouble()
+                    val positionStep = edge * .025 / divisor
+                    val sizeStep = edge * .01 / divisor
+                    var next = center
+                    for (ds in -1..1) {
+                        val side = center.side + ds * sizeStep
+                        if (side < edge * .3 || side > edge) continue
+                        for (dy in -1..1) {
+                            for (dx in -1..1) {
+                                val left = center.left + dx * positionStep
+                                val top = center.top + dy * positionStep
+                                val actual = sample(width, height, left, top, side, pixel) ?: continue
+                                fine++
+                                val comparison = compare(reference, actual)
+                                if (best == null || comparison.alignmentRank < best!!.alignmentRank) best = comparison
+                                if (comparison.accepted) return result(true)
+                                if (comparison.alignmentRank < next.comparison.alignmentRank) {
+                                    next = FineSeed(left, top, side, comparison)
+                                }
+                            }
+                        }
+                    }
+                    center = next
                 }
             }
         }
