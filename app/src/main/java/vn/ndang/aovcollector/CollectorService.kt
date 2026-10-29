@@ -2849,7 +2849,7 @@ class CollectorService : AccessibilityService() {
                     try {
                         io.execute {
                             val words = try {
-                                GameText.words(bitmap).filter { it.bottom < .97 }
+                                GameText.proWords(bitmap).filter { it.bottom < .97 }
                             } catch (_: Exception) {
                                 null
                             }

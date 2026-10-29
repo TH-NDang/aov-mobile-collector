@@ -60,6 +60,7 @@ class ProCombosTest {
         var shortenOnReplay = false
         var pixelOnlyMotion = false
         var animatedBackground = false
+        var incompleteReads = 0
         var looks = 0
         var scrollGestures = 0
         var replayNotices = 0
@@ -94,7 +95,11 @@ class ProCombosTest {
             } else {
                 rows.drop(offset).take(2).mapIndexed { i, id -> entry(id, .41 + .365 * i, values[offset + i]) }
             }
-            val observed = if (discoveryMoved && corruptDiscoveryReads > 0 && p) {
+            val incomplete = p && incompleteReads > 0
+            if (incomplete) incompleteReads--
+            val observed = if (incomplete) {
+                emptyList()
+            } else if (discoveryMoved && corruptDiscoveryReads > 0 && p) {
                 corruptDiscoveryReads--
                 visible.map { it.copy(signature = signature(220)) }
             } else {
@@ -222,6 +227,37 @@ class ProCombosTest {
                 queue.removeFirst()()
             }
         }
+    }
+
+    @Test fun transientIncompleteCardIsRereadWithoutScrollingOrSkippingRanks() {
+        val baseline = Fake(listOf("first", "second")).apply {
+            geometric = true
+            fullBoundary = true
+        }
+        baseline.run()
+        val f = Fake(listOf("first", "second")).apply {
+            geometric = true
+            fullBoundary = true
+            incompleteReads = 2
+        }
+        f.run()
+        assertEquals(ProComboReader.Outcome.Done(2, false), f.outcome)
+        assertEquals(listOf("top-1", "top-2"), f.captures)
+        assertEquals(baseline.resetGestures, f.resetGestures)
+        assertEquals(baseline.scrollGestures, f.scrollGestures)
+        assertEquals(3, f.applies)
+    }
+
+    @Test fun unresolvedCardOcrStopsAfterRereadsWithoutSixteenResetSwipes() {
+        val f = Fake(listOf("first", "second")).apply { incompleteReads = 100 }
+        f.run()
+        assertTrue(f.outcome is ProComboReader.Outcome.Failed)
+        assertTrue((f.outcome as ProComboReader.Outcome.Failed).reason.contains("Chưa đọc đủ thông tin"))
+        assertEquals(0, f.scrollGestures)
+        assertEquals(0, f.resetGestures)
+        assertEquals(0, f.applies)
+        assertTrue(f.captures.isEmpty())
+        assertTrue(f.looks <= 5)
     }
 
     @Test fun collectFiveAndRestoreWithoutSixthPhoto() {

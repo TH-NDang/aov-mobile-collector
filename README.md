@@ -1,4 +1,8 @@
-# AOV Mobile Collector — v0.13.32
+# AOV Mobile Collector — v0.13.33
+
+## v0.13.33: đọc đủ combo Pro trước khi cuộn
+
+Đề cử Pro đọc riêng vùng danh sách ở độ phân giải gốc phóng 2×, gồm dòng và phần tử OCR, để giữ tên người đề cử và số bảng ngọc nhỏ. Nhận vùng tên bắt đầu từ cạnh trái thực của thẻ, không loại nhầm vì tên lệch trái. Khi chưa đọc đủ thẻ, app giữ nguyên danh sách và đọc lại tối đa hai lần thay vì tiếp tục vuốt lên nhiều lần. Vẫn xác minh thứ hạng, toàn bộ combo và giữ top 1 sau thu thập; không bấm chỉ vì thấy nút. Bao gồm sửa ảnh Cờ v0.13.32. Xem [phạm vi và kiểm thử Pro](docs/PRO_BUILDS.md).
 
 ## v0.13.32: căn ảnh Pictures theo pixel khi tiếp tục lượt Cờ
 

@@ -120,7 +120,7 @@ object ProComboScreens {
                 // A complete card must include its creator and all component rows, not a clipped bottom card.
                 val creatorY = button.y - .185
                 val creator = words.filter {
-                    it.left in .325..0.57 &&
+                    it.left in .29..0.57 &&
                         abs(it.y - creatorY) < .045 &&
                         it.right - it.left < .32 &&
                         it.plain.isNotBlank() &&
@@ -134,6 +134,26 @@ object ProComboScreens {
                 val rune = rune(words, .635, button.y + .055) ?: return@mapNotNull null
                 Entry(creator.plain, creator.text, button, intArrayOf(rune) + signature(width, height, points, readRow))
             }
+    }
+
+    /** Native-resolution list OCR replaces only the list, never popup/tab/hero evidence. */
+    fun withFocusedList(ordinary: List<GameScreens.Word>, focused: List<GameScreens.Word>): List<GameScreens.Word> {
+        if (focused.none { it.plain == "dungcombo" && it.x in .69..0.82 }) return ordinary
+
+        fun inList(word: GameScreens.Word) = word.x in .28..0.84 && word.y in .18..0.90
+        return ordinary.filterNot(::inList) + focused.filter(::inList)
+    }
+
+    /** A missing creator/rune is an OCR gap, not a reason to move the list again. */
+    fun incompleteCards(words: List<GameScreens.Word>, entries: List<Entry>): Boolean {
+        if (empty(words)) return false
+        if (entries.isEmpty()) return true
+        return words.any { word ->
+            word.plain == "dungcombo" &&
+                word.x in .69..0.82 &&
+                word.y in .38..0.80 &&
+                entries.none { abs(it.button.y - word.y) < .015 }
+        }
     }
 
     /** Same image geometry for every list frame; excludes hero animation, side tab, tooltip and footer. */
@@ -323,7 +343,7 @@ class ProComboReader(
         if (!it) fail("Không lưu được tiến độ Pro; đã dừng trước thao tác tiếp theo")
     }
 
-    private fun look(then: (Look) -> Unit) {
+    private fun look(reads: Int = 0, then: (Look) -> Unit) {
         if (!screen.alive || ended) return
         screen.look { l ->
             if (!screen.alive || ended) {
@@ -331,7 +351,24 @@ class ProComboReader(
             } else if (l == null) {
                 fail("Không đọc được màn hình Pro")
             } else {
-                then(l)
+                if (ProComboScreens.popup(l.words) &&
+                    l.proSelected &&
+                    !ProComboScreens.blocked(l.words) &&
+                    ProComboScreens.incompleteCards(l.words, l.entries)
+                ) {
+                    val buttons = l.words.filter { it.plain == "dungcombo" && it.x in .69..0.82 && it.y in .38..0.80 }
+                        .distinctBy { (it.y * 40).toInt() }.size
+                    val cards = l.entries.size
+                    l.done(if (reads >= 2) "pro-incomplete-cards" else null)
+                    if (reads >= 2) {
+                        fail("Chưa đọc đủ thông tin combo Pro (nút=$buttons, dòng đủ=$cards); không cuộn tiếp hoặc bấm nhầm")
+                    } else {
+                        if (reads == 0) screen.say("Đang đọc lại tên người đề cử và bảng ngọc Pro; giữ nguyên danh sách")
+                        later { look(reads + 1, then) }
+                    }
+                } else {
+                    then(l)
+                }
             }
         }
     }
@@ -465,6 +502,7 @@ class ProComboReader(
                 before.done("pro-reset-unknown")
                 return@look fail("Không xác minh được danh sách Pro trước khi về đầu")
             }
+            screen.say("Kiểm tra đầu Pro: ${before.entries.size} combo đủ thông tin; cuối danh sách=${before.listBottomClear}")
             val original = before.listSignature
             val fitting = before.entries.size in 1..2 && before.listBottomClear && abs(before.entries[0].button.y - .408) < .03
             val originalEntries = before.entries
@@ -569,7 +607,9 @@ class ProComboReader(
         } else if (stalledTopProbes >= 3) {
             fail("Không xác minh được đầu danh sách Pro: các dòng không dịch chuyển dù đã vuốt hai hướng")
         } else if (++moves > 16) {
-            fail("Không xác minh được đầu danh sách Pro; không bấm Dùng combo khi chưa biết thứ hạng")
+            fail(
+                "Không xác minh được đầu danh sách Pro: dòng=${l.entries.size}, đầu=$atTop, đứng yên=$stationaryRows, đã dịch=$returnedFromProbe; chưa bấm Dùng combo"
+            )
         } else {
             drag(true) { scanTop(then) }
         }

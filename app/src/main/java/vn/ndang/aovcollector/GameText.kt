@@ -23,6 +23,16 @@ object GameText {
         }
     }
 
+    /** Pro cards contain tiny rune numbers and decorated creator names lost at half size.
+     * Read the list at 2x native resolution on the SAME frame. Navigation evidence stays separate.
+     */
+    fun proWords(screen: Bitmap): List<GameScreens.Word> {
+        val ordinary = words(screen)
+        if (screen.width <= screen.height || !ProComboScreens.popup(ordinary)) return ordinary
+        val focused = rankingCrop(screen, .28, .18, .84, .90)
+        return ProComboScreens.withFocusedList(ordinary, focused)
+    }
+
     /**
      * Statistics navigation needs the small gold link at full resolution. Only retry an unresolved landing
      * page's header; large accessibility containers remain evidence of the page, never tap targets.
