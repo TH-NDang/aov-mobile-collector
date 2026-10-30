@@ -302,8 +302,13 @@ class GameEntryTest {
 
         override fun say(text: String) {}
 
-        fun run(toLobby: Boolean = false, smartLobby: Boolean = true, preserveScreen: Boolean = false): GameEntry.Outcome {
-            GameEntry(this, uid, toLobby, smartLobby, preserveScreen) { outcome = it }.start()
+        fun run(
+            toLobby: Boolean = false,
+            smartLobby: Boolean = true,
+            preserveScreen: Boolean = false,
+            resumeFromLobby: Boolean = false
+        ): GameEntry.Outcome {
+            GameEntry(this, uid, toLobby, smartLobby, preserveScreen, resumeFromLobby = resumeFromLobby) { outcome = it }.start()
             var guard = 0
             while (outcome == null) {
                 pending.removeFirstOrNull()?.invoke() ?: error("stuck")
@@ -487,6 +492,31 @@ class GameEntryTest {
         assertTrue(background.run(preserveScreen = true) is GameEntry.Outcome.Failed)
         assertEquals(0, background.next)
         assertEquals(0, background.launches)
+    }
+
+    @Test fun resumingAStepThatFindsItsOwnWayFromAScreenWithoutUidSaysToGoBackToTheLobby() {
+        val encyclopedia = Script(listOf(at(other)), uid = "123456789", gameInFront = true)
+        val outcome = encyclopedia.run(preserveScreen = true, resumeFromLobby = true)
+        assertTrue(outcome is GameEntry.Outcome.Failed)
+        val reason = (outcome as GameEntry.Outcome.Failed).reason
+        assertTrue(reason, reason.contains("sảnh chính") && reason.contains("bỏ qua phần đã lưu"))
+        assertTrue(!reason.contains("tạo lượt mới"))
+        // Still nothing touched to prove the account.
+        assertTrue(encyclopedia.taps.isEmpty())
+        assertEquals(0, encyclopedia.backs)
+        // From the lobby with the right UID, the step goes on.
+        val lobbyAgain = Script(listOf(at(lobby, uid = "123456789")), uid = "123456789", gameInFront = true)
+        assertTrue(lobbyAgain.run(preserveScreen = true, resumeFromLobby = true) is GameEntry.Outcome.Ready)
+        assertTrue(lobbyAgain.taps.isEmpty())
+        // A different UID is never waved through, whatever the step.
+        val wrong = Script(listOf(at(lobby, uid = "987654321")), uid = "123456789", gameInFront = true)
+        val refused = wrong.run(preserveScreen = true, resumeFromLobby = true)
+        assertTrue(refused is GameEntry.Outcome.Failed)
+        assertTrue(!(refused as GameEntry.Outcome.Failed).reason.contains("sảnh chính"))
+        // Coordinate macros keep the old advice.
+        val coordinates = Script(listOf(at(other)), uid = "123456789", gameInFront = true)
+        val kept = coordinates.run(preserveScreen = true)
+        assertTrue((kept as GameEntry.Outcome.Failed).reason.contains("tạo lượt mới"))
     }
 
     @Test fun lobbyToListHasStableCalibrationIdentityButLobbyEntryDoesNotTapIt() {

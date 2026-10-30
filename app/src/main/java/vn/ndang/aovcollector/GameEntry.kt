@@ -540,6 +540,8 @@ class GameEntry(
      * actively used the supplied Garena credentials instead of trusting a previous login.
      */
     private val forceFreshLogin: Boolean = false,
+    /** With [preserveScreen]: the paused step finds its own way from the lobby, where the UID can be checked. */
+    private val resumeFromLobby: Boolean = false,
     private val finish: (Outcome) -> Unit
 ) {
     sealed class Outcome {
@@ -756,8 +758,15 @@ class GameEntry(
                     return@look stop(
                         s,
                         "entry-resume",
-                        "Chưa xác minh được đúng UID trên màn hình hiện tại. Giữ nguyên bước; mở đúng màn hình và UID rồi thử lại. " +
-                            "Nếu UID bị ẩn, tạo lượt mới từ sảnh với tác vụ tự điều hướng; không tự quay về sảnh rồi chạy tọa độ đang dở."
+                        if (resumeFromLobby && screen.gameInFront && !known) {
+                            // E.g. Bách khoa Cờ: no UID on screen. Its step restarts from the lobby and skips saved work.
+                            "Màn hình hiện tại không hiện UID nên chưa kiểm tra được tài khoản; chưa thao tác gì. " +
+                                "Bấm mũi tên quay lại của game cho đến sảnh chính (có UID ở cuối màn hình) rồi bấm Tiếp tục: " +
+                                "bước này tự đi lại từ sảnh và bỏ qua phần đã lưu, không bắt đầu lại từ đầu."
+                        } else {
+                            "Chưa xác minh được đúng UID trên màn hình hiện tại. Giữ nguyên bước; mở đúng màn hình và UID rồi thử lại. " +
+                                "Nếu UID bị ẩn, tạo lượt mới từ sảnh với tác vụ tự điều hướng; không tự quay về sảnh rồi chạy tọa độ đang dở."
+                        }
                     )
                 }
                 s.record("Đã kiểm tra màn hình hiện tại và UID; giữ nguyên vị trí")

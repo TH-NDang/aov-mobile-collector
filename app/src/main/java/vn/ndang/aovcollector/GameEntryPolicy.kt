@@ -13,6 +13,14 @@ object GameEntryPolicy {
                 macro.steps.getJSONObject(0).optString("type") == "event-invite"
             )
 
+    /** Steps that find their own way from the lobby and skip what their run already saved. */
+    private val fromLobby = setOf("ranking", "board", "chess", "pro-builds")
+
+    /** True when the step being resumed at [index] can safely start again from the lobby. */
+    fun resumesFromLobby(macro: Macro, index: Int): Boolean =
+        (index until macro.steps.length()).map { macro.steps.getJSONObject(it).optString("type") }
+            .firstOrNull { it != "wait" } in fromLobby
+
     fun destination(macro: Macro, index: Int): Destination {
         // A resumed coordinate cursor must never be replayed after an implicit navigation.
         if (index > 0) return Destination.CURRENT
@@ -26,7 +34,7 @@ object GameEntryPolicy {
             .firstOrNull { it != "wait" }
         return when (action) {
             "pick", "find" -> Destination.LIST
-            "ranking", "board", "chess", "pro-builds", "event-invite" -> Destination.LOBBY
+            in fromLobby, "event-invite" -> Destination.LOBBY
             else -> Destination.CURRENT
         }
     }

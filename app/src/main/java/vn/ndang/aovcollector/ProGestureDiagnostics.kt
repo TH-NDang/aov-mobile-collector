@@ -3,6 +3,24 @@ package vn.ndang.aovcollector
 /** Per-attempt evidence. Accepted parts may already have changed the game; never imply safe replay. */
 internal data class GestureFailure(val reason: String, val acceptedParts: Int = 0, val detail: String = "")
 
+/** Run-log wording for a refused touch, so a pause that only says "could not touch" can be explained. */
+internal object GestureFailureText {
+    fun describe(reason: String): String = when (reason) {
+        "overlay-intercepted" -> "chạm rơi vào bảng nổi của app"
+        "android-cancelled" -> "Android hủy cú chạm (thường do tay chạm màn hình, thông báo hoặc cử chỉ hệ thống chen vào)"
+        "android-rejected" -> "Android không nhận cú chạm"
+        "android-exception" -> "lỗi khi gửi cú chạm"
+        "service-changed" -> "dịch vụ Trợ năng vừa khởi động lại"
+        "shield-session-ended" -> "bước đã bị ngắt trước khi chạm xong"
+        "editor-open" -> "bảng chỉnh từng bước đang mở"
+        "invalid-points" -> "điểm chạm không hợp lệ"
+        else -> "lý do khác"
+    }
+
+    fun note(label: String?, reason: String, attempts: Int): String =
+        "Chạm thất bại" + (label?.let { ": $it" } ?: "") + " — " + describe(reason) + " ($reason, $attempts lần thử)"
+}
+
 internal object ProGestureDiagnostics {
     fun message(action: CalibrationAction, failure: GestureFailure): String {
         val stage = if (failure.reason in

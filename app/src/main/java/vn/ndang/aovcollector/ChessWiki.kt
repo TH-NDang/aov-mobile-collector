@@ -650,6 +650,7 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
         const val MAX_STILL = 3
         const val WAIT_MS = 1100L
         const val MAX_TILES = 450
+        const val TAP_RETRY_MS = 2000L
     }
 
     private val topics = options.topics()
@@ -696,6 +697,11 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
         }
     }
 
+    /**
+     * A refused tap is sent once more only when [again] is given: after [TAP_RETRY_MS] the screen is read, and
+     * the tap is resent only while [again] says it is still wanted. Otherwise the caller's own checks of the
+     * screen take over, so a tap that did land is never repeated onto whatever is under it now.
+     */
     private fun tap(
         x: Double,
         y: Double,
@@ -703,18 +709,41 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
         id: String? = null,
         label: String = "Cờ: chạm",
         relative: Boolean = false,
+        again: ((Look) -> Boolean)? = null,
         next: () -> Unit
     ) {
         if (!screen.alive) return
-        val done = { ok: Boolean -> if (!ok) fail("Không chạm được màn hình.") else screen.later(wait, next) }
-        if (id == null) {
-            screen.tap(x, y, done)
-        } else {
-            screen.calibrated(
-                CalibrationAction("chess.v1.$id", label, listOf(CalibrationPoint(x, y)), relative),
-                done
-            )
+
+        fun send(retried: Boolean) {
+            val done = { ok: Boolean ->
+                when {
+                    ok -> screen.later(wait, next)
+                    again == null || retried -> fail(
+                        "Không chạm được màn hình" + (if (retried) " sau 2 lần" else "") +
+                            " ($label); lý do ghi trong nhật ký lượt. Kiểm tra màn hình rồi bấm Tiếp tục."
+                    )
+                    else -> {
+                        screen.note("$label: chạm chưa thành công; xem lại màn hình sau 2 giây rồi thử lại một lần.")
+                        screen.later(TAP_RETRY_MS) {
+                            look(true) { l ->
+                                val wanted = again(l)
+                                l.discard()
+                                if (wanted) send(true) else next()
+                            }
+                        }
+                    }
+                }
+            }
+            if (id == null) {
+                screen.tap(x, y, done)
+            } else {
+                screen.calibrated(
+                    CalibrationAction("chess.v1.$id", label, listOf(CalibrationPoint(x, y)), relative),
+                    done
+                )
+            }
         }
+        send(false)
     }
 
     private fun swipe(
@@ -776,7 +805,7 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
         if (l.modal) {
             l.discard()
             if (navigation++ >= 3) return@look fail("Không đóng được bảng chi tiết. Đóng dấu X rồi bấm Tiếp tục.")
-            return@look tap(.901, .08, id = "detail.close", label = "Cờ: đóng chi tiết") { navigate() }
+            return@look tap(.901, .08, id = "detail.close", label = "Cờ: đóng chi tiết", again = { it.modal }) { navigate() }
         }
         if (all.contains("bachkhoa") && all.contains("colienquan")) {
             l.discard()
@@ -874,7 +903,15 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
         if (l.modal) {
             l.discard()
             if (retries >= 3) return@look fail("Không đóng được bảng chi tiết ở " + t.label + ". Đóng dấu X rồi Tiếp tục.")
-            return@look tap(.902, .082, id = "detail.close", label = "Cờ: đóng chi tiết") { scan(at, page, previous, still, retries + 1) }
+            return@look tap(.902, .082, id = "detail.close", label = "Cờ: đóng chi tiết", again = { it.modal }) {
+                scan(
+                    at,
+                    page,
+                    previous,
+                    still,
+                    retries + 1
+                )
+            }
         }
         if (page > MAX_PAGES) {
             l.discard()
@@ -1063,7 +1100,7 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
     /** A duplicate popup at another ordinal is a navigation fault, not completion of that slot. */
     private fun retryHero(at: Int, title: String, tries: Int = 0) {
         if (tries >= 3) return fail("Không đóng được bảng chi tiết. Đóng dấu X rồi Tiếp tục.")
-        tap(.902, .081, timing.close, id = "detail.close", label = "Cờ: đóng chi tiết") {
+        tap(.902, .081, timing.close, id = "detail.close", label = "Cờ: đóng chi tiết", again = { it.modal }) {
             look(false) { l ->
                 val open = l.modal
                 l.discard()
@@ -1131,7 +1168,17 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                     t.label + ": chi tiết " + (from + 1) + "/" + tiles.size
                 }
             )
-            tap(item.x, item.y, timing.tap, id = "topic.${t.key}.card", label = "Cờ: mở thẻ ${t.label}", relative = true) {
+            // Tap the card again only while the same list is still in front with no drawer open.
+            val stillOnList = { l: Look -> !l.modal && (!ChessWiki.changed(signature, l.signature) || ChessWiki.heroListVisible(l.words)) }
+            tap(
+                item.x,
+                item.y,
+                timing.tap,
+                id = "topic.${t.key}.card",
+                label = "Cờ: mở thẻ ${t.label}",
+                relative = true,
+                again = stillOnList
+            ) {
                 look(true) { l ->
                     if (!l.modal) {
                         l.discard()
@@ -1201,7 +1248,7 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
 
                             fun returnToCard(tries: Int) {
                                 if (tries >= 3) return fail("Không đóng được bảng tên quân cờ; đóng dấu X rồi Tiếp tục.")
-                                tap(.902, .081, timing.close, id = "detail.close", label = "Cờ: đóng chi tiết") {
+                                tap(.902, .081, timing.close, id = "detail.close", label = "Cờ: đóng chi tiết", again = { it.modal }) {
                                     look(false) { check ->
                                         val open = check.modal
                                         check.discard()
@@ -1215,7 +1262,9 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                             // This portrait was already saved in an earlier interrupted run.
                             verifiedPortraits[heroIndex] = actual
                             l.discard()
-                            tap(.902, .081, timing.close, id = "detail.close", label = "Cờ: đóng chi tiết") { collectHero(at, heroIndex) }
+                            tap(.902, .081, timing.close, id = "detail.close", label = "Cờ: đóng chi tiết", again = {
+                                it.modal
+                            }) { collectHero(at, heroIndex) }
                             return
                         }
                         if (kind != "tuong" && screen.seen("item:" + t.key + ":" + actual.id)) {
@@ -1593,7 +1642,7 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
         tries: Int = 0
     ) {
         if (tries >= 3) return fail("Không đóng được bảng chi tiết. Đóng dấu X bằng tay rồi bấm Tiếp tục.")
-        tap(.902, .081, timing.close, id = "detail.close", label = "Cờ: đóng chi tiết") {
+        tap(.902, .081, timing.close, id = "detail.close", label = "Cờ: đóng chi tiết", again = { it.modal }) {
             look(false) { l ->
                 val stillOpen = l.modal
                 l.discard()

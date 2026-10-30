@@ -3,6 +3,7 @@ package vn.ndang.aovcollector
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -42,6 +43,20 @@ class GameEntryPolicyTest {
         }
         for (mode in listOf("all", "pick", "ranking", "board", "chess", "pro-builds", "custom", "single")) {
             assertEquals(GameEntryPolicy.Destination.CURRENT, GameEntryPolicy.destination(macro(mode), 1))
+        }
+    }
+
+    @Test fun onlyStepsThatFindTheirOwnWayResumeFromTheLobby() {
+        val chess = Macro(BuiltInMacros.chess(ChessWiki.Options(setOf("tat-ca-quan-co"), openGame = true)))
+        val at = (0 until chess.steps.length()).first { chess.steps.getJSONObject(it).optString("type") == "chess" }
+        assertTrue(GameEntryPolicy.resumesFromLobby(chess, at))
+        // A wait before the step still resumes it.
+        assertTrue(GameEntryPolicy.resumesFromLobby(chess, at - 1))
+        assertEquals(GameEntryPolicy.Destination.CURRENT, GameEntryPolicy.destination(chess, at))
+        assertTrue(GameEntryPolicy.resumesFromLobby(Macro(BuiltInMacros.proBuilds()), 0))
+        for (mode in listOf("custom", "single")) {
+            val taps = macro(mode, JSONObject().put("type", "tap").put("x", .5).put("y", .5))
+            assertFalse(GameEntryPolicy.resumesFromLobby(taps, 0))
         }
     }
 

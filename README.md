@@ -1,4 +1,18 @@
-# AOV Mobile Collector — v0.13.35
+# AOV Mobile Collector — v0.13.36
+
+## v0.13.36: Cờ không dừng vì một cú chạm hụt, Tiếp tục chỉ đúng cách khi màn không có UID
+
+**Cú chạm bị Android từ chối:**
+- Trước đây app chỉ ghi "Không chạm được màn hình." mà không biết vì sao. Giờ mỗi cú chạm thất bại được ghi vào nhật ký lượt kèm lý do thật: rơi vào bảng nổi, Android hủy cú chạm (tay chạm màn hình, thông báo hoặc cử chỉ hệ thống chen vào), Android không nhận…
+- Ở Cờ Liên Quân, khi chạm **mở thẻ quân cờ** hoặc chạm **dấu X đóng chi tiết** bị từ chối, app chờ 2 giây và xem lại màn hình:
+  - Vẫn đúng danh sách và chưa mở chi tiết (hoặc chi tiết vẫn còn mở khi cần đóng): chạm lại **một lần**.
+  - Cú chạm thật ra đã có tác dụng (chi tiết đã mở hoặc đã đóng): không chạm lại, làm tiếp. Nhờ vậy dấu X không bao giờ bị chạm lần nữa lên danh sách, nơi có nút sắp xếp "Giá từ thấp đến cao".
+  - Lần thứ hai vẫn bị từ chối: tạm dừng với "Không chạm được màn hình sau 2 lần", chưa đánh dấu tướng đó là xong.
+
+**Bấm Tiếp tục khi đang ở Bách khoa Cờ:**
+- Màn Bách khoa không hiện UID, nên app không thể kiểm tra tài khoản ở đó và vẫn không tự thao tác gì.
+- Trước đây câu báo khuyên "tạo lượt mới". Giờ, với các bước tự tìm đường từ sảnh (Cờ Liên Quân, Chiến khu, Bảng phân bậc, Đề cử Pro), câu báo hướng dẫn: bấm mũi tên quay lại của game đến sảnh chính (có UID ở cuối màn hình) rồi bấm Tiếp tục. Bước sẽ tự đi lại từ sảnh và bỏ qua phần đã lưu.
+- UID khác tài khoản test vẫn bị chặn như cũ. Macro tọa độ giữ nguyên câu báo cũ.
 
 ## v0.13.35: không còn dừng vô lý ở ảnh chiêu Cờ, Đề cử Pro bấm được Dùng combo
 

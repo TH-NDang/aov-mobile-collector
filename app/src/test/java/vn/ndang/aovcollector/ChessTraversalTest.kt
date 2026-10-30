@@ -79,6 +79,10 @@ class ChessTraversalTest {
         /** Native skills that never get steady enough to long-press, by how many attempts. */
         val untouchedNative: Map<String, Int> = emptyMap(),
         val interruptAfterNative: Boolean = false,
+        /** Taps Android refuses, by "open:<hero>" or "close:<hero>", and how many times. */
+        refusedTaps: Map<String, Int> = emptyMap(),
+        /** A refused tap that still reached the game, like a cancel after the press. */
+        val refusedTapsLand: Boolean = false,
         val failedDetailPage: Int? = null,
         val failCheckpoint: Boolean = false,
         val savedDetailSignatures: Map<String, IntArray> = emptyMap(),
@@ -116,6 +120,7 @@ class ChessTraversalTest {
         val nativeSkills = ArrayList<String>()
         val nativeOperationKeys = ArrayList<String>()
         private val untouchedLeft = untouchedNative.toMutableMap()
+        private val refusalsLeft = refusedTaps.toMutableMap()
         val detailSignatures = savedDetailSignatures.mapValues { it.value.copyOf() }.toMutableMap()
         val notes = ArrayList<String>()
         val progress = ArrayList<String>()
@@ -222,6 +227,13 @@ class ChessTraversalTest {
         }
 
         override fun tap(x: Double, y: Double, then: (Boolean) -> Unit) = post {
+            val key = if (x > .87 && y < .13) "close:${opened ?: "none"}" else cardAt(x, y, offset)?.let { "open:${names[it]}" }
+            val refused = key != null && (refusalsLeft[key] ?: 0) > 0
+            if (refused) {
+                refusalsLeft[key!!] = refusalsLeft.getValue(key) - 1
+                events.add("refused:$key")
+                if (!refusedTapsLand) return@post then(false)
+            }
             if (x > .87 && y < .13) {
                 closeTaps++
                 events.add("close:${opened ?: "none"}")
@@ -240,7 +252,7 @@ class ChessTraversalTest {
                     drawerDrags = 0
                 }
             }
-            then(true)
+            then(!refused)
         }
 
         override fun swipe(x: Double, y: Double, toX: Double, toY: Double, then: (Boolean) -> Unit) = post {
@@ -810,6 +822,38 @@ class ChessTraversalTest {
         assertEquals(2, settles.nativeSkills.size)
         assertTrue("native:chieu-quan-co:hayate:loaded-skill" in settles.ledger)
         assertTrue(itemId("Hayate") in settles.ledger)
+    }
+
+    @Test fun aRefusedCardTapIsSentAgainOnceWhileTheSameListIsStillInFront() {
+        val run = HeroScreen(names = NAMES.take(5), refusedTaps = mapOf("open:Raz" to 1))
+        assertTrue(run.run() is ChessWikiReader.Outcome.Done)
+        assertEquals(run.names.indices.toList(), run.clicked.map { it.index })
+        assertEquals(1, run.events.count { it == "refused:open:Raz" })
+        assertTrue(run.notes.any { "chạm chưa thành công" in it })
+        assertTrue(run.names.all { itemId(it) in run.ledger })
+    }
+
+    @Test fun aCardTapRefusedTwiceStopsWithoutMarkingTheHero() {
+        val run = HeroScreen(names = NAMES.take(5), refusedTaps = mapOf("open:Raz" to 2))
+        val outcome = run.run()
+        assertTrue(outcome is ChessWikiReader.Outcome.Failed)
+        assertTrue((outcome as ChessWikiReader.Outcome.Failed).reason.startsWith("Không chạm được màn hình sau 2 lần"))
+        assertEquals(2, run.events.count { it == "refused:open:Raz" })
+        assertFalse(itemId("Raz") in run.ledger)
+        assertTrue(itemId("Hayate") in run.ledger)
+    }
+
+    @Test fun aRefusedCloseThatStillClosedTheDrawerIsNotTappedAgainOnTheList() {
+        val run = HeroScreen(names = NAMES.take(5), refusedTaps = mapOf("close:Raz" to 1), refusedTapsLand = true)
+        assertTrue(run.run() is ChessWikiReader.Outcome.Done)
+        assertEquals(1, run.events.count { it == "close:Raz" })
+        assertFalse("No X tap may reach the list's sort menu", run.events.contains("close:none"))
+        assertTrue(run.names.all { itemId(it) in run.ledger })
+        // Refused without reaching the game: the drawer is still open, so X is sent again once.
+        val open = HeroScreen(names = NAMES.take(5), refusedTaps = mapOf("close:Raz" to 1))
+        assertTrue(open.run() is ChessWikiReader.Outcome.Done)
+        assertEquals(listOf("refused:close:Raz", "close:Raz"), open.events.filter { it.endsWith("close:Raz") })
+        assertFalse(open.events.contains("close:none"))
     }
 
     @Test fun deferredNativeReceiptsDoNotStopTheRemainingHeroesOrClaimVerifiedPhotos() {

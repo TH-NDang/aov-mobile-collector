@@ -149,7 +149,10 @@ class CollectorService : AccessibilityService() {
     private fun calibratedTouch(action: CalibrationAction, target: GameScreens.Word?, then: (Boolean) -> Unit) {
         if (calibrationEditor != null || !running) return then(false)
         val points = calibrationStore.resolve(calibrationProfile(), action)
-        if (points.isEmpty()) return then(false)
+        if (points.isEmpty()) {
+            note(GestureFailureText.note(action.label, "invalid-points", 0))
+            return then(false)
+        }
         touchGameTarget(calibrationGestures(action, points), points.size == 1, target, action.label, then, action = action)
     }
 
@@ -4137,7 +4140,8 @@ class CollectorService : AccessibilityService() {
         enterGame(
             destination != GameEntryPolicy.Destination.LIST,
             { !finished && running && token == generation },
-            preserveScreen = destination == GameEntryPolicy.Destination.CURRENT
+            preserveScreen = destination == GameEntryPolicy.Destination.CURRENT,
+            resumeFromLobby = GameEntryPolicy.resumesFromLobby(m, index)
         ) { outcome ->
             if (finished || !running || token != generation) return@enterGame
             finished = true
@@ -4814,8 +4818,10 @@ class CollectorService : AccessibilityService() {
         }
 
         var acceptedParts = 0
+        var attempts = 0
 
         fun refuse(reason: String, detail: String = "") {
+            if (!finished && running) note(GestureFailureText.note(label, reason, attempts))
             onFailure?.invoke(GestureFailure(reason, acceptedParts, detail))
             done(false)
         }
@@ -4835,6 +4841,7 @@ class CollectorService : AccessibilityService() {
         }
 
         fun send(attempt: Int) {
+            attempts = attempt + 1
             if (!ready()) return
             swallowed = false
             if (debugSession == debugGeneration) gestureDebug?.show(gestures, tap, target, label)
@@ -5505,6 +5512,7 @@ class CollectorService : AccessibilityService() {
         calibrationOnly: Boolean = false,
         preserveScreen: Boolean = false,
         eventAccount: EventInviteAccounts.Secret? = null,
+        resumeFromLobby: Boolean = false,
         finish: (GameEntry.Outcome) -> Unit
     ) {
         val stamp = "%04d".format(index + 1)
@@ -5716,6 +5724,7 @@ class CollectorService : AccessibilityService() {
             preserveScreen = preserveScreen,
             readOnlyAccount = calibrationOnly,
             forceFreshLogin = eventAccount != null,
+            resumeFromLobby = resumeFromLobby,
             finish = finish
         ).start()
     }
