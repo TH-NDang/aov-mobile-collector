@@ -5169,6 +5169,12 @@ class CollectorService : AccessibilityService() {
                                 CrashLog.record(this@CollectorService, "Không đọc được hàng chiêu", e)
                                 null
                             }
+                            val text = try {
+                                SkillDescription.read(b.width, b.height) { y, line -> b.getPixels(line, 0, b.width, 0, y, b.width, 1) }
+                            } catch (e: Throwable) {
+                                CrashLog.record(this@CollectorService, "Không đọc được khung mô tả chiêu", e)
+                                null
+                            }
                             handler.post {
                                 if (read == null) {
                                     b.recycle()
@@ -5176,6 +5182,7 @@ class CollectorService : AccessibilityService() {
                                 } else {
                                     then(object : SkillReader.Look {
                                         override val row: SkillRow.Row = read
+                                        override val description = text
 
                                         override fun done(keep: String?) {
                                             if (keep !=

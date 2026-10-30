@@ -1,4 +1,16 @@
-# AOV Mobile Collector — v0.13.36
+# AOV Mobile Collector — v0.13.37
+
+## v0.13.37: Lấy thông tin tướng chụp đủ mô tả chiêu dài
+
+Một số chiêu (ví dụ chiêu 2 "Gắn Ác Duyên" của Dyadia) có mô tả ở tab **Chi tiết** dài hơn khung chữ. Trước đây app chỉ chụp phần đầu.
+
+- Sau ảnh Chi tiết, app xem dòng cuối của khung chữ. Nếu chữ chạy sát đáy khung (còn tiếp), app kéo lên trong vùng chữ, giữ tay một chút trước khi nhấc để chữ dừng đúng chỗ, không trôi quá dòng.
+- Mỗi phần mới được lưu là `skill-2-detail-2`, `skill-2-detail-3`… cạnh ảnh `skill-2-detail` như cũ. Hai phần liền nhau trùng nhau một đến hai dòng để đọc nối được.
+- App dừng cuộn khi một lần kéo không làm chữ đổi nữa (đã hết), và tối đa 5 lần cuộn mỗi chiêu.
+- Chiêu có mô tả ngắn không bị kéo; mỗi chiêu chỉ tốn thêm một lần chụp màn hình để kiểm tra (khoảng nửa giây).
+- Nếu Android từ chối cú kéo, app giữ ảnh đã chụp, ghi nhật ký và làm tiếp, không dừng lượt.
+- Cú kéo có trong **Chỉnh từng bước** ("Tướng: cuộn mô tả chiêu") để chỉnh cho màn hình khác.
+- Vị trí khung chữ được đo trên ảnh 2400×1080 của máy bạn. Tab Tóm tắt chưa được cuộn.
 
 ## v0.13.36: Cờ không dừng vì một cú chạm hụt, Tiếp tục chỉ đúng cách khi màn không có UID
 

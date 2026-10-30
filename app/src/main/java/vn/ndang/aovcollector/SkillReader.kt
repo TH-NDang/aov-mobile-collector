@@ -7,7 +7,8 @@ package vn.ndang.aovcollector
  * unit tests run this exact logic on scripted screens.
  *
  * Shots are named after the slot: passive, skill-1… for the first form; form-2-passive, form-2-skill-3… for an
- * icon a later form changed, with the skill row of that form kept as form-2-icons.
+ * icon a later form changed, with the skill row of that form kept as form-2-icons. A detail text longer than its
+ * box is scrolled and each new part kept as skill-2-detail-2, skill-2-detail-3… ([SkillDescription]).
  *
  * [known] is the first form an earlier, interrupted try of the same step saw: the page may have been left on
  * another form, which would otherwise be taken for the first.
@@ -32,6 +33,9 @@ class SkillReader(
     interface Look {
         val row: SkillRow.Row
 
+        /** The open skill's detail text box, or null when it was not read. */
+        val description: SkillDescription.Reading? get() = null
+
         fun done(keep: String?)
     }
 
@@ -43,7 +47,13 @@ class SkillReader(
 
         fun tap(x: Double, y: Double, then: (Boolean) -> Unit)
 
-        fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = tap(action.points[0].x, action.points[0].y, then)
+        fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = if (action.points.size == 1) {
+            tap(action.points[0].x, action.points[0].y, then)
+        } else {
+            swipe(action.points[0].x, action.points[0].y, action.points[1].x, action.points[1].y, then)
+        }
+
+        fun swipe(x: Double, y: Double, toX: Double, toY: Double, then: (Boolean) -> Unit) = then(false)
 
         /** Takes and keeps a screenshot named [name]. */
         fun shot(name: String, then: (Boolean) -> Unit)
@@ -63,6 +73,21 @@ class SkillReader(
         /** Most heroes have two forms; a few cycle through three. */
         const val MAX_FORMS = 4
 
+        /** The longest skill texts take two or three boxes; more means the text is not moving as read. */
+        const val MAX_DESCRIPTION_PARTS = 6
+
+        /** Up inside the detail text, held still before lifting so the text stops where the finger does. */
+        val SCROLL = CalibrationAction(
+            "skills.v1.description.scroll",
+            "Tướng: cuộn mô tả chiêu",
+            listOf(
+                CalibrationPoint(SkillDescription.SCROLL_X, SkillDescription.SCROLL_FROM),
+                CalibrationPoint(SkillDescription.SCROLL_X, SkillDescription.SCROLL_TO)
+            ),
+            durationMs = 450,
+            holdMs = 250
+        )
+
         /** Empty space on the hero page, which closes a skill or attribute panel. */
         const val CLOSE_X = .60
         const val CLOSE_Y = .82
@@ -77,7 +102,8 @@ class SkillReader(
         fun seconds(o: Options, icons: Int = 4): Double {
             val settle = if (o.fast) .6 else .9
             val tab = if (o.fast) .45 else .9
-            val icon = .28 + settle + (if (o.detailOnly) 0.0 else .28 + tab + .45) + .28 + tab + .45
+            // The detail tab is read once more to see whether its text runs past the box.
+            val icon = .28 + settle + (if (o.detailOnly) 0.0 else .28 + tab + .45) + .28 + tab + .45 + .45
             // The panel closes after every icon, or only after the last one; reading the row takes a screenshot.
             return icons * icon + (if (o.directSkills) 1 else icons) * (.28 + settle) + .6
         }
@@ -118,6 +144,12 @@ class SkillReader(
         screen.calibrated(CalibrationAction("skills.v1.$id", label, listOf(CalibrationPoint(x, y)), relative)) { ok ->
             if (!ok) fail("Không chạm được màn hình tướng") else screen.later(wait, then)
         }
+    }
+
+    /** A look that may come back empty: the extra description reads never fail the step. */
+    private fun peek(then: (Look?) -> Unit) {
+        if (!screen.alive) return
+        screen.look { l -> if (!screen.alive) l?.done(null) else then(l) }
     }
 
     /** A failed screenshot is tried once more; Android sometimes refuses one right after a tap. */
@@ -181,12 +213,14 @@ class SkillReader(
                 val detail = {
                     tap(DETAIL_X, TAB_Y, tabWait, "detail.tab", "Tướng: Chi tiết chiêu") {
                         shot("$name-detail") {
-                            if (options.directSkills &&
-                                !last
-                            ) {
-                                one(k + 1)
-                            } else {
-                                tap(CLOSE_X, CLOSE_Y, settle, "detail.close", "Tướng: đóng chiêu") { one(k + 1) }
+                            rest(name) {
+                                if (options.directSkills &&
+                                    !last
+                                ) {
+                                    one(k + 1)
+                                } else {
+                                    tap(CLOSE_X, CLOSE_Y, settle, "detail.close", "Tướng: đóng chiêu") { one(k + 1) }
+                                }
                             }
                         }
                     }
@@ -201,6 +235,45 @@ class SkillReader(
             }
         }
         one(0)
+    }
+
+    /**
+     * When the detail text of [name] runs down to the bottom of its box, scrolls it and keeps each part that moved,
+     * as [name]-detail-2, -3…, until a scroll leaves it where it was. A refused scroll keeps what was taken and goes on.
+     */
+    private fun rest(name: String, then: () -> Unit) = peek { first ->
+        val box = first?.description
+        first?.done(null)
+        if (box == null || !box.reachesBottom) return@peek then()
+        screen.note("Mô tả $name dài hơn khung; cuộn để chụp phần còn lại")
+
+        fun part(n: Int, before: IntArray) {
+            if (n > MAX_DESCRIPTION_PARTS) {
+                screen.note("Mô tả $name vẫn còn sau ${MAX_DESCRIPTION_PARTS - 1} lần cuộn; dừng cuộn")
+                return then()
+            }
+            screen.calibrated(SCROLL) { ok ->
+                if (!screen.alive) return@calibrated
+                if (!ok) {
+                    screen.note("Không cuộn được mô tả $name; giữ ${n - 1} ảnh chi tiết đã chụp")
+                    return@calibrated then()
+                }
+                screen.later(settle) {
+                    peek { l ->
+                        val now = l?.description
+                        if (l == null || now == null || !SkillDescription.changed(before, now.signature)) {
+                            l?.done(null)
+                            if (n > 2) screen.note("Mô tả $name: ${n - 1} ảnh chi tiết")
+                            then()
+                        } else {
+                            l.done("$name-detail-$n")
+                            if (now.reachesBottom) part(n + 1, now.signature) else then()
+                        }
+                    }
+                }
+            }
+        }
+        part(2, box.signature)
     }
 
     /**

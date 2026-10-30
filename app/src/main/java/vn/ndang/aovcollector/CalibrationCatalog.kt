@@ -245,6 +245,11 @@ internal object CalibrationCatalog {
             SkillReader.CLOSE_X,
             SkillReader.CLOSE_Y
         ),
+        CalibrationStep(
+            SkillReader.SCROLL.label,
+            "Mở tab Chi tiết của một chiêu có mô tả dài; kéo lên trong vùng chữ mô tả, tránh nút Chú thích.",
+            SkillReader.SCROLL
+        ),
         tap(
             "skills.v1.form.swap",
             "Tướng: đổi dạng",

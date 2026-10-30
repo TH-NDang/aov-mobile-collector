@@ -104,8 +104,14 @@ class SkillsTest {
         var panel: Boolean = false,
         var deaf: Int = 0,
         var form: Int = 0,
-        val stopAfter: Int = Int.MAX_VALUE
+        val stopAfter: Int = Int.MAX_VALUE,
+        /** Icons whose detail text takes this many boxes; the others fit in one. */
+        val longText: Map<Int, Int> = emptyMap(),
+        val refuseScroll: Boolean = false
     ) : SkillReader.Screen {
+        private var open = -1
+        private var tab = ""
+        private var scrolled = 0
         var stopped = false
         val taps = ArrayList<String>()
         val shots = ArrayList<String>()
@@ -116,8 +122,15 @@ class SkillsTest {
 
         override fun look(then: (SkillReader.Look?) -> Unit) {
             val shown = if (panel) SkillRow.Row(null, false, emptyList()) else forms[form]
+            val parts = longText[open] ?: 1
+            val text = if (panel && tab == "detail") {
+                SkillDescription.Reading(parts > 1, IntArray(288) { 30 + open * 40 + scrolled * 25 })
+            } else {
+                null
+            }
             then(object : SkillReader.Look {
                 override val row = shown
+                override val description = text
 
                 override fun done(keep: String?) {
                     if (keep != null) kept += keep
@@ -135,13 +148,25 @@ class SkillsTest {
                     panel = false
                     "close"
                 }
-                y == SkillReader.TAB_Y -> if (x == SkillReader.SUMMARY_X) "summary" else "detail"
+                y == SkillReader.TAB_Y -> (if (x == SkillReader.SUMMARY_X) "summary" else "detail").also { tab = it }
                 else -> {
                     panel = true
-                    "icon ${(forms[form].centres ?: SkillRow.FOUR).indexOf(x)}"
+                    open = (forms[form].centres ?: SkillRow.FOUR).indexOf(x)
+                    tab = ""
+                    scrolled = 0
+                    "icon $open"
                 }
             }
             taps += what
+            then(true)
+        }
+
+        override fun swipe(x: Double, y: Double, toX: Double, toY: Double, then: (Boolean) -> Unit) {
+            assertEquals(SkillDescription.SCROLL_X, x, 0.0)
+            assertTrue("Scrolls the text up, inside its box", y > toY && toY > SkillDescription.TOP && y < SkillDescription.BOTTOM)
+            taps += "scroll"
+            if (refuseScroll) return then(false)
+            scrolled = minOf(scrolled + 1, (longText[open] ?: 1) - 1)
             then(true)
         }
 
@@ -177,6 +202,45 @@ class SkillsTest {
         assertEquals(listOf("icon 0", "summary", "detail", "close", "icon 1", "summary", "detail", "close"), page.taps.take(8))
         assertTrue(page.taps.none { it == "swap" })
         assertTrue((page.outcome as SkillReader.Outcome.Done).summary.startsWith("4 ô"))
+    }
+
+    @Test fun aLongSkillTextIsScrolledAndEachNewPartKept() {
+        val page = Page(listOf(row(1, 2, 3, 4)), longText = mapOf(2 to 3)).run()
+        assertTrue(page.outcome is SkillReader.Outcome.Done)
+        // The usual shots, plus the two further parts of skill-2's detail text.
+        assertEquals(8, page.shots.size)
+        assertEquals(listOf("skill-2-detail-2", "skill-2-detail-3"), page.kept)
+        // Two scrolls move the text, a third leaves it at its end.
+        assertEquals(3, page.taps.count { it == "scroll" })
+        val skill2 = page.taps.subList(page.taps.indexOf("icon 2"), page.taps.indexOf("icon 3"))
+        assertEquals(listOf("icon 2", "summary", "detail", "scroll", "scroll", "scroll", "close"), skill2)
+        assertTrue(page.notes.any { it.startsWith("Mô tả skill-2 dài hơn khung") })
+    }
+
+    @Test fun shortSkillTextsAreNeverScrolled() {
+        val page = Page(listOf(row(1, 2, 3, 4, swap = true), row(1, 2, 3, 9, swap = true))).run(SkillReader.Options(detailOnly = true))
+        assertTrue(page.taps.none { it == "scroll" })
+        assertEquals(listOf("form-2-icons"), page.kept)
+    }
+
+    @Test fun aRefusedScrollKeepsWhatWasTakenAndGoesOn() {
+        val page = Page(listOf(row(1, 2, 3, 4)), longText = mapOf(1 to 2), refuseScroll = true).run(SkillReader.Options(detailOnly = true))
+        assertTrue(page.outcome is SkillReader.Outcome.Done)
+        assertEquals(4, page.shots.size)
+        assertTrue(page.kept.isEmpty())
+        assertEquals(1, page.taps.count { it == "scroll" })
+        assertTrue(page.notes.any { it.startsWith("Không cuộn được mô tả skill-1") })
+    }
+
+    @Test fun directSkillsScrollALongTextBeforeTheNextIcon() {
+        val page = Page(
+            listOf(row(1, 2, 3, 4, 5)),
+            longText = mapOf(3 to 2)
+        ).run(SkillReader.Options(detailOnly = true, directSkills = true))
+        assertEquals(listOf("skill-3-detail-2"), page.kept)
+        val skill3 = page.taps.subList(page.taps.indexOf("icon 3"), page.taps.indexOf("icon 4"))
+        assertEquals(listOf("icon 3", "detail", "scroll", "scroll"), skill3)
+        assertEquals("close", page.taps.last())
     }
 
     @Test fun qiTakesOnlyTheChangedSkillOfHerSecondForm() {

@@ -158,7 +158,8 @@ class CalibrationCatalogTest {
     @Test fun heroModesOfferEverySkillSlotWithoutGuessingItsPosition() {
         val all = CalibrationCatalog.steps(builtin("all"))
         for (mode in listOf("pick", "single")) assertEquals(all, CalibrationCatalog.steps(builtin(mode)))
-        assertEquals(17, all.size)
+        assertEquals(18, all.size)
+        assertEquals(SkillReader.SCROLL, all.single { it.action.id == "skills.v1.description.scroll" }.action)
         for (count in listOf(4, 5)) {
             for (slot in 0 until count) {
                 val step = all.single { it.action.id == "skills.v1.row.$count.slot.$slot" }
