@@ -216,6 +216,16 @@ object ChessWiki {
     fun safeName(text: String) = HeroNames.slug(text).take(45).ifEmpty { "chua-ro-ten" }
 
     /**
+     * OCR of a heading can lose a long name's last letters ("Florentin" for Florentino). A cut name still has to
+     * start the expected one, keep five letters and miss at most two, so "Omen" never passes for Omega.
+     */
+    fun sameHeroTitle(read: String, expected: String): Boolean {
+        val a = safeName(read)
+        val b = safeName(expected)
+        return a == b || (a.length >= 5 && b.length - a.length in 1..2 && b.startsWith(a))
+    }
+
+    /**
      * "Chọn chế độ" sits immediately to the right of "N.vụ" on the landscape lobby toolbar.
      * Screenshot 2048x921: mode icon center ~= (0.635, 0.895), quest icon ~= (0.515, 0.90).
      * Prefer the text's own horizontal position, but tap the icon vertically rather than its
@@ -369,7 +379,7 @@ object ChessWiki {
             }.toList()
         if (expected != null) {
             candidates.firstOrNull {
-                safeName(it.second) == safeName(expected)
+                sameHeroTitle(it.second, expected)
             }?.let { return it.second }
         }
         return candidates.minWithOrNull(

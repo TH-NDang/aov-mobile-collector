@@ -19,7 +19,7 @@ object NativeSaveEvidence {
      * A contradictory readable title always vetoes the visual fallback.
      */
     fun preservedDetail(expected: String, title: String?, before: IntArray?, after: IntArray): Boolean {
-        if (title != null && headingLike(title)) return ChessWiki.safeName(title) == ChessWiki.safeName(expected)
+        if (title != null && headingLike(title)) return ChessWiki.sameHeroTitle(title, expected)
         return before != null && before.size >= 512 && !ChessWiki.changed(before, after)
     }
 

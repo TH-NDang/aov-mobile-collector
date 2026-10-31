@@ -1,4 +1,11 @@
-# AOV Mobile Collector — v0.13.37
+# AOV Mobile Collector — v0.13.38
+
+## v0.13.38: Cờ không dừng ở tướng tên dài bị đọc cụt
+
+Lượt Cờ dừng ở Florentino: trước khi bấm giữ ảnh chiêu, app đọc tiêu đề thành "Florentin" (mất chữ cuối). App chỉ chấp nhận tên khớp từng chữ, nên coi đây không phải màn của Florentino, chờ 30 giây hai lần rồi tạm dừng.
+
+- Giờ tiêu đề vẫn được nhận là của tướng đang mở khi chỉ mất tối đa **2 chữ cuối** và còn ít nhất 5 chữ ("Florentin", "Wonder Wom").
+- Tên của tướng khác vẫn chặn như cũ: "Raz" trên màn Lumburr, "Omen" với Omega, "Floren" (mất quá nhiều), "Florentinos" (dài hơn tên).
 
 ## v0.13.37: Lấy thông tin tướng chụp đủ mô tả chiêu dài
 

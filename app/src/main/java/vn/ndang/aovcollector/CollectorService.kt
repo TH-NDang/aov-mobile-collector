@@ -3243,7 +3243,7 @@ class CollectorService : AccessibilityService() {
                                             detailVerified = title != null &&
                                                 (
                                                     !preserveDetail ||
-                                                        ChessWiki.safeName(title) == ChessWiki.safeName(expected)
+                                                        ChessWiki.sameHeroTitle(title, expected)
                                                     )
                                             if (preserveDetail && !detailVerified) {
                                                 val precise = GameText.chessHeroTitle(image)

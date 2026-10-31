@@ -65,6 +65,26 @@ class NativeSaveEvidenceTest {
         assertFalse(NativeSaveEvidence.headingLike("Hayate liên tục phóng"))
     }
 
+    @Test fun aLongNameCutByOcrStillMatchesItsOwnHeroOnly() {
+        val before = IntArray(2560) { (it * 13) % 240 }
+        val moved = IntArray(2560) { (it * 31) % 240 }
+        // The user's run: "Florentin" read twice on Florentino's drawer, which then never counted as verified.
+        assertTrue(NativeSaveEvidence.preservedDetail("florentino", "Florentin", before, moved))
+        assertTrue(ChessWiki.sameHeroTitle("Wonder Wom", "wonder-woman"))
+        assertTrue(ChessWiki.sameHeroTitle("Lumburr", "lumburr"))
+        // Too short, too much cut, longer than the name, or another hero: still a contradiction.
+        assertFalse(NativeSaveEvidence.preservedDetail("florentino", "Floren", before, before.copyOf()))
+        assertFalse(ChessWiki.sameHeroTitle("Omen", "omega"))
+        assertFalse(ChessWiki.sameHeroTitle("Ra", "raz"))
+        assertFalse(ChessWiki.sameHeroTitle("Florentinos", "florentino"))
+        assertFalse(ChessWiki.sameHeroTitle("Raz", "lumburr"))
+        val words = listOf(
+            GameScreens.Word("Hồi kiếm", .40, .30, .48, .33),
+            GameScreens.Word("Florentin", .42, .23, .56, .26)
+        )
+        assertEquals("Florentin", ChessWiki.modalHeroTitle(words, "florentino"))
+    }
+
     @Test fun changedDrawerMissingReferenceAndSparseEvidenceNeverAuthorizeContinuation() {
         val before = IntArray(2560) { (it * 13) % 240 }
         val moved = IntArray(2560) { (it * 31) % 240 }
