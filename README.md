@@ -1,4 +1,12 @@
-# AOV Mobile Collector — v0.13.42
+# AOV Mobile Collector — v0.13.43
+
+## v0.13.43: đọc UID trên nền sảnh động
+
+Nền sảnh mới là ảnh động: phần sáng của nền sau dòng UID đổi theo từng khung, nên một ngưỡng sáng duy nhất để tách chữ khỏi nền có lúc làm mất hoặc đổi một chữ số.
+
+- Khi chưa đọc ra đúng UID test, app đọc lại cùng ảnh với vài ngưỡng sáng khác và một vùng cắt hẹp hơn quanh chữ (tối đa thêm 3 lần đọc). Chỉ một kết quả **trùng khớp hoàn toàn** UID test mới được nhận.
+- Mỗi lần nhìn sảnh là một khung mới của nền động, và app nhìn tối đa 3 lần trước khi mở hồ sơ, nên thường xác nhận được ngay ở sảnh.
+- Vẫn giữ bảo vệ của v0.13.42: đọc ra số khác không bao giờ làm đăng xuất, mà phải kiểm tra trong hộp Xem UID.
 
 ## v0.13.42: không đăng xuất vì đọc nhầm UID ở sảnh mới
 

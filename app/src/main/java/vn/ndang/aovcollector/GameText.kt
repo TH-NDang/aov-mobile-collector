@@ -252,12 +252,30 @@ object GameText {
 
     /**
      * The account UID the game prints faintly at the bottom centre of most screens ("UID: 1751448330…"), or null.
-     * The line is small and dim: it is read cut out, three times larger, as black on white.
+     * The line is small and dim: it is read cut out, three times larger, as black on white. The lobby's background
+     * moves, so one cut-off between dim text and bright art can fail: with an [expected] UID, a few cut-offs and a
+     * tighter cut are tried until one reads exactly it. Only an exact match is taken from them; anything else is
+     * what the first reading gave, and never enough to log out ([GameEntry] checks it in the profile).
      */
-    fun uid(screen: Bitmap): String? {
-        val x0 = (.30 * screen.width).toInt()
+    fun uid(screen: Bitmap, expected: String? = null): String? {
+        val first = uidRead(screen, .30, .40, .995, .5)
+        if (expected == null || first == expected) return first
+        for ((x, w, percentile, cut) in listOf(
+            Quad(.30, .40, .995, .35),
+            Quad(.38, .24, .98, .5),
+            Quad(.38, .24, .98, .35)
+        )) {
+            if (uidRead(screen, x, w, percentile, cut) == expected) return expected
+        }
+        return first
+    }
+
+    private data class Quad(val x: Double, val w: Double, val percentile: Double, val cut: Double)
+
+    private fun uidRead(screen: Bitmap, left: Double, width: Double, percentile: Double, cut: Double): String? {
+        val x0 = (left * screen.width).toInt()
         val y0 = (.955 * screen.height).toInt()
-        val w = (.40 * screen.width).toInt()
+        val w = (width * screen.width).toInt()
         val h = screen.height - y0
         val pixels = IntArray(w * h)
         screen.getPixels(pixels, 0, w, x0, y0, w, h)
@@ -268,12 +286,12 @@ object GameText {
         val sorted = luma.sorted()
         val background = sorted[sorted.size / 2]
         val bright = sorted[
-            (sorted.size * .995).toInt().coerceAtMost(
+            (sorted.size * percentile).toInt().coerceAtMost(
                 sorted.size - 1
             )
         ]
         if (bright - background < 20) return null
-        val threshold = (background + bright) / 2
+        val threshold = background + ((bright - background) * cut).toInt()
         val ink = Bitmap.createBitmap(
             IntArray(pixels.size) {
                 if (luma[it] >

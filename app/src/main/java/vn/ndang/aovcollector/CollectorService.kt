@@ -5698,7 +5698,7 @@ class CollectorService : AccessibilityService() {
                                 // Logo screens are black: nothing to read.
                                 val text = if (wanted && pixels.signature.average() > 12) nodes + GameText.words(b) else nodes
                                 val number = if (uid && capturedPackage == GAME) {
-                                    GameText.uid(b)
+                                    GameText.uid(b, expected)
                                 } else {
                                     null
                                 }
