@@ -20,7 +20,7 @@
     </file>
     <file name="app/src/main/java/vn/ndang/aovcollector/GameEntry.kt">
         <error line="18" column="141" source="standard:max-line-length" />
-        <error line="319" column="17" source="standard:property-naming" />
+        <error line="338" column="17" source="standard:property-naming" />
     </file>
     <file name="app/src/main/java/vn/ndang/aovcollector/GamePhotoCleanupDialog.kt">
         <error line="131" column="141" source="standard:max-line-length" />

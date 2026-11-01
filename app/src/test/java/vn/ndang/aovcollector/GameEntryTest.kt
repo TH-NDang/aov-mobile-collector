@@ -667,9 +667,13 @@ class GameEntryTest {
                 words = listOf(word("Bạn có chắc muốn đăng xuất?", .5, .45), word("Hủy", .4, .7), word("Xác nhận", .6, .7))
             )
         val form = at(GameScreens.Kind.FORM, words = listOf(word("Mật khẩu", .1, .5), word("Quên mật khẩu?", .87, .62)))
+        // The lobby line only confirms: a different number there is checked in the profile's UID box first.
         val game = Script(
             listOf(
-                at(lobby, uid = other), at(lobby, uid = other), settings, confirm, at(GameScreens.Kind.OTHER, look = 5),
+                // A lobby already in front is read at once: three looks, then the profile.
+                at(lobby, uid = other), at(lobby, uid = other), at(lobby, uid = other),
+                profile, uidBox(other), profile, at(lobby, uid = other), at(lobby, uid = other),
+                settings, confirm, at(GameScreens.Kind.OTHER, look = 5),
                 at(
                     GameScreens.Kind.LOGIN,
                     tap = garena
@@ -680,7 +684,19 @@ class GameEntryTest {
             gameInFront = true
         )
         assertTrue(game.run() is GameEntry.Outcome.Ready)
-        assertEquals(listOf(GameScreens.SETTINGS_X to GameScreens.SETTINGS_Y, .12 to .86, .6 to .7, garena, heroes), game.taps)
+        assertEquals(
+            listOf(
+                GameScreens.AVATAR_X to GameScreens.AVATAR_Y,
+                .35 to .45,
+                .72 to .266,
+                GameScreens.SETTINGS_X to GameScreens.SETTINGS_Y,
+                .12 to .86,
+                .6 to .7,
+                garena,
+                heroes
+            ),
+            game.taps
+        )
         assertEquals(1, game.signIns)
         assertEquals(0, game.launches)
         assertEquals(0, game.quits)
@@ -688,10 +704,49 @@ class GameEntryTest {
         assertTrue(game.recorded.toString(), game.recorded.any { !it.startsWith("+") && it.contains("Garena") })
     }
 
+    private val profile = at(GameScreens.Kind.PROFILE, words = listOf(word("Thông tin kiện tướng", .21, .056), word("UID", .35, .45)))
+
+    private fun uidBox(uid: String) =
+        at(GameScreens.Kind.UID_DIALOG, .72 to .266, words = listOf(word("UID của bạn là", .5, .43), word(uid, .5, .5)))
+
+    @Test fun aMisreadLobbyUidOnANewBackgroundNeverLogsOut() {
+        // As on the new lobby: the faint line read with one digit changed, the profile's box shows the real UID.
+        val test = "1600000000000001"
+        val misread = "1600000000000007"
+        val game = Script(
+            listOf(
+                at(lobby, uid = misread), at(lobby, uid = misread), at(lobby, uid = misread), at(lobby, uid = misread),
+                profile, uidBox(test), profile, at(lobby, uid = misread), at(lobby, uid = misread), at(listed)
+            ),
+            uid = test
+        )
+        assertTrue(game.run() is GameEntry.Outcome.Ready)
+        assertEquals(listOf(GameScreens.AVATAR_X to GameScreens.AVATAR_Y, .35 to .45, .72 to .266, heroes), game.taps)
+        assertEquals(0, game.signIns)
+        // Even the large box misread a digit: stop and ask, never log the account out.
+        val unsure = Script(
+            listOf(
+                at(lobby, uid = misread),
+                at(lobby, uid = misread),
+                at(lobby, uid = misread),
+                at(lobby, uid = misread),
+                profile,
+                uidBox(misread),
+                profile,
+                at(lobby, uid = misread)
+            ),
+            uid = test
+        )
+        assertTrue(unsure.run() is GameEntry.Outcome.Failed)
+        assertTrue(unsure.taps.none { it == GameScreens.SETTINGS_X to GameScreens.SETTINGS_Y })
+        assertTrue(GameScreens.nearUid("160000000000000", test))
+        assertTrue(GameScreens.nearUid("1600000000000081", test))
+        assertTrue(!GameScreens.nearUid("17345555466552433", "17514483308299377"))
+    }
+
     @Test fun readsTheUidInTheProfileWhenTheLobbyLineIsUnreadable() {
         val test = "17514483308299377"
-        val profile = at(GameScreens.Kind.PROFILE, words = listOf(word("Thông tin kiện tướng", .21, .056), word("UID", .35, .45)))
-        val box = at(GameScreens.Kind.UID_DIALOG, .72 to .266, words = listOf(word("UID của bạn là", .5, .43), word(test, .5, .5)))
+        val box = uidBox(test)
         val game =
             Script(listOf(at(lobby), at(lobby), at(lobby), at(lobby), profile, box, profile, at(lobby), at(lobby), at(listed)), uid = test)
         assertTrue(game.run() is GameEntry.Outcome.Ready)
@@ -709,9 +764,21 @@ class GameEntryTest {
                 listOf(
                     at(lobby, uid = other),
                     at(lobby, uid = other),
+                    at(lobby, uid = other),
+                    at(lobby, uid = other),
+                    profile,
+                    uidBox(other),
+                    profile,
+                    at(lobby, uid = other),
+                    at(lobby, uid = other),
                     settings,
                     confirm,
                     at(GameScreens.Kind.LOGIN, tap = garena),
+                    at(lobby, uid = other),
+                    at(lobby, uid = other),
+                    profile,
+                    uidBox(other),
+                    profile,
                     at(lobby, uid = other),
                     at(lobby, uid = other)
                 ),

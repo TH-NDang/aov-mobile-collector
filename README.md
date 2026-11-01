@@ -1,4 +1,12 @@
-# AOV Mobile Collector — v0.13.41
+# AOV Mobile Collector — v0.13.42
+
+## v0.13.42: không đăng xuất vì đọc nhầm UID ở sảnh mới
+
+Game đổi nền sảnh. Dòng UID mờ ở đáy màn hình giờ dễ bị đọc nhầm một chữ số, và bản cũ coi mọi số khác UID đã lưu là tài khoản khác nên đi đăng xuất, dù tài khoản đúng.
+
+- Dòng UID ở sảnh giờ **chỉ dùng để xác nhận đúng tài khoản**. Đọc ra số khác thì app mở hồ sơ → **Xem UID** (chữ to, rõ) để kiểm tra, không đăng xuất ngay.
+- Chỉ đăng xuất khi hộp Xem UID cho thấy một UID **khác hẳn**. Số chỉ lệch 1–3 chữ số so với UID test được coi là đọc chưa rõ: app dừng và hỏi, không bao giờ đăng xuất vì nó.
+- Nhật ký ghi số đã đọc được ở sảnh và trong hộp Xem UID, để dễ xem lại.
 
 ## v0.13.41: Chiến khu không chọn nhầm tướng; Đề cử Pro chỉ chụp, đặt tên theo số
 

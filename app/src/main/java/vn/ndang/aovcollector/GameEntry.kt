@@ -123,6 +123,25 @@ object GameScreens {
     /** An account UID in [text]: 10–20 digits, spaces and separators removed. */
     fun uidIn(text: String): String? = Regex("\\d{10,20}").find(text.replace(Regex("[\\s.,]"), ""))?.value
 
+    /**
+     * [read] is [expected] with a digit or three lost, added or misread: OCR of the same UID, not another account.
+     * Two real accounts' UIDs of the same length almost always differ in more places.
+     */
+    fun nearUid(read: String, expected: String): Boolean {
+        if (read == expected || abs(read.length - expected.length) > 2) return read == expected
+        val d = IntArray(expected.length + 1) { it }
+        for (i in 1..read.length) {
+            var diagonal = d[0]
+            d[0] = i
+            for (j in 1..expected.length) {
+                val above = d[j]
+                d[j] = minOf(d[j] + 1, d[j - 1] + 1, diagonal + if (read[i - 1] == expected[j - 1]) 0 else 1)
+                diagonal = above
+            }
+        }
+        return d[expected.length] <= 3
+    }
+
     /** Lower case without accents, đ as d, letters and digits only: "Đ.KÝ SAU" is "dkysau". */
     fun plain(text: String) = Normalizer.normalize(
         text,
@@ -911,10 +930,15 @@ class GameEntry(
         val wrong = wrongUid
         if (wrong != null) return wrongAccount(s, wrong)
         if (!uidOk) {
-            val uid = reading.uid
+            // The faint line at the bottom of the lobby can only confirm the test account. A new lobby background can
+            // turn one of its digits into another, so a different number there is checked in the profile's large
+            // "Xem UID" box before anything is logged out.
+            val read = reading.uid
+            val uid = read?.takeIf { it == expectedUid }
+            if (read != null && uid == null && uidMisses == 0) screen.note("Sảnh: dòng UID đọc ra $read, khác UID test; kiểm tra lại")
             if (uid == null) {
                 if (++uidMisses < UID_LOOKS) {
-                    s.record("Sảnh: chưa đọc được UID ở cuối màn hình, xem lại")
+                    s.record("Sảnh: chưa đọc được đúng UID ở cuối màn hình, xem lại")
                     s.done(null)
                     return again(1200)
                 }
@@ -931,12 +955,11 @@ class GameEntry(
                 lobbySince = -1
                 return tap(
                     s,
-                    "Sảnh: không đọc được UID ở cuối màn hình, mở hồ sơ để xem",
+                    "Sảnh: chưa đọc được đúng UID ở cuối màn hình, mở hồ sơ để xem",
                     GameScreens.AVATAR_X to GameScreens.AVATAR_Y,
                     2500
                 )
             }
-            if (uid != expectedUid) return wrongAccount(s, uid)
             uidOk = true
             screen.note("UID $uid khớp tài khoản test")
         }
@@ -1111,11 +1134,15 @@ class GameEntry(
         val uid = reading.words.firstNotNullOfOrNull { GameScreens.uidIn(it.text) }
         if (phase == Phase.LOOKUP && uid != null) {
             phase = Phase.ENTER
-            if (uid == expectedUid) {
-                uidOk = true
-                screen.note("UID $uid khớp tài khoản test")
-            } else {
-                wrongUid = uid
+            when {
+                uid == expectedUid -> {
+                    uidOk = true
+                    screen.note("UID $uid khớp tài khoản test")
+                }
+                // Only a clearly different number logs out; one a few digits off is a misreading of the same account.
+                expectedUid != null && GameScreens.nearUid(uid, expectedUid) ->
+                    screen.note("Hộp Xem UID đọc ra $uid, gần giống UID test $expectedUid: coi là đọc chưa rõ, không đăng xuất")
+                else -> wrongUid = uid
             }
         }
         tap(s, "Hộp Xem UID${if (uid != null) " ($uid)" else ""}: bấm X", close, 1500)
