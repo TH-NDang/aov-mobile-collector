@@ -1,4 +1,17 @@
-# AOV Mobile Collector — v0.13.39
+# AOV Mobile Collector — v0.13.40
+
+## v0.13.40: thông báo không còn che ảnh hay nhận cú chạm
+
+**Luôn bật, cho mọi tác vụ:** khi có thông báo mới trong lúc chạy, app chờ banner thông báo ẩn rồi mới chụp màn hình hoặc chạm.
+- Banner hiện ở góc trên bên phải, đúng chỗ nút X đóng của nhiều màn trong game. Một cú chạm vào đó có thể mở thông báo và rời game.
+- Trên máy hiện banner trong danh sách cửa sổ: app chờ đến khi banner ẩn (thường vài giây). Máy khác: app chờ 6 giây sau mỗi thông báo.
+- Banner (cuộc gọi đang đổ chuông, thanh thông báo bị kéo xuống) còn che sau 30 giây: tạm dừng, không chạm vào đó.
+- Thông báo chạy ngầm (nhạc, tải xuống, tiến độ của app) và toast không làm app chờ.
+
+**Tùy chọn "Im lặng thông báo khi chạy"** (màn hình chính, dưới "Hiện vùng thao tác"):
+- Khi lượt chạy, app bật Không làm phiền riêng của app: cuộc gọi, người gọi lại, báo thức và âm thanh game vẫn bình thường. Các thông báo khác không kêu và không bật lên, vẫn nằm trong thanh thông báo.
+- Tạm dừng, kết thúc lượt, hay app bị tắt giữa chừng (khi mở lại) đều tắt chế độ này. Cài đặt Không làm phiền của bạn không bị đổi.
+- Lần đầu bật cần cấp quyền "Không làm phiền" cho AOV Collector trong Cài đặt; app mở sẵn trang đó.
 
 ## v0.13.39: tìm đúng thẻ Cờ Liên quân trong hàng chế độ giải trí
 

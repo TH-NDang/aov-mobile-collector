@@ -14,6 +14,7 @@ internal object GestureFailureText {
         "shield-session-ended" -> "bước đã bị ngắt trước khi chạm xong"
         "editor-open" -> "bảng chỉnh từng bước đang mở"
         "invalid-points" -> "điểm chạm không hợp lệ"
+        "notification-covering" -> "thông báo hoặc cuộc gọi đang che game"
         else -> "lý do khác"
     }
 

@@ -500,6 +500,45 @@ class CollectorService : AccessibilityService() {
             segmentStart = 0
         }
         running = on
+        (if (on) quietRun.start() else quietRun.stop())?.let(::note)
+    }
+
+    private val notificationGuard = NotificationGuard()
+    private val quietRun by lazy { QuietRun(this) }
+    private var notificationWaitNoted = false
+
+    /** The main screen's "quiet while running" box changed: apply it to a run already going. */
+    internal fun quietChanged() {
+        if (running) (if (quietRun.wanted) quietRun.start() else quietRun.stop())?.let(::note)
+    }
+
+    /**
+     * Waits while a fresh notification's banner may cover the game ([NotificationGuard]), then [then] true; false
+     * when a banner stays up, with [failure] saying so.
+     */
+    private fun whenClear(then: (Boolean) -> Unit) {
+        if (!notificationGuard.watching) return then(true)
+        val display = wm.maximumWindowMetrics.bounds
+        val banner = try {
+            NotificationGuard.banner(foregroundWindows(), display.width(), display.height())
+        } catch (_: Exception) {
+            false
+        }
+        when (val decision = notificationGuard.decide(SystemClock.elapsedRealtime(), banner)) {
+            NotificationGuard.Decision.Go -> then(true)
+            NotificationGuard.Decision.Blocked -> {
+                failure = "Thông báo hoặc cuộc gọi vẫn che game sau 30 giây; xử lý xong rồi bấm Tiếp tục"
+                note(failure ?: "")
+                then(false)
+            }
+            is NotificationGuard.Decision.Wait -> {
+                if (!notificationWaitNoted) {
+                    notificationWaitNoted = true
+                    note("Có thông báo mới; chờ thông báo ẩn rồi mới chụp hoặc chạm")
+                }
+                handler.postDelayed({ whenClear(then) }, decision.ms)
+            }
+        }
     }
 
     private var failure: String? = null
@@ -787,6 +826,8 @@ class CollectorService : AccessibilityService() {
 
     override fun onServiceConnected() {
         current = this
+        // Killed during a run: its Do Not Disturb must not outlive it.
+        quietRun.stop()
         updateGestureDebug()
         CrashLog.install(this)
         upgradeBuiltIn()
@@ -868,6 +909,18 @@ class CollectorService : AccessibilityService() {
         i < m.steps.length() && m.steps.getJSONObject(i).optString("type") in setOf("enter", "ranking", "board", "chess")
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event?.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED) {
+            val posted = event.parcelableData as? android.app.Notification
+            // A toast has no Notification; ongoing ones (music, downloads, our own progress) do not pop up.
+            if (posted != null &&
+                event.packageName?.toString() != packageName &&
+                posted.flags and android.app.Notification.FLAG_ONGOING_EVENT == 0 &&
+                (!quietRun.active || posted.category == android.app.Notification.CATEGORY_CALL)
+            ) {
+                notificationGuard.posted(SystemClock.elapsedRealtime())
+                notificationWaitNoted = false
+            }
+        }
         if (event?.eventType == AccessibilityEvent.TYPE_NOTIFICATION_STATE_CHANGED &&
             event.packageName?.toString() == AfterRunProtocol.DRIVE
         ) {
@@ -915,6 +968,7 @@ class CollectorService : AccessibilityService() {
             setRunning(false)
             save()
         }
+        quietRun.stop()
         generation++
         captureShield.reset()
         handler.removeCallbacksAndMessages(null)
@@ -4922,7 +4976,11 @@ class CollectorService : AccessibilityService() {
             }
             part(0)
         }
-        handler.postDelayed({ send(0) }, SHIELD_MS)
+        if (teaching || calibrationTesting) {
+            handler.postDelayed({ send(0) }, SHIELD_MS)
+        } else {
+            whenClear { clear -> if (clear) handler.postDelayed({ send(0) }, SHIELD_MS) else refuse("notification-covering") }
+        }
     }
 
     private fun screen() = gameWindowMetrics().bounds
@@ -6120,7 +6178,13 @@ class CollectorService : AccessibilityService() {
             }
         }
         // The panel needs 250 ms to disappear; a screenshot soon after the previous one waits out Android's interval instead of being refused.
-        handler.postDelayed({ shoot(true) }, maxOf(250L, lastShotAt + SHOT_INTERVAL_MS - SystemClock.uptimeMillis()))
+        whenClear { clear ->
+            if (!clear) {
+                finish(null)
+            } else {
+                handler.postDelayed({ shoot(true) }, maxOf(250L, lastShotAt + SHOT_INTERVAL_MS - SystemClock.uptimeMillis()))
+            }
+        }
     }
 
     /**

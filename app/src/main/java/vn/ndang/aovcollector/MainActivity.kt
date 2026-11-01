@@ -360,6 +360,13 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        quietBox?.let {
+            // Back from Settings without the grant: the box must not stay on for nothing.
+            if (it.isChecked && !QuietRun(this).allowed) {
+                it.isChecked = false
+                Toast.makeText(this, "Chưa cấp quyền Không làm phiền; thông báo vẫn có thể bật lên khi chạy", Toast.LENGTH_LONG).show()
+            }
+        }
         FileJob.screen = jobDone
         if (historyRoot != null) showHistory()
         crashNotice()
@@ -533,7 +540,47 @@ class MainActivity : Activity() {
                 }
             }
         )
+        top.addView(
+            CheckBox(this).apply {
+                text = "Im lặng thông báo khi chạy"
+                contentDescription = "Khi lượt chạy, bật Không làm phiền của app: vẫn nhận cuộc gọi và báo thức, " +
+                    "thông báo khác không kêu, không bật lên che game"
+                val prefs = getSharedPreferences("ui", MODE_PRIVATE)
+                isChecked = prefs.getBoolean(QuietRun.PREFERENCE, false)
+                quietBox = this
+                setOnCheckedChangeListener { box, checked ->
+                    prefs.edit().putBoolean(QuietRun.PREFERENCE, checked).apply()
+                    CollectorService.current?.quietChanged()
+                    if (checked && !QuietRun(this@MainActivity).allowed) askQuietAccess(box as CheckBox)
+                }
+            }
+        )
         root.addView(top)
+    }
+
+    private var quietBox: CheckBox? = null
+
+    /** Do Not Disturb needs the user's grant in Settings; without it the box would promise nothing. */
+    private fun askQuietAccess(box: CheckBox) {
+        AlertDialog.Builder(this)
+            .setTitle("Cho phép Không làm phiền")
+            .setMessage(
+                "Khi lượt chạy, AOV Collector bật Không làm phiền riêng của app: cuộc gọi, người gọi lại và báo thức vẫn đổ chuông; " +
+                    "các thông báo khác không kêu và không bật lên che game, vẫn nằm trong thanh thông báo. " +
+                    "Tạm dừng hay kết thúc lượt là tắt. Cài đặt riêng của bạn không bị đổi.\n\n" +
+                    "Mở cài đặt rồi bật quyền cho AOV Collector."
+            )
+            .setPositiveButton("Mở cài đặt") { _, _ ->
+                try {
+                    startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS))
+                } catch (_: Exception) {
+                    box.isChecked = false
+                    Toast.makeText(this, "Không mở được cài đặt Không làm phiền", Toast.LENGTH_LONG).show()
+                }
+            }
+            .setNegativeButton("Để sau") { _, _ -> box.isChecked = false }
+            .setOnCancelListener { box.isChecked = false }
+            .show()
     }
 
     private fun headerAction(row: LinearLayout, kind: String, label: String, color: Int, action: () -> Unit) {
