@@ -245,6 +245,28 @@ object ChessWiki {
         return null
     }
 
+    /**
+     * The Chế độ giải trí screen: a sideways row of mode cards named underneath, the selected mode's name written
+     * large at the top right, and Bắt đầu. Measured on the user's 2400x1080 screenshot, where Cờ Liên quân is the
+     * fourth card at x .69 and other modes can push it off either end. [card] is where to tap the chess card;
+     * [chessSelected] is the only proof of what Bắt đầu would start.
+     */
+    class ModeRow(val card: Pair<Double, Double>?, val chessSelected: Boolean, val start: Pair<Double, Double>?)
+
+    fun modeRow(words: List<GameScreens.Word>): ModeRow {
+        val label = words.filter { it.plain.contains("colienquan") && it.y > .70 }.minByOrNull { abs(it.y - .92) }
+        val chess = words.any { it.plain.contains("colienquan") && it.y < .30 && it.x > .55 }
+        val start = words.firstOrNull { it.plain == "batdau" && it.x > .6 && it.y in .45..0.85 }
+        return ModeRow(
+            label?.let { it.x to it.y - MODE_CARD_ABOVE_LABEL },
+            chess,
+            start?.let { it.x to it.y }
+        )
+    }
+
+    /** The card picture sits above its name; tapping the picture avoids the row's lower edge. */
+    const val MODE_CARD_ABOVE_LABEL = .06
+
     data class Tile(val x: Double, val y: Double, val id: String, val label: String? = null, val aliases: Set<String> = emptySet())
 
     // The five card centres in the chess encyclopedia (not the left edges of each card).
@@ -656,7 +678,9 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
     companion object {
         const val MAX_PAGES = 65
         const val MAX_MODAL_PAGES = 16
-        const val MAX_NAV = 14
+        const val MAX_NAV = 20
+        const val MAX_MODE_TAPS = 3
+        const val MAX_ROW_DRAGS = 6
         const val MAX_STILL = 3
         const val WAIT_MS = 1100L
         const val MAX_TILES = 450
@@ -668,7 +692,9 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
     private var pages = 0
     private var items = 0
     private var navigation = 0
-    private var selectedChess = false
+    private var modeTaps = 0
+    private var categoryTapped = false
+    private var rowDrags = 0
     private var veteranAttempts = 0
     private var tipAttempts = 0
     private var heroes = screen.completedHeroes
@@ -859,22 +885,7 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                     tap(.102, .305, 1800, id = "lobby.home", label = "Cờ: Trang chủ") { navigate() }
                 }
             }
-            entertainment && all.contains("colienquan") && !selectedChess -> {
-                selectedChess = true
-                tap(.507, .827, 1100, id = "mode.select", label = "Cờ: chọn chế độ") { navigate() }
-            }
-            entertainment && all.contains("colienquan") && all.contains("batdau") && selectedChess ->
-                tap(
-                    words.firstOrNull { it.plain == "batdau" && it.x > .6 }?.x ?: .862,
-                    words.firstOrNull { it.plain == "batdau" && it.x > .6 }?.y ?: .688,
-                    3700,
-                    id = "mode.enter",
-                    label = "Cờ: vào sảnh Cờ",
-                    relative = true
-                ) { navigate() }
-            entertainment && all.contains("colienquan") ->
-                tap(.50, .824, 1000, id = "mode.select", label = "Cờ: chọn chế độ") { navigate() }
-            entertainment -> tap(.135, .37, id = "mode.entertainment", label = "Cờ: mục giải trí") { navigate() }
+            entertainment -> chooseChessMode(ChessWiki.modeRow(words))
             modeEntry != null -> {
                 screen.note(
                     "Sảnh: chọn chế độ ở " + (modeEntry.first * 100).toInt() + "%, " + (modeEntry.second * 100).toInt() +
@@ -884,6 +895,48 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
             }
             all.contains("colienquan") -> tap(.105, .30, 2000, id = "lobby.home", label = "Cờ: Trang chủ") { navigate() }
             else -> screen.later(1800) { navigate() }
+        }
+    }
+
+    /**
+     * Bắt đầu starts whichever mode is selected, so it is tapped only once the large title reads Cờ Liên quân.
+     * The chess card is found by its name wherever the row has put it; when no card shows it, the Giải trí tab is
+     * chosen once and the row dragged one way, then the other.
+     */
+    private fun chooseChessMode(row: ChessWiki.ModeRow) {
+        val start = row.start
+        val card = row.card
+        when {
+            row.chessSelected && start != null ->
+                tap(start.first, start.second, 3700, id = "mode.enter", label = "Cờ: vào sảnh Cờ", relative = true) { navigate() }
+            card != null && modeTaps < MAX_MODE_TAPS -> {
+                modeTaps++
+                screen.note("Chế độ giải trí: chọn thẻ Cờ Liên quân ở " + (card.first * 100).toInt() + "% ngang")
+                tap(card.first, card.second, 1100, id = "mode.card", label = "Cờ: thẻ Cờ Liên quân", relative = true) { navigate() }
+            }
+            card != null -> fail(
+                "Đã chọn thẻ Cờ Liên quân $MAX_MODE_TAPS lần nhưng tiêu đề chế độ vẫn chưa là Cờ Liên quân; " +
+                    "không bấm Bắt đầu. Chọn Cờ Liên quân bằng tay rồi bấm Tiếp tục."
+            )
+            !categoryTapped -> {
+                categoryTapped = true
+                tap(.135, .37, id = "mode.entertainment", label = "Cờ: mục giải trí") { navigate() }
+            }
+            rowDrags < MAX_ROW_DRAGS -> {
+                // First towards the cards past the right edge, where new modes have pushed it, then back.
+                val back = rowDrags >= MAX_ROW_DRAGS / 2
+                rowDrags++
+                screen.note("Chế độ giải trí: chưa thấy thẻ Cờ Liên quân; kéo hàng chế độ " + if (back) "sang phải" else "sang trái")
+                if (back) {
+                    swipe(.25, .86, .75, .86, 1200, id = "mode.row.back", label = "Cờ: kéo hàng chế độ về đầu") { navigate() }
+                } else {
+                    swipe(.75, .86, .25, .86, 1200, id = "mode.row.next", label = "Cờ: kéo hàng chế độ") { navigate() }
+                }
+            }
+            else -> fail(
+                "Không thấy thẻ Cờ Liên quân trong hàng chế độ giải trí sau khi kéo hai chiều; không bấm Bắt đầu. " +
+                    "Chọn Cờ Liên quân bằng tay rồi bấm Tiếp tục."
+            )
         }
     }
 

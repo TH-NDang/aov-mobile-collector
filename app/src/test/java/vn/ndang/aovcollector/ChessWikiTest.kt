@@ -433,6 +433,8 @@ class ChessWikiTest {
             word("Cờ Liên Quân", .52, .83),
             word("Bắt đầu", .85, .68)
         )
+        // Once its card is chosen, the mode's name is written large at the top right.
+        val chosen = choose + word("Cờ Liên Quân", .83, .16)
         val chessLobby = listOf(word("Trang chủ", .105, .30), word("Cờ Liên Quân", .15, .05))
         val wiki = listOf(word("Bách khoa", .15, .06), word("Cờ Liên Quân", .35, .06))
         val taps = ArrayList<Pair<Double, Double>>()
@@ -446,7 +448,8 @@ class ChessWikiTest {
                 then(object : ChessWikiReader.Look {
                     override val words = when (stage) {
                         0 -> lobby
-                        1, 2 -> choose
+                        1 -> choose
+                        2 -> chosen
                         3 -> chessLobby
                         else -> wiki
                     }
@@ -493,9 +496,157 @@ class ChessWikiTest {
         assertEquals(ChessWiki.MODE_X, taps[0].first, .001)
         assertEquals(ChessWiki.MODE_Y, taps[0].second, .001)
         assertTrue("Must never tap N.vụ", taps[0].first > .57)
-        assertEquals(.507, taps[1].first, .001)
+        assertEquals(.52, taps[1].first, .001)
+        assertEquals(.83 - ChessWiki.MODE_CARD_ABOVE_LABEL, taps[1].second, .001)
         assertEquals(.85, taps[2].first, .05)
         assertTrue("topic:quy-trinh" in completed)
+    }
+
+    @Test fun modeRowFindsTheChessCardWhereverTheRowPutsIt() {
+        fun word(text: String, x: Double, y: Double) = GameScreens.Word(text, x - .06, y - .02, x + .06, y + .02)
+        // The user's screenshot: Đấu hỗn loạn selected, Cờ Liên quân the fourth card.
+        val row = ChessWiki.modeRow(
+            listOf(
+                word("Chế độ giải trí", .12, .36),
+                word("Đấu hỗn loạn", .835, .16),
+                word("Bắt đầu", .857, .68),
+                word("Siêu Boss Đại Chiến", .14, .93),
+                word("Hỗn chiến phù hiệu", .315, .93),
+                word("Đấu hỗn loạn", .505, .93),
+                word("Cờ Liên quân", .693, .93),
+                word("Đấu móc", .868, .93)
+            )
+        )
+        assertEquals(.693, row.card!!.first, .001)
+        assertEquals(.87, row.card!!.second, .001)
+        assertFalse("Bắt đầu would start Đấu hỗn loạn", row.chessSelected)
+        assertNotNull(row.start)
+        val chosen = ChessWiki.modeRow(listOf(word("Cờ Liên quân", .835, .16), word("Cờ Liên quân", .693, .93)))
+        assertTrue(chosen.chessSelected)
+        assertNull(chosen.start)
+    }
+
+    /** The mode screen with [modes] in a sideways row of five, then the chess lobby and the encyclopedia. */
+    private class ModeRowGame(val modes: List<String>, var first: Int, var selected: String, val deafCards: Boolean = false) :
+        ChessWikiReader.Screen {
+        var stage = 0
+        val otherStarts = ArrayList<String>()
+        val cardTaps = ArrayList<Double>()
+        var drags = 0
+        var outcome: ChessWikiReader.Outcome? = null
+        private val completed = HashSet<String>()
+        private val clock = ChessTestClockQueue()
+        override val alive get() = outcome == null
+        override val monotonicMs get() = clock.now
+
+        private fun word(text: String, x: Double, y: Double) = GameScreens.Word(text, x - .06, y - .02, x + .06, y + .02)
+
+        private fun visible() = (first until minOf(first + 5, modes.size)).map { modes[it] to .14 + (it - first) * .18 }
+
+        override fun look(words: Boolean, then: (ChessWikiReader.Look?) -> Unit) {
+            val shown = when (stage) {
+                0 -> listOf(word("Chế độ giải trí", .12, .36), word(selected, .835, .16), word("Bắt đầu", .857, .68)) +
+                    visible().map { (name, x) -> word(name, x, .93) }
+                1 -> listOf(word("Trang chủ", .105, .30), word("Cờ Liên Quân", .15, .05))
+                else -> listOf(word("Bách khoa", .15, .06), word("Cờ Liên Quân", .35, .06))
+            }
+            then(object : ChessWikiReader.Look {
+                override val words = shown
+                override val signature = IntArray(96) { 60 }
+                override val modal = false
+
+                override fun tiles(topic: ChessWiki.Topic) = emptyList<ChessWiki.Tile>()
+
+                override fun keep(name: String, then: (Boolean) -> Unit) = then(true)
+
+                override fun discard() {}
+            })
+        }
+
+        override fun tap(x: Double, y: Double, then: (Boolean) -> Unit) {
+            if (stage == 0) {
+                when {
+                    y > .75 -> {
+                        cardTaps += x
+                        val card = visible().minByOrNull { kotlin.math.abs(it.second - x) }!!
+                        if (!deafCards && kotlin.math.abs(card.second - x) < .05) selected = card.first
+                    }
+                    kotlin.math.abs(x - .857) < .05 && kotlin.math.abs(y - .68) < .05 ->
+                        if (selected == "Cờ Liên quân") stage = 1 else otherStarts += selected
+                    kotlin.math.abs(x - .135) < .05 -> first = 0
+                }
+            } else if (stage == 1 && kotlin.math.abs(x - .105) < .05) {
+                stage = 2
+            }
+            then(true)
+        }
+
+        override fun swipe(x: Double, y: Double, toX: Double, toY: Double, then: (Boolean) -> Unit) {
+            if (stage == 0) {
+                drags++
+                first = if (toX < x) minOf(first + 2, modes.size - 5) else maxOf(first - 2, 0)
+            }
+            then(true)
+        }
+
+        override fun later(ms: Long, then: () -> Unit) = clock.later(ms, then)
+
+        override fun seen(id: String) = id in completed
+
+        override fun finished(id: String) {
+            completed.add(id)
+        }
+
+        override fun note(message: String) {}
+
+        override fun say(message: String) {}
+
+        fun run(): ModeRowGame {
+            ChessWikiReader(this, ChessWiki.Options(setOf("quy-trinh"), openGame = false), { outcome = it }).start()
+            clock.drain()
+            return this
+        }
+    }
+
+    private val modes = listOf(
+        "Siêu Boss Đại Chiến",
+        "Hỗn chiến phù hiệu",
+        "Đấu hỗn loạn",
+        "Đấu móc",
+        "Vương quốc",
+        "Đại chiến",
+        "Cờ Liên quân",
+        "Hội ngộ"
+    )
+
+    @Test fun aChessCardPushedOffTheRightIsDraggedIntoViewAndCheckedBeforeBatDau() {
+        val game = ModeRowGame(modes, first = 0, selected = "Đấu hỗn loạn").run()
+        assertTrue(game.outcome.toString(), game.outcome is ChessWikiReader.Outcome.Done)
+        assertTrue(game.otherStarts.isEmpty())
+        assertTrue(game.drags >= 1)
+        assertEquals(1, game.cardTaps.size)
+        assertEquals(.14 + 4 * .18, game.cardTaps.single(), .001)
+    }
+
+    @Test fun aChessCardOffTheLeftIsFoundByDraggingBack() {
+        val game = ModeRowGame(modes.reversed(), first = 3, selected = "Đấu hỗn loạn").run()
+        assertTrue(game.outcome.toString(), game.outcome is ChessWikiReader.Outcome.Done)
+        assertTrue(game.otherStarts.isEmpty())
+        assertEquals(1, game.cardTaps.size)
+    }
+
+    @Test fun batDauIsNeverTappedWhileAnotherModeIsSelected() {
+        val game = ModeRowGame(modes, first = 2, selected = "Đấu hỗn loạn", deafCards = true).run()
+        val outcome = game.outcome
+        assertTrue(outcome is ChessWikiReader.Outcome.Failed)
+        assertTrue((outcome as ChessWikiReader.Outcome.Failed).reason.contains("không bấm Bắt đầu"))
+        assertTrue("Đấu hỗn loạn must never be started", game.otherStarts.isEmpty())
+        assertEquals(ChessWikiReader.MAX_MODE_TAPS, game.cardTaps.size)
+        // Nowhere in the row: dragged both ways, then stopped without starting anything.
+        val missing = ModeRowGame(modes.filter { it != "Cờ Liên quân" }, first = 0, selected = "Đấu hỗn loạn").run()
+        assertTrue(missing.outcome is ChessWikiReader.Outcome.Failed)
+        assertEquals(ChessWikiReader.MAX_ROW_DRAGS, missing.drags)
+        assertTrue(missing.otherStarts.isEmpty())
     }
 
     @Test fun chessHeroCardsReadNamesInsteadOfRemainingRoleTextAfterScroll() {

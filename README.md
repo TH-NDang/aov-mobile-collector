@@ -1,4 +1,13 @@
-# AOV Mobile Collector — v0.13.38
+# AOV Mobile Collector — v0.13.39
+
+## v0.13.39: tìm đúng thẻ Cờ Liên quân trong hàng chế độ giải trí
+
+Game đã thêm chế độ mới. Thẻ Cờ Liên quân không còn ở giữa hàng (giờ là thẻ thứ 4, sau "Đấu hỗn loạn") và hàng thẻ kéo ngang được. Bản cũ bấm cố định vào giữa hàng, nên chọn nhầm "Đấu hỗn loạn", rồi có thể bấm luôn "Bắt đầu" mà không kiểm tra chế độ đang chọn.
+
+- App tìm thẻ theo **tên "Cờ Liên quân" dưới thẻ**, ở bất kỳ vị trí nào trong hàng, rồi bấm vào ảnh thẻ ngay trên tên.
+- Không thấy thẻ: chọn mục Giải trí một lần, rồi kéo hàng thẻ sang trái (tối đa 3 lần), sau đó kéo ngược lại (tối đa 3 lần).
+- **"Bắt đầu" chỉ được bấm khi tiêu đề lớn góc trên bên phải là "Cờ Liên quân".** Chọn thẻ 3 lần mà tiêu đề vẫn là chế độ khác, hoặc kéo hai chiều vẫn không thấy thẻ: tạm dừng, không bấm Bắt đầu.
+- Có trong **Chỉnh từng bước**: "Cờ: thẻ Cờ Liên quân" (nhận diện) và hai cú kéo hàng chế độ.
 
 ## v0.13.38: Cờ không dừng ở tướng tên dài bị đọc cụt
 

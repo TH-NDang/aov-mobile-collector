@@ -80,12 +80,34 @@ internal object CalibrationCatalog {
         add(recognized("chess.v1.lobby.mode", "Sảnh: mở chế độ", "Mở sảnh chính Liên Quân; nhận diện nút Chọn chế độ ở thanh dưới."))
         add(tap("chess.v1.mode.entertainment", "Cờ: mục giải trí", "Mở màn Chọn chế độ; chọn mục Giải trí bên trái.", .135, .37))
         add(
-            tap(
-                "chess.v1.mode.select",
-                "Cờ: chọn chế độ",
-                "Mở mục Giải trí có thẻ Cờ Liên Quân; đặt điểm vào thẻ Cờ, không đặt vào nút ghép trận.",
-                .507,
-                .827
+            recognized(
+                "chess.v1.mode.card",
+                "Cờ: thẻ Cờ Liên quân",
+                "Mở mục Giải trí với thẻ Cờ Liên quân trong hàng chế độ; nhận diện tên thẻ trước khi chỉnh, không đặt vào nút Bắt đầu."
+            )
+        )
+        add(
+            swipe(
+                "chess.v1.mode.row.next",
+                "Cờ: kéo hàng chế độ",
+                "Mở mục Giải trí; kéo ngang trong hàng thẻ chế độ để lộ các thẻ bên phải.",
+                .75,
+                .86,
+                .25,
+                .86,
+                timing
+            )
+        )
+        add(
+            swipe(
+                "chess.v1.mode.row.back",
+                "Cờ: kéo hàng chế độ về đầu",
+                "Mở mục Giải trí; kéo ngang trong hàng thẻ chế độ để lộ các thẻ bên trái.",
+                .25,
+                .86,
+                .75,
+                .86,
+                timing
             )
         )
         add(
