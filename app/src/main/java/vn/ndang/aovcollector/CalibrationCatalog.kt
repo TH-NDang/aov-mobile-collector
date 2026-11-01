@@ -67,7 +67,9 @@ internal object CalibrationCatalog {
         recognized("pro.v1.picker.card", "Pro: chọn tướng", "Điểm được đo trên thẻ; không chọn nút mua hoặc nhận tướng."),
         recognized("pro.v1.other", "Pro: Phương án khác", "Mở Chuẩn bị của đúng tướng."),
         recognized("pro.v1.tab", "Pro: Đề cử Pro", "Mở Hệ thống đề xuất; chọn tab Đề cử Pro."),
-        recognized("pro.v1.apply", "Pro: Dùng combo", "Chỉ trong nút của đúng đề cử đã nhận diện; điểm ngoài nút bị từ chối."),
+        recognized("pro.v2.apply", "Pro: Dùng combo", "Mở Đề cử Pro; nhận diện nút Dùng combo, điểm ngoài nút bị từ chối."),
+        CalibrationStep(ProSimpleReader.STEP_DRAG.label, "Mở Đề cử Pro; kéo lên nửa thẻ trong danh sách.", ProSimpleReader.STEP_DRAG),
+        CalibrationStep(ProSimpleReader.TOP_FLICK.label, "Mở Đề cử Pro; vuốt nhanh xuống để về đầu danh sách.", ProSimpleReader.TOP_FLICK),
         tap("pro.v1.popup.close", "Pro: đóng đề xuất", "Đóng cửa sổ Hệ thống đề xuất bằng dấu X.", .824, .111)
     )
 

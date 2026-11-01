@@ -434,6 +434,9 @@ class BoardReader(
         const val MAX_FILTER_TAPS = 2
         const val FILTER_READS = 3
 
+        /** The shortest slow drag on the hero grid; shorter ones rest on a card long enough to choose it. */
+        const val MIN_SLOW_DRAG = .15
+
         /** A list scroll: less than the rows on screen, so photos overlap. */
         const val LIST_FROM = .78
         const val LIST_TO = .42
@@ -709,22 +712,19 @@ class BoardReader(
         val profile = before.pickerProfile
         val height = before.pickerHeight
         before.done(null)
-        drag(.62, .78, .66, false, 820, "picker.scroll.probe") {
+        // A quick flick, never a short slow press: on the user's phone the game took a .12 slow drag that rested on
+        // a card for a tap and chose that hero, closing Chọn tướng.
+        drag(.62, .80, .50, true, 900, "picker.scroll.probe-flick") {
             look(false, true) { after ->
                 if (!validPicker(after) || after.pickerHeight != height) {
                     after.done("board-picker-probe")
                     return@look fail("Mất lưới tướng khi kiểm tra chiều cuộn.")
                 }
-                // A previously saved list position can be outside the newly expanded
-                // roster's scroll bounds after toggling the Đã nhận/All filters.
-                // Its first probe may SNAP slightly in the opposite direction.
-                // Any *measured* motion is safe here: the next stage resets to top.
+                // A saved list position can be outside the expanded roster's bounds after the filter changed, and a
+                // flick goes further than can be measured. Any change is enough: the next stage resets to the top.
                 val moved = BoardPickerMotion.displacement(profile, after.pickerProfile, height, 0)
-                if (moved == null || abs(moved) > .22) {
-                    after.done("board-picker-probe")
-                    return@look fail("Không đo được thay đổi vị trí lưới tướng sau khi đổi bộ lọc.")
-                }
-                resetToTop(after, 0, 0, resetMoved = false, probeMoved = abs(moved) > .004)
+                val probeMoved = if (moved != null) abs(moved) > .004 else !BoardPickerMotion.sameViewport(profile, after.pickerProfile)
+                resetToTop(after, 0, 0, resetMoved = false, probeMoved = probeMoved)
             }
         }
     }
@@ -833,7 +833,9 @@ class BoardReader(
             l.done("board-picker-seek")
             return fail("Vị trí tướng nằm ngoài phạm vi đo hoặc vượt 160 lần cuộn; không chọn lại hàng cũ.")
         }
-        val distance = minOf(.24, maxOf(.075, bottom - (BoardScreens.VIEW_BOTTOM - .025)))
+        // Never shorter than MIN_SLOW_DRAG: a short slow drag resting on a card picks that hero. Going further than
+        // needed only leaves the row higher in the view, which the next look measures.
+        val distance = minOf(.24, maxOf(MIN_SLOW_DRAG, bottom - (BoardScreens.VIEW_BOTTOM - .025)))
         val profile = l.pickerProfile
         val height = l.pickerHeight
         l.done(null)

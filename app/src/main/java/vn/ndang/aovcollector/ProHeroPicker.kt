@@ -134,7 +134,8 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
         }
     }
 
-    private fun action(id: String, points: List<CalibrationPoint>, then: () -> Unit) {
+    /** [fling]: a quick flick; otherwise a drag held still before lifting, so the grid stops where the finger does. */
+    private fun action(id: String, points: List<CalibrationPoint>, fling: Boolean = false, then: () -> Unit) {
         if (!screen.alive || ended) return
         screen.calibrated(
             CalibrationAction(
@@ -142,8 +143,14 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
                 "Pro: $id",
                 points,
                 relative = true,
-                durationMs = if (points.size > 1) 700 else 100,
-                holdMs = if (points.size > 1) 450 else 0
+                durationMs = if (points.size == 1) {
+                    100
+                } else if (fling) {
+                    160
+                } else {
+                    700
+                },
+                holdMs = if (points.size > 1 && !fling) 450 else 0
             )
         ) { ok ->
             if (!screen.alive || ended) return@calibrated
@@ -155,11 +162,18 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
         }
     }
 
-    private fun tap(id: String, x: Double, y: Double, then: () -> Unit) = action(id, listOf(CalibrationPoint(x, y)), then)
+    private fun tap(id: String, x: Double, y: Double, then: () -> Unit) = action(id, listOf(CalibrationPoint(x, y)), then = then)
 
-    private fun scroll(d: Double, then: () -> Unit) = action(
-        if (d < 0) "scroll.reset" else "scroll.next",
+    private fun scroll(d: Double, fling: Boolean = false, then: () -> Unit) = action(
+        if (fling) {
+            "scroll.probe-flick"
+        } else if (d < 0) {
+            "scroll.reset"
+        } else {
+            "scroll.next"
+        },
         listOf(CalibrationPoint(.62, if (d < 0) .42 else .78), CalibrationPoint(.62, (if (d < 0) .42 else .78) - d)),
+        fling,
         then
     )
 
@@ -230,14 +244,18 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
         val profile = before.profile
         val height = before.height
         before.done(null)
-        scroll(.12) {
+        // A quick flick, never a short slow press: the game takes a short slow drag resting on a card for a tap
+        // and chooses that hero (Chiến khu on the user's phone, the same Chọn tướng grid).
+        scroll(.30, fling = true) {
             look { after ->
                 val shift = HeroGrid.shift(profile, after.profile)
-                if (!valid(after) || after.height != height || !shift.reliable || shift.px < -2) {
+                if (!valid(after) || after.height != height || (shift.reliable && shift.px < -2)) {
                     after.done("pro-picker-shift")
                     return@look fail("Không đo được thao tác kiểm tra cuộn.")
                 }
-                reset(after, 0, 0, shift.px > 2)
+                // A flick can go further than can be measured: any change proves the grid moves.
+                val moved = if (shift.reliable) shift.px > 2 else !BoardPickerMotion.sameViewport(profile, after.profile)
+                reset(after, 0, 0, moved)
             }
         }
     }
@@ -327,7 +345,8 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
         if (still >= 2) return confirmEnd(l, 0)
         val profile = l.profile
         val height = l.height
-        val distance = minOf(.24, maxOf(.06, bottom - .84))
+        // Never shorter than a slow drag that could rest on a card and choose it; overshooting only leaves the row higher.
+        val distance = minOf(.24, maxOf(BoardReader.MIN_SLOW_DRAG, bottom - .84))
         l.done(null)
         scroll(distance) {
             look { after ->

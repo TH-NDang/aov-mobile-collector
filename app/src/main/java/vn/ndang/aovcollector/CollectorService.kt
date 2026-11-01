@@ -2889,6 +2889,10 @@ class CollectorService : AccessibilityService() {
                 CrashLog.record(this@CollectorService, "Không ghi được tiến độ Pro", error)
             }
 
+            override fun note(text: String) {
+                if (alive()) this@CollectorService.note(text)
+            }
+
             override fun store(bitmap: Bitmap, name: String, then: (Boolean) -> Unit) =
                 readerStore(bitmap, adapterRun, dryRun, alive, name, then)
 

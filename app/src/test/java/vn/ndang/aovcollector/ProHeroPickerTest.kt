@@ -22,6 +22,7 @@ class ProHeroPickerTest {
         var cancelled = false
         var offset = 0
         var toggles = 0
+        var shortSlowDrags = 0
         val selected = mutableListOf<Int>()
         val actions = mutableListOf<String>()
         private val height = 600
@@ -81,7 +82,13 @@ class ProHeroPickerTest {
                     checked = !checked
                     toggles++
                 }
-                "scroll.reset", "scroll.next" -> if (moveWorks) {
+                // As on the user's phone: a short slow drag resting on a card chooses that hero.
+                "scroll.reset", "scroll.next", "scroll.probe-flick" -> if (action.holdMs > 0 &&
+                    kotlin.math.abs(action.points.first().y - action.points.last().y) < BoardReader.MIN_SLOW_DRAG - .001
+                ) {
+                    shortSlowDrags++
+                    picker = false
+                } else if (moveWorks) {
                     offset = (offset + ((action.points.first().y - action.points.last().y) * height).roundToInt()).coerceIn(0, maxOffset)
                 }
                 "card" -> {
@@ -130,6 +137,12 @@ class ProHeroPickerTest {
         assertSame(ProHeroPicker.Outcome.End, f.run(19))
         assertEquals((0 until 19).toList(), f.selected)
         assertEquals(1, f.toggles)
+    }
+
+    @Test fun noScrollRestsAShortSlowDragOnACard() {
+        val f = Fixture(61)
+        for (i in listOf(0, 9, 24, 40, 60)) assertEquals(ProHeroPicker.Outcome.Selected(i), f.run(i))
+        assertEquals(0, f.shortSlowDrags)
     }
 
     @Test fun measuresClampedScrollAndResetsFromRetainedPosition() {

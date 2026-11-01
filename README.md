@@ -1,4 +1,19 @@
-# AOV Mobile Collector — v0.13.40
+# AOV Mobile Collector — v0.13.41
+
+## v0.13.41: Chiến khu không chọn nhầm tướng; Đề cử Pro chỉ chụp, đặt tên theo số
+
+**Chiến khu:**
+- Lỗi trên máy bạn: sau khi bỏ "Đã nhận", app kéo thử lưới tướng một đoạn ngắn (12% màn hình) chậm rãi rồi giữ tay. Game coi đó là **bấm vào thẻ**, chọn luôn Hayate và đóng Chọn tướng, nên app dừng với "Không đo được thay đổi vị trí lưới tướng".
+- Cú kéo thử giờ là một cú **vuốt nhanh**. Mọi cú kéo chậm trong lưới tướng dài ít nhất 15% màn hình (trước đây có thể chỉ 7,5% khi tìm hàng tướng).
+- Bộ test giờ mô phỏng đúng hành vi đó của game: kéo ngắn chậm là chọn tướng. Với cú kéo cũ, 15 ca thử Chiến khu thất bại; với bản mới, tất cả đều qua.
+
+**Đề cử Pro**, viết lại theo yêu cầu "chỉ chụp, không cần nhận ra tên":
+- Không đọc tên người đề cử, không lập danh mục thứ hạng, không đọc lại để so khớp. Đây là phần khiến lượt cũ dừng với "Thứ hạng/combo Pro đổi khi đọc lại".
+- Đề cử được đếm theo **vị trí nút Dùng combo**: ở đầu danh sách nút đầu ở 41% chiều cao, các thẻ cách nhau 36,6%. Mỗi lần kéo nửa thẻ, vị trí được đo từ chính các nút. Đọc sót một nút không làm lệch số thứ tự.
+- Mỗi đề cử (tối đa 5): bấm Dùng combo, đợi về Chuẩn bị, chụp. Cuối cùng dùng lại đề cử 1 để tướng giữ combo đứng đầu.
+- Tên theo số thứ tự tướng trong danh sách: thư mục `pro-001`, ảnh `pro-001-1.png` … `pro-001-5.png`. Tên tướng đọc được (nếu có) chỉ ghi vào nhật ký. Không có đề cử: `pro-001-khong-co-de-cu.png`.
+- Gặp chỗ không theo được (Dùng combo bấm 2 lần không về Chuẩn bị, mất dấu thẻ khi cuộn): ghi nhật ký, giữ ảnh đã chụp và **chuyển sang tướng tiếp theo**, không dừng lượt.
+- Chọn tướng của Pro dùng cùng lưới "Chọn tướng" với Chiến khu nên có cùng lỗi kéo thử 12% chậm. Đã đổi sang vuốt nhanh, và cú kéo khi tìm hàng tướng không ngắn quá 15% (trước đây có thể chỉ 6%).
 
 ## v0.13.40: thông báo không còn che ảnh hay nhận cú chạm
 

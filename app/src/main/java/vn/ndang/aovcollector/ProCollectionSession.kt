@@ -26,6 +26,9 @@ class ProCollectionSession(private val host: Host, private val alive: () -> Bool
 
         fun report(text: String)
 
+        /** A line in the run's log. */
+        fun note(text: String) {}
+
         fun error(error: Exception)
     }
 
@@ -66,48 +69,8 @@ class ProCollectionSession(private val host: Host, private val alive: () -> Bool
 
         fun look(then: (Bitmap, List<GameScreens.Word>) -> Unit) = host.read(then)
 
-        var observedProEntries: List<ProComboScreens.Entry> = emptyList()
-        var frozenProCatalog: List<ProComboScreens.Entry> = emptyList()
-
         fun touch(action: CalibrationAction, target: GameScreens.Word?, then: (Boolean) -> Unit) {
-            if (!alive()) return
-            val observed = if (action.id == "pro.v1.apply") {
-                observedProEntries.singleOrNull {
-                    target != null && kotlin.math.abs(it.button.x - target.x) < .01 && kotlin.math.abs(it.button.y - target.y) < .01
-                }
-            } else {
-                null
-            }
-            val expected = observed?.let { current ->
-                frozenProCatalog.filter {
-                    ProComboScreens.sameCreator(it.id, current.id) && ProComboScreens.matches(it.signature, current.signature)
-                }.singleOrNull()
-            }
-            if (action.id == "pro.v1.apply" && expected == null) {
-                finish("Pro [pro.v1.apply] chưa gửi thao tác: đề cử không khớp duy nhất với danh mục đã xác minh")
-                then(false)
-                return
-            }
-            val verify: ((List<CalibrationPoint>, (Boolean) -> Unit) -> Unit)? = expected?.let { original ->
-                { points, answer ->
-                    look { bitmap, words ->
-                        val pixels = { y: Int, row: IntArray -> bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1) }
-                        val entries = ProComboScreens.entries(bitmap.width, bitmap.height, words, pixels)
-                        val valid = ProApplyEvidence.valid(
-                            action,
-                            points,
-                            original,
-                            entries,
-                            frozenProCatalog,
-                            ProComboScreens.proSelected(bitmap.width, bitmap.height, words, pixels),
-                            ProComboScreens.blocked(words)
-                        )
-                        bitmap.recycle()
-                        answer(valid)
-                    }
-                }
-            }
-            host.touch(action, target, verify, then)
+            if (alive()) host.touch(action, target, null, then)
         }
 
         fun evidence(b: Bitmap, name: String, then: (Boolean) -> Unit = {}) {
@@ -115,27 +78,28 @@ class ProCollectionSession(private val host: Host, private val alive: () -> Bool
         }
         lateinit var advance: () -> Unit
 
-        fun collect(hero: String, state: JSONObject) {
-            val slug = HeroNames.slug(hero).take(60)
+        /** Photos go to [key]/[key]-1.png…, by the hero's place in the picker, never by a name read on screen. */
+        fun collect(key: String, state: JSONObject) {
+            val slug = HeroNames.slug(key).take(60)
 
             fun token(name: String) = "pro__${slug}__$name"
-            val screen = object : ProComboReader.Screen {
+            val screen = object : ProSimpleReader.Screen {
                 override val alive get() = alive()
 
                 override fun later(ms: Long, then: () -> Unit) {
                     host.post(ms, then)
                 }
 
-                override fun calibrated(action: CalibrationAction, target: GameScreens.Word?, then: (Boolean) -> Unit) {
-                    frozenProCatalog = ProComboScreens.catalog(state)
+                override fun calibrated(action: CalibrationAction, target: GameScreens.Word?, then: (Boolean) -> Unit) =
                     touch(action, target, then)
-                }
 
                 override fun say(text: String) = report(text)
 
-                override fun persist(journal: JSONObject): Boolean = save()
+                override fun note(text: String) = host.note(text)
 
-                override fun captureExists(name: String): Boolean {
+                override fun persist(): Boolean = save()
+
+                fun captureExists(name: String): Boolean {
                     if (dryRun) return true
                     val f = File(root, "$slug/$slug-$name.png")
                     if (!f.isFile || f.length() == 0L) return false
@@ -144,22 +108,11 @@ class ProCollectionSession(private val host: Host, private val alive: () -> Bool
                     return opts.outWidth > 0 && opts.outHeight > 0
                 }
 
-                override fun look(then: (ProComboReader.Look?) -> Unit) = look { b, words ->
+                override fun look(then: (ProSimpleReader.Look?) -> Unit) = look { b, words ->
                     val pixels = { y: Int, row: IntArray -> b.getPixels(row, 0, b.width, 0, y, b.width, 1) }
-                    then(object : ProComboReader.Look {
+                    then(object : ProSimpleReader.Look {
                         override val words = words
                         override val proSelected = ProComboScreens.proSelected(b.width, b.height, words, pixels)
-                        override val entries = ProComboScreens.entries(b.width, b.height, words, pixels).also { observedProEntries = it }
-                        override val listBottomClear = ProComboScreens.listBottomClear(b.width, b.height, entries, pixels)
-                        override val preparationSignature = if (ProComboScreens.preparation(
-                                words
-                            )
-                        ) {
-                            ProComboScreens.preparationSignature(b.width, b.height, words, pixels)
-                        } else {
-                            null
-                        }
-                        override val listSignature = ProComboScreens.listSignature(b.width, b.height, pixels)
                         private var consumed = false
 
                         override fun done(keep: String?) {
@@ -184,12 +137,12 @@ class ProCollectionSession(private val host: Host, private val alive: () -> Bool
                     })
                 }
             }
-            ProComboReader(screen, hero, state) { outcome ->
-                if (!alive()) return@ProComboReader
+            ProSimpleReader(screen, state) { outcome ->
+                if (!alive()) return@ProSimpleReader
                 when (outcome) {
-                    is ProComboReader.Outcome.Failed -> finish(outcome.reason)
-                    is ProComboReader.Outcome.Done -> {
-                        state.put("result", if (outcome.empty) "empty-pro-list" else "collected")
+                    is ProSimpleReader.Outcome.Failed -> finish(outcome.reason)
+                    is ProSimpleReader.Outcome.Done -> {
+                        state.put("result", if (outcome.empty) "empty-pro-list" else "collected").put("photos", outcome.count)
                         progress.put("next", progress.getInt("next") + 1).remove("active")
                         if (!save()) finish("Không ghi được tiến độ Pro sau khi thu thập") else later(advance)
                     }
@@ -239,22 +192,16 @@ class ProCollectionSession(private val host: Host, private val alive: () -> Bool
                         if (save()) finish(null) else finish("Không ghi được kết thúc danh sách Pro")
                     }
                     is ProHeroPicker.Outcome.Failed -> finish(outcome.reason)
+                    // Named by place, as pro-001…: a name read on screen only goes to the log.
                     is ProHeroPicker.Outcome.Selected -> look { b, words ->
                         val name = if (ProComboScreens.preparation(words)) ProComboScreens.heroName(words) else null
                         b.recycle()
-                        if (name == null) {
-                            finish("Không đọc được tên tướng sau khi chọn; không dùng tên số để tránh trùng")
-                        } else {
-                            val slug = HeroNames.slug(name).take(60)
-                            if (heroes.has(slug)) {
-                                finish("Tên tướng đã thu thập xuất hiện lại ($name); dừng để tránh ảnh trùng hoặc chọn sai")
-                            } else {
-                                val state = JSONObject().put("hero", name).put("index", index)
-                                heroes.put(slug, state)
-                                progress.put("active", slug)
-                                if (save()) collect(name, state) else finish("Không lưu được tướng Pro đang xử lý")
-                            }
-                        }
+                        val key = "pro-%03d".format(index + 1)
+                        host.note("Pro: tướng ${index + 1} → $key" + (name?.let { " ($it)" } ?: ""))
+                        val state = JSONObject().put("hero", name ?: "").put("index", index)
+                        heroes.put(key, state)
+                        progress.put("active", key)
+                        if (save()) collect(key, state) else finish("Không lưu được tướng Pro đang xử lý")
                     }
                 }
             }.start()
@@ -268,7 +215,7 @@ class ProCollectionSession(private val host: Host, private val alive: () -> Bool
                 when {
                     next !in 0..step.getInt("heroes") -> finish("Vị trí tiếp tục Pro không hợp lệ")
                     active.isNotEmpty() && state == null -> finish("Thiếu tiến độ tướng Pro đang xử lý")
-                    state != null -> collect(state.getString("hero"), state)
+                    state != null -> collect(active, state)
                     next >= step.getInt("heroes") || progress.optBoolean("complete") -> finish(null)
                     else -> look { b, words ->
                         val prep = ProComboScreens.preparation(words)

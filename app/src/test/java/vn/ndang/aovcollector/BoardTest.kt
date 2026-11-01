@@ -299,6 +299,7 @@ class BoardTest {
         val pending = ArrayDeque<() -> Unit>()
         var filterTaps = 0
         var gridDrags = 0
+        var shortSlowDrags = 0
         var allTaps = 0
         override val alive get() = outcome == null && looks < cut
 
@@ -562,7 +563,11 @@ class BoardTest {
 
         override fun drag(x: Double, from: Double, to: Double, fling: Boolean, then: (Boolean) -> Unit) {
             when (page) {
-                Page.PICKER -> {
+                // As on the user's phone: a short slow drag resting on a card chooses that hero and closes the picker.
+                Page.PICKER -> if (!fling && abs(from - to) < BoardReader.MIN_SLOW_DRAG - .001) {
+                    shortSlowDrags++
+                    page = Page.BOARD
+                } else {
                     gridDrags++
                     gridScroll = if (fling && to > from) 0.0 else (gridScroll + (from - to)).coerceIn(0.0, maxScroll)
                 }
@@ -745,6 +750,17 @@ class BoardTest {
         assertEquals(BoardReader.MAX_FILTER_TAPS, stuck.filterTaps)
         assertEquals(0, stuck.gridDrags)
         assertTrue(stuck.chosen.isEmpty())
+    }
+
+    @Test fun clearingTheOwnedFilterNeverRestsAShortSlowDragOnACard() {
+        // The user's run: Đã nhận cleared, then a .12 slow probe chose Hayate and closed Chọn tướng.
+        val game = Game(page = Page.BOARD, heroes = 30, owned = true).run(
+            heroesWanted = 18,
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3))
+        )
+        assertTrue(game.outcome.toString(), game.outcome is BoardReader.Outcome.Done)
+        assertEquals((0 until 18).toList(), game.chosen)
+        assertEquals(0, game.shortSlowDrags)
     }
 
     @Test fun resumesAnOpenPickerWithTheFilterAlreadyClearedOrReenabled() {
