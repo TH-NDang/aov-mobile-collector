@@ -313,6 +313,55 @@ object RankScreens {
     /** Two signatures of the same rows: a scroll that moved nothing, at the end of the list or its top. */
     fun same(a: IntArray, b: IntArray) = a.size == b.size && a.indices.sumOf { abs(a[it] - b[it]) }.toDouble() / a.size < 3
 
+    /**
+     * Two signatures of a table at rest: no square of the grid differs. [same] takes the mean over the whole table,
+     * under which a portrait or a bar still being drawn in a corner goes unseen; a picture taken then lacks it.
+     */
+    fun steady(a: IntArray, b: IntArray) = a.size == b.size && a.indices.all { abs(a[it] - b[it]) <= 4 }
+
+    /**
+     * The table's rows below its headings, where they are on every page: each row's portrait, name and three columns of
+     * figures, which both tables have. Rows look alike; their portraits and figures do not.
+     */
+    private const val BODY_TOP = .40
+    private const val BODY_BOTTOM = .99
+    private val BODY = HeroGrid.Layout(
+        doubleArrayOf(.094, .16, .455, .56, .67), 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0,
+        profileTop = BODY_TOP,
+        profileBottom = BODY_BOTTOM,
+        band = .035
+    )
+
+    /** Values [HeroGrid.profile] keeps for each screen row: five bands in three colours. */
+    private const val PER_ROW = 15
+
+    /** Rows two pictures must share to be laid one over the other: most of one table row. */
+    private const val SHARED = 100
+
+    /**
+     * The mean difference under which two pictures show the same rows. On the user's screenshots the same rows moved
+     * differ by 0, by .7 with a portrait not yet drawn; laid over the wrong rows, one hero off, they differ by 7.7 at
+     * the least, which the grid's own rule (under 20, under .45 of the median) lets through.
+     */
+    private const val SURE = 3.5f
+
+    /** The body's rows as [HeroGrid.profile] gives them, to measure a scroll by ([moved]). */
+    fun profile(width: Int, height: Int, readRow: (Int, IntArray) -> Unit): FloatArray = HeroGrid.profile(width, height, BODY, readRow)
+
+    /**
+     * How far the table went up between two pictures, as a part of the screen's height; [sure] when the rows of one
+     * are found again in the other. They are for any move that leaves a row of the body in both, about half a screen:
+     * so a move that is [sure] has skipped no hero, and one that is not may have.
+     */
+    class Moved(val part: Double, val sure: Boolean)
+
+    fun moved(before: FloatArray, after: FloatArray): Moved? {
+        val rows = before.size / PER_ROW
+        if (rows <= SHARED || before.size != after.size) return null
+        val shift = HeroGrid.shift(before, after, minOverlap = SHARED)
+        return Moved(shift.px * (BODY_BOTTOM - BODY_TOP) / rows, shift.cost < SURE)
+    }
+
     /** A folder of the run named after a [Combo], with its label for the app's lists. */
     fun folderTitle(name: String) = COMBOS.firstOrNull { it.slug == name }?.label
 }
@@ -343,6 +392,9 @@ class RankingReader(
 
         /** A pixel-based menu veto even when all option text was missed. */
         val menuOverlay: Boolean get() = false
+
+        /** The table's rows as [RankScreens.profile]; empty when not read, and scrolls are then not measured. */
+        val profile: FloatArray get() = FloatArray(0)
 
         fun done(keep: String?)
 
@@ -398,6 +450,22 @@ class RankingReader(
 
         /** Looks and drags at a table that did not move before it counts as at its end. */
         const val STILL_TRIES = 3
+
+        /**
+         * The finger's move and rest for a scroll: .65 s, from 1.1 s. The rest still stops the page under the finger
+         * (a pointer still for 40 ms has no speed left), so the page does not slide on after the lift.
+         */
+        const val DRAG_MS = 400L
+        const val HOLD_MS = 250L
+
+        /** After a scroll: the wait before the first look, between looks, and the looks before a page is taken as it is. */
+        const val FIRST_LOOK_MS = 150L
+        const val SETTLE_GAP_MS = 100L
+        const val PAGE_LOOKS = 6
+
+        /** A scroll back when the rows of the last photo are not found: how far, and how many times for one page. */
+        const val BACK = .20
+        const val MAX_BACK = 2
     }
 
     private var ended = false
@@ -406,6 +474,17 @@ class RankingReader(
     private var fullLinkTaps = 0
     private var needsSettlement = true
     private var loadRested = false
+
+    /** Rest is told square by square ([RankScreens.steady]); by the whole table's mean when something on it never rests. */
+    private var strict = true
+    private var restless = 0
+
+    /** The rows of the last photo kept, to measure the next scroll against; scrolls measured, and those not. */
+    private var photo = FloatArray(0)
+    private var measuring = true
+    private var unmeasured = 0
+    private val steps = ArrayList<Double>()
+    private var backs = 0
     private val left = ArrayList<RankScreens.Combo>()
 
     fun start() = navigate(0, 0)
@@ -459,8 +538,8 @@ class RankingReader(
             "Thống kê: cuộn bảng",
             listOf(CalibrationPoint(.55, from), CalibrationPoint(.55, (from - d).coerceIn(.05, .95))),
             relative = true,
-            durationMs = if (fling) 160 else 700,
-            holdMs = if (fling) 0 else 400
+            durationMs = if (fling) 160 else DRAG_MS,
+            holdMs = if (fling) 0 else HOLD_MS
         )
         screen.calibratedDrag(action, d, fling) { ok ->
             if (screen.alive &&
@@ -663,9 +742,12 @@ class RankingReader(
 
     private fun startCapture(combo: RankScreens.Combo, frame: Look) {
         needsSettlement = false
+        photo = FloatArray(0)
+        steps.clear()
+        backs = 0
         screen.say(combo.label)
         screen.note("Chụp ${combo.label}")
-        scanFrame(combo, 1, null, 0, frame)
+        scanFrame(combo, 1, null, 0, 0, frame)
     }
 
     /** Header changes can precede rows and portraits; keep only a fresh, stable data frame. */
@@ -679,9 +761,17 @@ class RankingReader(
         val rows = frame.words.filter { it.y in .35..0.95 && it.x in .28..0.78 }.distinctBy { it.text }
             .sumOf { Regex("[0-9]+(?:[.,][0-9]+)?").findAll(it.text).count() } >= 3
         val signature = if (verified && rows) frame.signature.copyOf() else null
-        if (signature != null && previous != null && RankScreens.same(signature, previous)) {
-            startCapture(combo, frame)
-            return
+        if (signature != null && previous != null) {
+            // At rest square by square: rows may stand while their portraits and bars are still drawn. A table on which
+            // something never rests is taken by the whole table's mean after three more looks, as it always was.
+            if (strict && RankScreens.steady(signature, previous)) return startCapture(combo, frame)
+            if (RankScreens.same(signature, previous) && (!strict || reads >= 3)) {
+                if (strict) {
+                    strict = false
+                    screen.note("Bảng luôn có chỗ còn đổi nhẹ; từ đây chỉ so cả bảng như trước")
+                }
+                return startCapture(combo, frame)
+            }
         }
         frame.done(null)
         if (reads + 1 >= MAX_SETTLE_READS) {
@@ -731,15 +821,49 @@ class RankingReader(
     }
 
     /**
+     * A look at the table once it is at rest: taken again until two in a row show the same picture, square by square.
+     * A scroll was followed by a wait of 1.2 s and one look, kept whatever it showed; the page draws its rows, then
+     * their portraits and bars, and loads more rows now and then, so the wait was long for most pages and short for
+     * some. A table not at rest after [PAGE_LOOKS] looks is taken as it is, with a line in the log.
+     */
+    private fun settled(previous: IntArray?, looks: Int, then: (Look) -> Unit): Unit = look(false) { l ->
+        val rest = previous != null &&
+            (if (strict) RankScreens.steady(l.signature, previous) else RankScreens.same(l.signature, previous))
+        when {
+            rest -> {
+                restless = 0
+                then(l)
+            }
+            looks + 1 >= PAGE_LOOKS -> {
+                // The same by its mean every time, never square by square: something on the page always moves.
+                if (strict && previous != null && RankScreens.same(l.signature, previous) && ++restless >= 2) {
+                    strict = false
+                    screen.note("Bảng luôn có chỗ còn đổi nhẹ; từ đây chỉ so cả bảng như trước")
+                } else {
+                    screen.note("Bảng chưa đứng yên sau $PAGE_LOOKS lần nhìn; vẫn chụp")
+                }
+                then(l)
+            }
+            else -> {
+                val now = l.signature.copyOf()
+                l.done(null)
+                screen.later(SETTLE_GAP_MS) { settled(now, looks + 1, then) }
+            }
+        }
+    }
+
+    /**
      * Photographs the table from where it is, scrolling until scrolls change nothing: the end of the list. On the
      * user's phone a scroll sometimes showed nothing new while the page loaded more rows, which ended two lists
      * a third of the way down; so a still table is looked at again after a wait, then dragged twice more, before
-     * it counts as the end.
+     * it counts as the end. Each scroll is measured against the photo before it ([RankScreens.moved]): when that
+     * photo's rows are not found again the page may have gone past some heroes, and it is brought back ([back] times
+     * at most) before the next photo is taken.
      */
-    private fun scan(combo: RankScreens.Combo, page: Int, last: IntArray?, still: Int = 0): Unit =
-        look(false) { scanFrame(combo, page, last, still, it) }
+    private fun scan(combo: RankScreens.Combo, page: Int, last: IntArray?, still: Int = 0, back: Int = 0): Unit =
+        settled(null, 0) { scanFrame(combo, page, last, still, back, it) }
 
-    private fun scanFrame(combo: RankScreens.Combo, page: Int, last: IntArray?, still: Int, l: Look) {
+    private fun scanFrame(combo: RankScreens.Combo, page: Int, last: IntArray?, still: Int, back: Int, l: Look) {
         if (!screen.alive || ended) {
             l.done(null)
             return
@@ -748,14 +872,41 @@ class RankingReader(
             l.done(null)
             return fail("Danh sách chế độ đang che bảng ${combo.label}. Đóng danh sách rồi bấm Tiếp tục.")
         }
-        if (last != null && RankScreens.same(l.signature, last)) {
+        val unmoved = last != null && RankScreens.same(l.signature, last)
+        // Brought back onto the photo before: the scroll had not gone past it, its rows were not found for another
+        // reason. On again, and this page is taken without another scroll back.
+        if (unmoved && back in 1 until MAX_BACK) {
+            l.done(null)
+            return drag(SCROLL, false, FIRST_LOOK_MS) { scan(combo, page, last, still, MAX_BACK) }
+        }
+        val moved = if (last == null || unmoved || !measuring) null else RankScreens.moved(photo, l.profile)
+        if (moved != null && !moved.sure) {
+            if (back < MAX_BACK) {
+                l.done(null)
+                backs++
+                screen.note(
+                    "${combo.label}: sau trang ${page - 1} không thấy lại hàng nào của ảnh trước, có thể đã kéo quá; " +
+                        "kéo ngược lại rồi xem lại (${back + 1}/$MAX_BACK)"
+                )
+                return drag(-BACK, false, FIRST_LOOK_MS) { scan(combo, page, last, still, back + 1) }
+            }
+            screen.note("${combo.label}: vẫn không khớp được trang $page với trang ${page - 1}; vẫn chụp, có thể sót hàng giữa hai trang")
+            if (++unmeasured >= 3) {
+                measuring = false
+                screen.note("Không đo được độ dịch của bảng trên máy này; từ đây chụp như trước, không đo")
+            }
+        } else if (moved != null) {
+            unmeasured = 0
+        }
+        // Brought back to the photo before, or above it: not a new page, the scroll is made again.
+        if (unmoved || (moved != null && moved.sure && moved.part <= .01)) {
             l.done(null)
             if (still < STILL_TRIES) {
                 screen.note("${combo.label}: trang ${page - 1} chưa đổi sau khi kéo, thử lại (${still + 1}/$STILL_TRIES)")
                 return if (still ==
                     0
                 ) {
-                    screen.later(1500) { scan(combo, page, last, 1) }
+                    screen.later(1500) { scan(combo, page, last, 1, back) }
                 } else {
                     screen.later(1500) {
                         drag(SCROLL, false, 1200) {
@@ -763,7 +914,8 @@ class RankingReader(
                                 combo,
                                 page,
                                 last,
-                                still + 1
+                                still + 1,
+                                back
                             )
                         }
                     }
@@ -771,10 +923,16 @@ class RankingReader(
             }
             screen.finished(combo.slug)
             left.remove(combo)
-            screen.note("${combo.label}: ${page - 1} ảnh")
+            screen.note(
+                "${combo.label}: ${page - 1} ảnh" +
+                    (if (steps.isEmpty()) "" else "; mỗi lần kéo bảng đi %.2f–%.2f màn hình".format(steps.min(), steps.max())) +
+                    (if (backs > 0) "; $backs lần kéo ngược lại" else "")
+            )
             return top(0, null) { next() }
         }
+        if (moved != null && moved.sure) steps += moved.part
         val signature = l.signature.copyOf()
+        photo = l.profile.copyOf()
         l.keep("${combo.slug}-%02d".format(page)) { ok ->
             if (!screen.alive || ended) return@keep
             if (!ok) return@keep fail("Không lưu được ảnh ${combo.label}, trang $page. Kiểm tra dung lượng rồi bấm Tiếp tục.")
@@ -782,7 +940,7 @@ class RankingReader(
             screen.say("${combo.label} · đã lưu trang $page")
             screen.note("Đã lưu ${combo.slug}, trang $page")
             if (page >= MAX_PAGES) return@keep fail("Đã lưu $MAX_PAGES trang nhưng chưa xác nhận cuối bảng ${combo.label}.")
-            drag(SCROLL, false, 1200) { scan(combo, page + 1, signature) }
+            drag(SCROLL, false, FIRST_LOOK_MS) { scan(combo, page + 1, signature) }
         }
     }
 

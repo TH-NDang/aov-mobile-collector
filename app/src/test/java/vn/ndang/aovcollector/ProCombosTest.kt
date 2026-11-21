@@ -720,4 +720,34 @@ class ProCombosTest {
         assertFalse(ProComboScreens.empty(popup + word("Lỗi kết nối", .5, .5)))
         assertFalse(ProComboScreens.preparation(popup + prep))
     }
+
+    /** Max's machine stands behind the right panel and moves: Phù hiệu, Ngọc and Phụ trợ come and go in the reading. */
+    @Test fun chuanBiIsKnownWithABigHeroHidingItsSectionTitles() {
+        fun List<GameScreens.Word>.without(vararg texts: String) = filter { it.text !in texts }
+        assertTrue(ProComboScreens.preparation(prep))
+        val max = listOf(
+            word("Chuẩn bị", .17, .055),
+            word("Trang bị", .62, .185),
+            word("Max", .35, .91),
+            word("Thêm hướng dẫn", .77, .915),
+            word("Ph.án khác", .89, .915)
+        )
+        assertTrue(ProComboScreens.preparation(max))
+        assertTrue(ProComboScreens.preparation(max.without("Thêm hướng dẫn") + word("Phụ trợ", .62, .72)))
+        // Two things seen are not enough, nor the panel's titles without Chuẩn bị (the lobby's Trang bị among them).
+        assertFalse(ProComboScreens.preparation(max.without("Trang bị")))
+        assertFalse(ProComboScreens.preparation(prep.without("Chuẩn bị")))
+        // Chọn tướng over Chuẩn bị: the dimmed title and the edge of Ph.án khác still show, nothing else.
+        val picker = listOf(
+            word("Chuẩn bị", .17, .055),
+            word("Chọn tướng", .2, .115),
+            word("Tất cả", .215, .228),
+            word("Trợ thủ", .7, .228),
+            word("Đã nhận", .78, .228),
+            word("Ph.án khác", .89, .915)
+        )
+        assertFalse(ProComboScreens.preparation(picker))
+        // The Pro list over Chuẩn bị, its own title seen.
+        assertFalse(ProComboScreens.preparation(popup + max))
+    }
 }

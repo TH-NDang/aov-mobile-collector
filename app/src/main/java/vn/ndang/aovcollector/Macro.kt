@@ -55,8 +55,12 @@ class Macro(val raw: String) {
                 "back" -> Unit
                 "pick" -> require(s.getInt("index") in 0..9999) { "pick: index từ 0 đến 9999" }
                 "find" -> {
-                    require(s.getString("name").trim().length in 1..40) { "find: cần tên tướng (tối đa 40 ký tự)" }
-                    require(s.optInt("hint", -1) in -1..9999) { "find: hint từ -1 đến 9999" }
+                    if (s.optBoolean("sweep")) {
+                        require(s.getString("key").matches(Regex("hero-\\d{3}"))) { "find: key là hero-001…" }
+                    } else {
+                        require(s.getString("name").trim().length in 1..40) { "find: cần tên tướng (tối đa 40 ký tự)" }
+                        require(s.optInt("hint", -1) in -1..9999) { "find: hint từ -1 đến 9999" }
+                    }
                     require(s.getInt("skipTo") in i + 1..steps.length()) { "find: skipTo phải là một bước sau nó" }
                 }
                 "enter" -> {
@@ -109,6 +113,7 @@ class Macro(val raw: String) {
                 "pro-builds" -> {
                     require(json.optString("collectionMode") == "pro-builds") { "pro-builds: không đúng chế độ" }
                     require(s.getInt("heroes") in 1..BuiltInMacros.ALL) { "pro-builds: số tướng không hợp lệ" }
+                    require(s.optInt("combos", ProSimpleReader.MAX) in 1..BuiltInMacros.ALL) { "pro-builds: số combo không hợp lệ" }
                 }
                 "chess" -> {
                     require(json.optString("collectionMode") == "chess") { "chess: không đúng chế độ" }
@@ -134,13 +139,16 @@ class Macro(val raw: String) {
 /** Coordinates calibrated from the user's 2400x1080 VN hero menu. */
 object BuiltInMacros {
     /** Bump when the generated steps change; selected built-in macros are then regenerated with the same settings. */
-    const val VERSION = 9
+    const val VERSION = 11
 
     /** "Tất cả": more cards than the game has; the run stops at the end of the list. */
     const val ALL = 300
 
-    /** One guarded, checkpointed event invitation run across an ordered list of separate accounts. */
-    fun eventInvite(accountKeys: List<String>, codeFingerprint: String): String {
+    /**
+     * One guarded, checkpointed event-code run across an ordered list of separate accounts, for the event [recipe]
+     * describes (Thập kỷ chung sức unless another is chosen). The recipe holds names shown in the game, never the code.
+     */
+    fun eventInvite(accountKeys: List<String>, codeFingerprint: String, recipe: EventCodeRecipe = EventCodeRecipe.Anniversary): String {
         require(
             accountKeys.isNotEmpty() &&
                 accountKeys.size <= EventInviteLedger.MAX_ACCOUNTS &&
@@ -151,7 +159,10 @@ object BuiltInMacros {
         val action = JSONObject().put("type", "event-invite")
             .put("accountKeys", org.json.JSONArray(accountKeys))
             .put("codeFingerprint", codeFingerprint)
+            .put("recipe", recipe.json())
+        // The task's internal name for every event: the entry policy and the checks above know it by this name.
         return JSONObject().put("name", "anniversary-invite")
+            .put("eventRecipe", recipe.json())
             .put("targetPackage", "com.garena.game.kgvn")
             .put("orientation", "landscape")
             .put("collectionMode", "event-invite")
@@ -160,15 +171,30 @@ object BuiltInMacros {
             .put("steps", org.json.JSONArray().put(action)).toString(2)
     }
 
-    /** Preparation-only collection. Never launches, signs in, or reads account data. */
-    fun proBuilds(heroes: Int = ALL): String {
-        require(heroes in 1..ALL)
+    /** The event an event-code macro or its step is for; Thập kỷ chung sức for macros older than the choice. */
+    fun eventRecipe(json: JSONObject): EventCodeRecipe = EventCodeRecipe.from(
+        json.optJSONObject("eventRecipe") ?: json.optJSONObject("recipe")
+            ?: json.optJSONArray("steps")?.optJSONObject(0)?.optJSONObject("recipe")
+    )
+
+    /**
+     * Đề cử Pro for every hero: [combos] recommendations each applied and photographed ([ALL]: every one listed).
+     * Preparation-only collection. Never launches, signs in, or reads account data.
+     */
+    fun proBuilds(heroes: Int = ALL, combos: Int = ProSimpleReader.MAX): String {
+        require(heroes in 1..ALL && combos in 1..ALL)
         return JSONObject().put("name", "pro-builds").put("targetPackage", "com.garena.game.kgvn")
             .put("orientation", "landscape").put("collectionMode", "pro-builds")
-            .put("heroCount", heroes).put("builtinVersion", VERSION)
-            .put("steps", org.json.JSONArray().put(JSONObject().put("type", "pro-builds").put("heroes", heroes)))
+            .put("heroCount", heroes).put("proCombos", combos).put("builtinVersion", VERSION)
+            .put(
+                "steps",
+                org.json.JSONArray().put(JSONObject().put("type", "pro-builds").put("heroes", heroes).put("combos", combos))
+            )
             .toString(2)
     }
+
+    /** Combos a Đề cử Pro macro or its step takes per hero; five for macros older than the choice. */
+    fun proCombos(json: JSONObject) = json.optInt("proCombos", json.optInt("combos", ProSimpleReader.MAX)).coerceIn(1, ALL)
 
     /**
      * [fast] shortens the waits after taps (tab switches most); [detailOnly] skips the summary ("Tóm tắt")
@@ -264,13 +290,14 @@ object BuiltInMacros {
     }
 
     /**
-     * Heroes by name ([names]), found on the All-heroes list ([HeroSearch]): first at the card [hints] gives (from
-     * [HeroIndex], -1 when unknown), each name checked on the card. A hero not on the list is skipped: its "find"
-     * step jumps to the next hero's ("skipTo"). Options as for the list ([create]).
+     * Heroes by name ([names]), taken as one pass down the All-heroes list meets them ([HeroSweep]): block hero-001 is
+     * the first of them on the list, whatever order they were typed in, and its "find" step ("sweep") reads the names
+     * on each screen on the way. Places saved from earlier runs are not followed: they may be another account's, in
+     * another order (the user's run of 35 dragged up and down between them and stopped at the 10th). A hero not on
+     * the list is skipped: its block's "find" step jumps to the next block ("skipTo"). Options as for the list ([create]).
      */
     fun named(
         names: List<String>,
-        hints: List<Int> = names.map { -1 },
         fast: Boolean = false,
         detailOnly: Boolean = false,
         directSkills: Boolean = false,
@@ -278,27 +305,31 @@ object BuiltInMacros {
         checkAccount: Boolean = false,
         traceEntry: Boolean = true
     ): String {
-        val chosen = names.mapIndexed { i, n ->
-            n.trim() to (hints.getOrNull(i)?.takeIf { it >= 0 } ?: -1)
-        }.filter { it.first.isNotEmpty() }.distinctBy { HeroNames.slug(it.first) }
-        val heroes = chosen.map { it.first }
+        // A name the sweep would read as one before it ("Supenman" after "Superman") would take that hero twice.
+        val heroes = names.map { it.trim() }.filter { it.isNotEmpty() }.fold(ArrayList<String>()) { kept, name ->
+            val slug = HeroNames.slug(name)
+            if (kept.none { HeroFinder.same(HeroNames.slug(it), slug) }) kept += name
+            kept
+        }
         require(heroes.size in 1..ALL) { "Chọn ít nhất một tướng" }
         require(heroes.all { it.length <= 40 }) { "Tên tướng tối đa 40 ký tự" }
         val steps = org.json.JSONArray()
         val hero = Hero(steps, fast, detailOnly, directSkills)
         if (openGame) steps.put(JSONObject().put("type", "enter"))
         hero.waitFor(if (openGame) 1000 else 3000)
-        for ((i, pair) in chosen.withIndex()) {
-            val find = JSONObject().put("type", "find").put("name", pair.first).put("hint", pair.second)
+        for (i in heroes.indices) {
+            val key = "hero-%03d".format(i + 1)
+            val find = JSONObject().put("type", "find").put("sweep", true).put("key", key)
             steps.put(find)
             hero.waitFor(if (fast) 2000 else 2700)
-            hero.collect("hero-%03d".format(i + 1))
+            hero.collect(key)
             hero.back()
             find.put("skipTo", steps.length())
         }
         return JSONObject().put("name", "named-heroes")
             .put("targetPackage", "com.garena.game.kgvn").put("orientation", "landscape")
-            .put("collectionMode", "pick").put("heroName", heroes.joinToString(", ").take(80)).put("heroNames", org.json.JSONArray(heroes))
+            .put("collectionMode", "pick").put("sweep", true)
+            .put("heroName", heroes.joinToString(", ").take(80)).put("heroNames", org.json.JSONArray(heroes))
             .put(
                 "heroCount",
                 heroes.size
@@ -349,7 +380,8 @@ object BuiltInMacros {
         checkAccount: Boolean = false,
         traceEntry: Boolean = true,
         heroes: Int = ALL,
-        wanted: List<BoardScreens.Want> = BoardScreens.DEFAULT
+        wanted: List<BoardScreens.Want> = BoardScreens.DEFAULT,
+        players: Boolean = true
     ): String {
         require(heroes in 1..ALL && wanted.isNotEmpty())
         val tabs = org.json.JSONArray()
@@ -357,9 +389,10 @@ object BuiltInMacros {
         val steps = org.json.JSONArray()
         if (openGame) steps.put(JSONObject().put("type", "enter").put("to", "lobby"))
         steps.put(JSONObject().put("type", "wait").put("ms", if (openGame) 1000 else 3000))
-        steps.put(JSONObject().put("type", "board").put("heroes", heroes).put("tabs", tabs))
+        steps.put(JSONObject().put("type", "board").put("heroes", heroes).put("tabs", tabs).put("players", players))
         return JSONObject().put("name", "hero-board").put("targetPackage", "com.garena.game.kgvn").put("orientation", "landscape")
             .put("collectionMode", "board").put("heroName", "").put("heroCount", heroes).put("boardTabs", tabs)
+            .put("boardPlayers", players)
             .put("openGame", openGame).put("checkAccount", openGame && checkAccount).put("traceEntry", traceEntry)
             .put("builtinVersion", VERSION).put("steps", steps).toString(2)
     }
@@ -373,7 +406,7 @@ object BuiltInMacros {
         return JSONObject().put("name", "chess-wiki")
             .put("targetPackage", "com.garena.game.kgvn").put("orientation", "landscape")
             .put("collectionMode", "chess").put("heroName", "")
-            .put("fast", options.fast)
+            .put("fast", options.fast).put("chessQuick", options.quick)
             .put("chessTopics", org.json.JSONArray(options.topics().map { it.key }))
             .put("chessHeroDetails", options.heroDetails)
             .put("chessSynergyDetails", options.synergyDetails).put("chessEquipmentDetails", options.equipmentDetails)
@@ -391,7 +424,9 @@ object BuiltInMacros {
             json.optBoolean("chessHeroDetails"),
             json.optBoolean("chessSynergyDetails"), json.optBoolean("chessEquipmentDetails"),
             (json.optJSONArray("chessNativeGroups")?.let { a -> (0 until a.length()).map { a.getString(it) }.toSet() } ?: emptySet()),
-            json.optBoolean("fast", true)
+            json.optBoolean("fast", true),
+            // Macros from before v0.13.45 have no choice saved: they get the fast capture too.
+            json.optBoolean("chessQuick", true)
         )
     }
 
@@ -408,6 +443,9 @@ object BuiltInMacros {
         }
             .ifEmpty { BoardScreens.DEFAULT }
     }
+
+    /** Whether a Chiến khu macro or its step opens each top player's page and picture; macros older than it do too. */
+    fun boardPlayers(json: JSONObject) = json.optBoolean("boardPlayers", json.optBoolean("players", true))
 
     /** The tables a ranking macro asks for, all when it names none. */
     fun rankCombos(json: JSONObject): List<RankScreens.Combo> {

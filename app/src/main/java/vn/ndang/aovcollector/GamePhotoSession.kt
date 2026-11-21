@@ -120,7 +120,7 @@ object GamePhotoSession {
             output.write(state.toString(2).toByteArray(Charsets.UTF_8))
             output.fd.sync()
         }
-        require(temp.renameTo(file)) { "Không lưu được mốc ảnh Pictures" }
+        require(temp.moveOnto(file)) { "Không lưu được mốc ảnh Pictures" }
     }
 
     private fun fingerprint(value: String): String = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
@@ -430,8 +430,15 @@ object GamePhotoSession {
         )
     }
 
-    /** Called AFTER Save Photo → Sure has been confirmed on the correct icon/topic. */
-    @Synchronized fun mark(context: Context, runId: String, group: String, item: String, aliases: Set<String> = emptySet()) {
+    /** Called AFTER Save Photo → Sure has been confirmed on the correct icon/topic; [time] is when Sure was pressed. */
+    @Synchronized fun mark(
+        context: Context,
+        runId: String,
+        group: String,
+        item: String,
+        aliases: Set<String> = emptySet(),
+        time: Long = System.currentTimeMillis()
+    ) {
         require(group in validGroups)
         val state = read(context, runId)
         val saves = state.getJSONArray("saves")
@@ -450,7 +457,7 @@ object GamePhotoSession {
         }
         saves.put(
             JSONObject().put("group", group).put("item", item)
-                .put("aliases", JSONArray((aliases - item).sorted())).put("time", System.currentTimeMillis())
+                .put("aliases", JSONArray((aliases - item).sorted())).put("time", time)
         )
         store(context, runId, state)
     }
@@ -560,7 +567,7 @@ object GamePhotoSession {
         try {
             val copied = original.inputStream().use { OriginalPhotoCopy.copy(it, part, verified.bytes) }
             require(copied == verified) { "Ảnh nguồn đã thay đổi" }
-            require(part.renameTo(target)) { "Không lưu được bản sao trong lượt" }
+            require(part.moveOnto(target)) { "Không lưu được bản sao trong lượt" }
             committed = true
         } finally {
             part.delete()
@@ -669,7 +676,7 @@ object GamePhotoSession {
             ledger.put(identity, path)
             val ledgerPart = File(ledgerFile.parentFile, ledgerFile.name + ".part")
             ledgerPart.writeText(ledger.toString(2))
-            require(ledgerPart.renameTo(ledgerFile)) { "Không lưu được sổ sao chép ảnh" }
+            require(ledgerPart.moveOnto(ledgerFile)) { "Không lưu được sổ sao chép ảnh" }
             pin(assignments, pick, recorded)
             assignments.optJSONObject(pick.id)?.put("sourceIdentity", identity)
             state.put("assignments", assignments).put("originalIntegrity", integrity)
@@ -818,7 +825,7 @@ object GamePhotoSession {
                     }
                 } ?: error("Không mở được ảnh mới")
                 require(receiptExpected == null || verified == receiptExpected) { "Ảnh gốc đã thay đổi trong khi sao chép" }
-                require(partial.renameTo(output)) { "Không chuyển được ảnh đã kiểm tra" }
+                require(partial.moveOnto(output)) { "Không chuyển được ảnh đã kiểm tra" }
                 committed = true
                 history?.let {
                     try {

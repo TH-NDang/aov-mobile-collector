@@ -287,7 +287,18 @@ class BoardTest {
         val ownedOnReopen: Boolean = false,
         val ignorePickerTaps: Boolean = false,
         var allSelected: Boolean = true,
-        val reselectOtherTab: Boolean = false
+        val reselectOtherTab: Boolean = false,
+        // Each list's players; looks a player's page takes to load; ranks whose eye opens no UID box.
+        val players: Int = 60,
+        val profileLoads: Int = 0,
+        val noBox: Set<Int> = emptySet(),
+        // Android keeps the clipboard from the app: every read gives nothing.
+        val hiddenClipboard: Boolean = false,
+        // The card still open on the way back; the list back at its top after a player's page.
+        val cardStays: Boolean = true,
+        val resetOnBack: Boolean = false,
+        /** Chọn tướng opens at its top every time, as the user's game does once Đã nhận is cleared. */
+        val pickerOpensAtTop: Boolean = false
     ) : BoardReader.Screen {
         var looks = 0
         var outcome: BoardReader.Outcome? = null
@@ -329,6 +340,91 @@ class BoardTest {
         var hero = 0
         var tab = 0
         var offset = 0.0
+
+        // A player: the card open over the list, their page, the eye's box over it, and how long the page has loaded.
+        var card: Int? = null
+        var profileOf: Int? = null
+        var box = false
+        var profileLooks = 0
+        val opened = ArrayList<Int>()
+        val notes = ArrayList<String>()
+
+        // What the game's copy icons put on the clipboard, and the names and UIDs the reader recorded.
+        var clipboard: String? = null
+        val ids = LinkedHashMap<String, Triple<String?, String?, Boolean>>()
+
+        override fun clearClipboard() {
+            clipboard = null
+        }
+
+        override fun copied(then: (String?) -> Unit) {
+            pending.addLast { then(if (hiddenClipboard) null else clipboard) }
+        }
+
+        override fun playerIds(key: String, name: String?, uid: String?, uidCopied: Boolean) {
+            ids[key] = Triple(name, uid, uidCopied)
+        }
+
+        private fun uidOf(rank: Int) = "120000000000%04d".format(rank)
+
+        // Whether each page and picture kept had finished loading when it was taken.
+        val loadedShots = ArrayList<Boolean>()
+
+        override fun note(text: String) {
+            notes += text
+        }
+
+        private fun rowY(rank: Int) = BoardPlayerPixels.ROW0 + (rank - 1) * BoardPlayerPixels.PITCH - offset
+
+        /** The list's picture column as it scrolls: the same content at the same place in the list, different elsewhere. */
+        private fun listProfile(h: Int): FloatArray {
+            val y0 = (BoardPlayerPixels.LIST_TOP * h).toInt()
+            val y1 = (BoardPlayerPixels.LIST_BOTTOM * h).toInt()
+            val out = FloatArray((y1 - y0) * 15)
+            for (y in y0 until y1) {
+                // Each pixel row of the list has its own colours, which move with it when the list scrolls.
+                val world = kotlin.math.floor(y + offset * h).toInt()
+                for (k in 0 until 15) {
+                    var x = world * 73856093 xor k * 19349663 xor (tab * 31 + hero) * 83492791
+                    x = x xor (x ushr 13)
+                    x *= 0x5bd1e995
+                    x = x xor (x ushr 15)
+                    out[(y - y0) * 15 + k] = ((x and 0x7fffffff) % 160 + 40).toFloat()
+                }
+            }
+            return out
+        }
+
+        private fun facts(): BoardPlayerPixels.Facts {
+            val h = 540
+            val list = page == Page.BOARD
+            val rank = profileOf ?: 0
+            val pageLoaded = page == Page.PROFILE && profileLooks > profileLoads
+            return BoardPlayerPixels.Facts(
+                height = h,
+                rows = if (list) {
+                    (1..players).map {
+                        rowY(it)
+                    }.filter { it in BoardPlayerPixels.ROW_TOP..BoardPlayerPixels.ROW_BOTTOM }
+                } else {
+                    emptyList()
+                },
+                profile = if (list) listProfile(h) else FloatArray(0),
+                card = list && card != null,
+                panelLum = if (page == Page.PROFILE) 76.0 else 78.0,
+                panel = when {
+                    page != Page.PROFILE -> IntArray(192)
+                    // Loading: it changes from one look to the next.
+                    !pageLoaded -> IntArray(192) { profileLooks * 13 + it }
+                    else -> IntArray(192) { rank * 3 + it % 7 }
+                },
+                stats = pageLoaded,
+                avatarDetail = if (pageLoaded) 9.5 else .3,
+                photo = IntArray(256) { 40 },
+                photoDetail = .1,
+                uidCopy = if (page == Page.PROFILE && box) .566 else null
+            )
+        }
 
         private fun w(text: String, x: Double, y: Double) = GameScreens.Word(text, x - .04, y - .015, x + .04, y + .015)
 
@@ -376,6 +472,8 @@ class BoardTest {
                 w("L.sử lực chiến cao nhất", .158, .667)
             )
             Page.PICKER -> listOf(w("Chọn tướng", .2, .117), w("Tất cả", .215, .227), w("Đã nhận", .78, .227))
+            Page.PROFILE -> listOf(w("Thông tin kiện tướng", .215, .056), w("Số 1 máy chủHayate", .17, .34), w("Trận", .124, .75)) +
+                if (box) listOf(GameScreens.Word("UID " + uidOf(profileOf ?: 0), .415, .331, .555, .361)) else emptyList()
             Page.TOP -> listOf(
                 w("Số 1 máy chủ", .5, .08),
                 w("Top chiến lực", .5, .157),
@@ -440,6 +538,9 @@ class BoardTest {
 
         override fun look(words: Boolean, grid: Boolean, then: (BoardReader.Look?) -> Unit) {
             looks++
+            if (page == Page.PROFILE) profileLooks++
+            val seen = facts()
+            val loaded = page == Page.PROFILE && profileLooks > profileLoads
             val shown = if (words) words() else emptyList()
             val bands = if (page == Page.PICKER) bands() else emptyList()
             val signature = IntArray(8) { (hero * 100000 + tab * 10000 + (offset * 1000).toInt()) }
@@ -463,8 +564,11 @@ class BoardTest {
                         local in 0.0..BoardScreens.CARD
                 }
 
+                override val facts = seen
+
                 override fun done(keep: String?) {
                     if (keep != null) kept += keep
+                    if (keep != null && keep.contains("-hang-")) loadedShots += loaded
                 }
             })
         }
@@ -507,8 +611,24 @@ class BoardTest {
                     }
                 }
                 Page.BOARD -> when {
+                    // An open card takes the tap: its person icon opens the player's page, a tap beside it closes it.
+                    card != null -> if (abs(x - BoardPlayerPixels.PROFILE_X) < .01 && abs(y - BoardPlayerPixels.PROFILE_Y) < .01) {
+                        profileOf = card
+                        page = Page.PROFILE
+                        profileLooks = 0
+                        box = false
+                        if (!cardStays) card = null
+                    } else {
+                        check(x < .77) { "a card's add-friend or report icon tapped" }
+                        card = null
+                    }
+                    abs(x - BoardPlayerPixels.ROW_X) < .01 -> (1..players).firstOrNull { abs(rowY(it) - y) < .03 }?.let {
+                        card = it
+                        opened += it
+                    }
                     abs(x - BoardScreens.SWAP_X) < .01 && abs(y - BoardScreens.SWAP_Y) < .01 -> if (!ignorePickerTaps) {
                         page = Page.PICKER
+                        if (pickerOpensAtTop) gridScroll = 0.0
                         if (ownedOnReopen) {
                             owned = true
                         }
@@ -556,6 +676,20 @@ class BoardTest {
                         }
                     }
                 }
+                // The eye's box takes the next tap: its copy icon copies the UID, anything else closes it. Without it,
+                // the name's copy icon copies the name, the eye opens the box, the arrow goes back.
+                Page.PROFILE -> when {
+                    box -> if (abs(x - .566) < .006 && abs(y - .346) < .02) clipboard = uidOf(profileOf ?: 0) else box = false
+                    abs(x - BoardPlayerPixels.NAME_COPY_X) < .006 && abs(y - BoardPlayerPixels.NAME_COPY_Y) < .01 ->
+                        clipboard = "Người chơi $profileOf"
+                    abs(x - BoardPlayerPixels.EYE_X) < .006 && abs(y - BoardPlayerPixels.EYE_Y) < .01 -> box = profileOf !in noBox
+                    abs(x - BoardPlayerPixels.BACK_X) < .01 && abs(y - BoardPlayerPixels.BACK_Y) < .01 -> {
+                        profileOf = null
+                        page = Page.BOARD
+                        if (resetOnBack) offset = 0.0
+                    }
+                    else -> check(false) { "a tap on the player's page at $x, $y" }
+                }
                 else -> Unit
             }
             pending.addLast { then(true) }
@@ -600,9 +734,11 @@ class BoardTest {
             wanted: List<BoardScreens.Want> = Tab.values().map {
                 BoardScreens.Want(it, 3)
             },
-            first: Int = 0
+            first: Int = 0,
+            openPlayers: Boolean = false,
+            donePlayers: Set<String> = emptySet()
         ): Game {
-            BoardReader(this, heroesWanted, wanted, first) { outcome = it }.start()
+            BoardReader(this, heroesWanted, wanted, first, openPlayers, donePlayers) { outcome = it }.start()
             var guard = 0
             while (outcome == null && looks < cut) {
                 (pending.removeFirstOrNull() ?: break).invoke()
@@ -657,6 +793,27 @@ class BoardTest {
         assertEquals((0 until 30).toList(), game.chosen)
         assertEquals(30, game.kept.size)
         assertEquals("hero-030-may-chu-01", game.kept.last())
+    }
+
+    @Test fun aPickerOpeningAtItsTopIsNotFlungBackForEveryHero() {
+        // The user's game: Chọn tướng opens at its top again for each hero. Once the top has been proven, a grid that
+        // looks the same is taken as it, and the probe and the flings back up are not done again.
+        val game = Game(page = Page.BOARD, heroes = 30, gridScroll = .2, pickerOpensAtTop = true)
+            .run(wanted = listOf(BoardScreens.Want(Tab.SERVER, 1)))
+        assertTrue(game.outcome.toString(), game.outcome is BoardReader.Outcome.Done)
+        assertEquals((0 until 30).toList(), game.chosen)
+        assertEquals(1, game.calibrationActions.count { it.id == "board.v1.picker.scroll.probe-flick" })
+        assertTrue(game.calibrationActions.count { it.id == "board.v1.picker.scroll.reset" } <= 3)
+    }
+
+    @Test fun theGridsTopRowIsWhereTheGameNowPutsIt() {
+        // Today's game puts the first row's top at .294, with or without Đã nhận; an older screenshot had .343.
+        for (name in listOf("picker", "picker-owned")) {
+            val p = pixels(name)
+            assertTrue(name, BoardPickerMotion.validTop(BoardScreens.rows(p.first, p.second, rows(p))))
+        }
+        // A row cut by the window's top is not the first row of the grid.
+        assertFalse(BoardPickerMotion.validTop(listOf(BoardScreens.VIEW_TOP to BoardScreens.VIEW_TOP + BoardScreens.CARD - .01)))
     }
 
     @Test fun turnsOffOwnedOnlyBeforeIndexingAndCollectsTheWholeRoster() {
@@ -827,5 +984,148 @@ class BoardTest {
         val server = Game(page = Page.BOARD, heroes = 1, length = 3.0).run(wanted = listOf(BoardScreens.Want(Tab.SERVER, 10)))
         assertEquals((1..4).map { "hero-001-may-chu-%02d".format(it) }, server.kept)
         assertEquals(listOf(1, 1, 2, 4), listOf(3, 4, 5, 10).map { BoardScreens.Want(Tab.SERVER, it).pages })
+    }
+
+    private fun player(hero: Int, tab: Tab, rank: Int) =
+        listOf("ho-so", "uid").map { "hero-%03d-%s-hang-%02d-%s".format(hero, tab.slug, rank, it) }
+
+    @Test fun opensEachTopPlayerTheirPageCopiesNameAndUidThenGoesBack() {
+        val game = Game(page = Page.BOARD, heroes = 2, length = 3.0).run(wanted = BoardScreens.DEFAULT, openPlayers = true)
+        assertTrue(game.outcome.toString(), game.outcome is BoardReader.Outcome.Done)
+        // The list as before, then each of Việt Nam's top three, then "Số 1 máy chủ" as before.
+        assertEquals(
+            (1..2).flatMap { h ->
+                listOf("hero-%03d-quoc-gia-01".format(h)) + (1..3).flatMap { player(h, Tab.COUNTRY, it) } +
+                    "hero-%03d-so-1-may-chu-01".format(h)
+            },
+            game.kept
+        )
+        assertEquals(listOf(1, 2, 3, 1, 2, 3), game.opened)
+        val ids = game.calibrationActions.map { it.id }.toSet()
+        for (id in listOf(
+            "player.row",
+            "player.profile",
+            "player.copy-name",
+            "player.eye",
+            "player.copy-uid",
+            "player.back",
+            "player.card.close"
+        )) {
+            assertTrue(id, "board.v1.$id" in ids)
+        }
+        assertTrue("board.v1.player.avatar" !in ids)
+        assertTrue(game.calibrationActions.filter { it.id == "board.v1.player.row" }.all { it.relative })
+        // Each player's name and UID as the copy icons gave them.
+        assertEquals(
+            (1..2).flatMap { h ->
+                (1..3).map { "hero-%03d-quoc-gia-hang-%02d".format(h, it) to Triple("Người chơi $it", "120000000000%04d".format(it), true) }
+            },
+            game.ids.toList()
+        )
+        // Never the card's add-friend or report icons.
+        assertTrue(game.taps.none { it.second > .88 && it.first > .83 })
+    }
+
+    @Test fun waitsForASlowPageBeforeKeepingIt() {
+        val game = Game(page = Page.BOARD, heroes = 1, profileLoads = 6).run(
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3)),
+            openPlayers = true
+        )
+        assertTrue(game.outcome is BoardReader.Outcome.Done)
+        assertEquals(6, game.loadedShots.size)
+        assertTrue("taken while loading: ${game.loadedShots}", game.loadedShots.all { it })
+        assertTrue(game.notes.none { it.contains("tải lâu") })
+    }
+
+    @Test fun keepsWhatIsThereWhenItNeverFinishesLoading() {
+        val game = Game(page = Page.BOARD, heroes = 1, profileLoads = 100).run(
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 1)),
+            openPlayers = true
+        )
+        assertTrue(game.outcome is BoardReader.Outcome.Done)
+        assertTrue(game.kept.contains("hero-001-quoc-gia-hang-01-ho-so"))
+        assertTrue(game.notes.any { it.contains("hồ sơ tải lâu") })
+    }
+
+    @Test fun findsTheServersTopTenAcrossScrolledScreens() {
+        val game = Game(page = Page.BOARD, heroes = 1, length = 3.0).run(
+            wanted = listOf(BoardScreens.Want(Tab.SERVER, 10)),
+            openPlayers = true
+        )
+        assertTrue(game.outcome is BoardReader.Outcome.Done)
+        assertEquals((1..10).toList(), game.opened)
+        assertEquals((1..10).flatMap { player(1, Tab.SERVER, it) }, game.kept.filter { it.contains("-hang-") })
+        assertEquals((1..4).map { "hero-001-may-chu-%02d".format(it) }, game.kept.filter { !it.contains("-hang-") })
+    }
+
+    @Test fun findsItsPlaceAgainWhenTheListIsBackAtItsTop() {
+        val game = Game(page = Page.BOARD, heroes = 1, length = 3.0, resetOnBack = true, cardStays = false).run(
+            wanted = listOf(BoardScreens.Want(Tab.SERVER, 10)),
+            openPlayers = true
+        )
+        assertTrue(game.outcome.toString(), game.outcome is BoardReader.Outcome.Done)
+        assertEquals((1..10).toList(), game.opened)
+        assertEquals((1..10).flatMap { player(1, Tab.SERVER, it) }, game.kept.filter { it.contains("-hang-") })
+        // Measured back from where it was when near, from the top after the tab again when far.
+        assertTrue(game.notes.toString(), game.notes.any { it.contains("đã đo lại vị trí") })
+        assertTrue(game.notes.toString(), game.notes.any { it.contains("mở lại bảng từ đầu") })
+        assertTrue(game.notes.none { it.contains("không tìm lại được") })
+    }
+
+    @Test fun anEyeThatOpensNoBoxLeavesThePlayerWithTheirName() {
+        val game = Game(page = Page.BOARD, heroes = 1, noBox = setOf(2)).run(
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3)),
+            openPlayers = true
+        )
+        assertTrue(game.outcome is BoardReader.Outcome.Done)
+        assertEquals(listOf(1, 2, 3), game.opened)
+        assertEquals(
+            player(1, Tab.COUNTRY, 1) + "hero-001-quoc-gia-hang-02-ho-so" + player(1, Tab.COUNTRY, 3),
+            game.kept.filter { it.contains("-hang-") }
+        )
+        assertTrue(game.notes.any { it.contains("hạng 2") && it.contains("không hiện hộp UID") })
+        assertEquals(Triple("Người chơi 2", null, false), game.ids["hero-001-quoc-gia-hang-02"])
+        // Nothing is tapped where the box should have been.
+        assertEquals(2, game.calibrationActions.count { it.id == "board.v1.player.copy-uid" })
+    }
+
+    /** Android may keep the clipboard from the app: the UID is then the one read in the box, and no name is made up. */
+    @Test fun aHiddenClipboardLeavesTheUidReadInTheBox() {
+        val game = Game(page = Page.BOARD, heroes = 1, hiddenClipboard = true).run(
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3)),
+            openPlayers = true
+        )
+        assertTrue(game.outcome is BoardReader.Outcome.Done)
+        assertEquals((1..3).map { Triple(null, "120000000000%04d".format(it), false) }, game.ids.values.toList())
+        assertTrue(game.notes.any { it.contains("UID đọc từ hộp") })
+    }
+
+    @Test fun aShortListEndsWithoutScrolling() {
+        val game = Game(page = Page.BOARD, heroes = 1, players = 2).run(
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3)),
+            openPlayers = true
+        )
+        assertTrue(game.outcome is BoardReader.Outcome.Done)
+        assertEquals(listOf(1, 2), game.opened)
+        assertEquals("hero-001-quoc-gia-01", game.kept.first())
+        assertTrue(game.notes.any { it.contains("chỉ có 2 người") })
+        assertTrue(game.calibrationActions.none { it.id == "board.v1.ranking.scroll" })
+    }
+
+    @Test fun aResumedStepSkipsThePlayersAlreadyKept() {
+        val game = Game(page = Page.BOARD, heroes = 1).run(
+            wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3)),
+            openPlayers = true,
+            donePlayers = setOf("hero-001-quoc-gia-hang-01", "hero-001-quoc-gia-hang-02")
+        )
+        assertTrue(game.outcome is BoardReader.Outcome.Done)
+        assertEquals(listOf(3), game.opened)
+    }
+
+    @Test fun aPlayersPageLeftOpenIsClosedOnTheWayIn() {
+        val game = Game(page = Page.PROFILE, heroes = 1).run(wanted = listOf(BoardScreens.Want(Tab.COUNTRY, 3)))
+        assertTrue(game.outcome is BoardReader.Outcome.Done)
+        assertEquals(listOf("hero-001-quoc-gia-01"), game.kept)
+        assertTrue(game.calibrationActions.any { it.id == "board.v1.player.back" })
     }
 }

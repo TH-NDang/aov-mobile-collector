@@ -65,7 +65,9 @@ internal object BoardPickerMotion {
 
     fun validTop(rows: List<Pair<Double, Double>>): Boolean {
         val first = rows.firstOrNull() ?: return false
-        return first.first in .320..0.373 &&
+        // The first row's top at the grid's top: .294 on the user's phone today (with or without Đã nhận), .343 on
+        // an older screenshot. A row cut by the window's top starts at VIEW_TOP itself, .285, and is not taken.
+        return first.first in .289..0.373 &&
             first.second - first.first in (BoardScreens.CARD - .018)..(BoardScreens.CARD + .018)
     }
 

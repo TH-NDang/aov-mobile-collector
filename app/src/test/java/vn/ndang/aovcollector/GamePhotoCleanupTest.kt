@@ -200,7 +200,7 @@ class GamePhotoCleanupTest {
             val pick = f.candidate()!!
             val other = File(f.run, "elsewhere.png").apply { writeBytes(f.original) }
             f.target.delete()
-            Files.createSymbolicLink(f.target.toPath(), other.toPath())
+            symlink(f.target, other)
             assertEquals(1, f.delete(listOf(pick)).skipped)
             assertEquals(0, f.deleteCalls)
             assertTrue(other.isFile)

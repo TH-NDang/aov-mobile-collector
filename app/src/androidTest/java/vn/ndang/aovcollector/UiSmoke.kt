@@ -290,6 +290,16 @@ class UiSmoke : Instrumentation() {
                 }
                 check(title != null && HeroNames.slug(title) == "arduin") { "Chess heading OCR read $title for Arduin" }
             }
+            // User regression: "Ghi chú cập nhật" over the chess lobby must be read through the real OCR.
+            context.assets.open("chess-update-notes.jpg").use { input ->
+                val shot = BitmapFactory.decodeStream(input)
+                val words = try {
+                    GameText.words(shot).ifEmpty { GameText.words(shot) }
+                } finally {
+                    shot.recycle()
+                }
+                check(GamePopups.updateNotes(words) != null) { "OCR did not read the update notes' title: $words" }
+            }
             // ZIP regression: exactly five heroes, not another row made from truncated cyan factions.
             context.assets.open("chess-first-row.png").use { input ->
                 val shot = BitmapFactory.decodeStream(input)
@@ -1215,15 +1225,15 @@ class UiSmoke : Instrumentation() {
                     }.getBoolean("directSkills")
             ) { "Chuyển thẳng chiêu should reach the skills step" }
             check(Macro(BuiltInMacros.create("", 11, true)).steps.toString().contains("\"pick\""))
-            // Heroes by name: a "find" step a hero, which skips to the next hero's when the list has no such hero.
-            val named = Macro(BuiltInMacros.named(listOf("Bolt Baron", " violet ", "Bolt Baron"), listOf(7, -1, 7)))
+            // Heroes by name: a "find" block a hero, the next met down the list, which skips to the next block when none is left.
+            val named = Macro(BuiltInMacros.named(listOf("Bolt Baron", " violet ", "Bolt Baron")))
             val finds = (0 until named.steps.length()).filter { named.steps.getJSONObject(it).getString("type") == "find" }
             check(
                 finds.size == 2 &&
                     named.steps.getJSONObject(finds[0]).getInt("skipTo") == finds[1] &&
                     named.steps.getJSONObject(finds[1]).getInt("skipTo") == named.steps.length() &&
-                    named.steps.getJSONObject(finds[0]).getInt("hint") == 7 &&
-                    named.steps.getJSONObject(finds[1]).getString("name") == "violet" &&
+                    named.steps.getJSONObject(finds[0]).getBoolean("sweep") &&
+                    named.steps.getJSONObject(finds[1]).getString("key") == "hero-002" &&
                     BuiltInMacros.heroNames(named.json) == listOf("Bolt Baron", "violet")
             ) { "Heroes by name: ${named.raw}" }
             // Thống kê tướng takes the chosen tables only; one saved before the choice existed takes all six.
@@ -1413,8 +1423,13 @@ class UiSmoke : Instrumentation() {
             RunTimes.recordTask(timingPrefs, timingMacro.timingHash, 180.0)
             check(RunTimes.taskSamples(timingPrefs, timingMacro.timingHash) == listOf(120.0, 180.0))
             check(RunTimes.get(timingPrefs, RunTimes.task(Macro(JSONObject(timingMacro.raw).toString()).timingHash)) == 150.0)
-            val namedTimingA = Macro(BuiltInMacros.named(listOf("Violet"), listOf(-1)))
-            val namedTimingB = Macro(BuiltInMacros.named(listOf("Violet"), listOf(8)))
+            val namedTimingA = Macro(BuiltInMacros.named(listOf("Violet")))
+            val namedTimingB = Macro(
+                JSONObject(namedTimingA.raw).apply {
+                    val steps = getJSONArray("steps")
+                    (0 until steps.length()).map { steps.getJSONObject(it) }.first { it.getString("type") == "find" }.put("hint", 8)
+                }.toString()
+            )
             check(namedTimingA.hash != namedTimingB.hash && namedTimingA.timingHash == namedTimingB.timingHash) {
                 "Learned card position invalidated the same task's timing"
             }

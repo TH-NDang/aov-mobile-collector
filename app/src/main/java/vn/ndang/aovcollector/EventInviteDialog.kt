@@ -7,6 +7,8 @@ import android.view.ContextThemeWrapper
 import android.view.WindowManager
 import android.widget.CheckBox
 import android.widget.LinearLayout
+import android.widget.RadioButton
+import android.widget.RadioGroup
 import android.widget.ScrollView
 
 /**
@@ -16,6 +18,26 @@ import android.widget.ScrollView
 internal class EventInviteDialog(private val service: CollectorService, private val selectTask: (String) -> Boolean) {
     private val c: Context = ContextThemeWrapper(service, Ui.windowTheme(service))
     private var codeDraft: String = EventInviteAccounts.loadCode(service).orEmpty()
+
+    /** The event last chosen, kept apart from the encrypted accounts and code: only names shown in the game. */
+    private val prefs = service.getSharedPreferences("event-code", Context.MODE_PRIVATE)
+
+    private fun savedRecipe(): EventCodeRecipe = try {
+        EventCodeRecipe.from(prefs.getString("recipe", null)?.let { org.json.JSONObject(it) })
+    } catch (_: Exception) {
+        EventCodeRecipe.Anniversary
+    }
+
+    private fun steps(recipe: EventCodeRecipe) = when (recipe) {
+        is EventCodeRecipe.Anniversary ->
+            "Mỗi tài khoản: đăng xuất → đăng nhập Garena → Sự kiện → Tổng hợp sự kiện → Thập kỷ chung sức → Nhập mã mời. " +
+                "Xóa mã có sẵn rồi nhập mã đã lưu; chỉ tính quà khi thấy và lưu được kết quả. Tự dừng nếu trạng thái không rõ."
+        is EventCodeRecipe.Field ->
+            "Mỗi tài khoản: đăng xuất → đăng nhập Garena → Sự kiện → tìm \"${recipe.event}\" trong danh sách bên trái" +
+                (if (recipe.tab.isBlank()) "" else " → tab \"${recipe.tab}\"") +
+                " → ô \"${recipe.hint}…\" → nhập mã → ${recipe.submit}. Popup quà trên đường đi và sau khi nhập được tự đóng. " +
+                "Mã chỉ gửi một lần mỗi tài khoản; kết quả được chụp lại. Tự dừng nếu trạng thái không rõ."
+    }
 
     private fun display(dialog: AlertDialog) {
         dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
@@ -35,10 +57,62 @@ internal class EventInviteDialog(private val service: CollectorService, private 
                 13f
             )
         )
-        body.addView(Ui.section(c, "Mã mời dùng chung"))
-        val code = Ui.field(c, "Nhập mã mời của chương trình", codeDraft)
+        body.addView(Ui.section(c, "Mã dùng chung"))
+        val code = Ui.field(c, "Mã mời hoặc mã bạn bè chia sẻ", codeDraft)
         code.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
         body.addView(code)
+        // Which event: the shared part (accounts, Sự kiện, the list, popups) is the same for all.
+        body.addView(Ui.section(c, "Sự kiện"))
+        val saved = savedRecipe()
+        val choices = RadioGroup(c)
+        val presets = EventCodeRecipe.PRESETS.map { recipe ->
+            RadioButton(c).apply {
+                id = android.view.View.generateViewId()
+                text = when (recipe) {
+                    is EventCodeRecipe.Anniversary -> "Thập kỷ chung sức (Hỗ trợ bạn bè · Nhập mã mời)"
+                    is EventCodeRecipe.Field -> "${recipe.event} (${recipe.tab} · ${recipe.submit})"
+                }
+                textSize = 14f
+            }.also { choices.addView(it) } to recipe
+        }
+        val other = RadioButton(c).apply {
+            id = android.view.View.generateViewId()
+            text = "Sự kiện khác có ô nhập mã (gõ tên như trong game)"
+            textSize = 14f
+        }.also { choices.addView(it) }
+        body.addView(choices)
+        val custom = Ui.stack(c)
+        val savedField = saved as? EventCodeRecipe.Field
+        val eventName = Ui.field(c, "Tên sự kiện trong danh sách bên trái", savedField?.event.orEmpty())
+        val tabName = Ui.field(c, "Tab có ô nhập mã (trống nếu ô có sẵn)", savedField?.tab.orEmpty())
+        val hint = Ui.field(c, "Chữ trong ô nhập (mặc định Nhập mã)", savedField?.hint ?: EventCodeRecipe.HINT)
+        val submit = Ui.field(c, "Nút bên ô (mặc định Dùng)", savedField?.submit ?: EventCodeRecipe.SUBMIT)
+        listOf(eventName, tabName, hint, submit).forEach { custom.addView(it) }
+        body.addView(custom)
+        val help = Ui.text(c, "", 12f, Ui.muted)
+
+        fun chosen(): EventCodeRecipe? = presets.firstOrNull { it.first.isChecked }?.second ?: if (other.isChecked) {
+            EventCodeRecipe.Field(
+                eventName.text.toString().trim(),
+                tabName.text.toString().trim(),
+                hint.text.toString().trim().ifEmpty { EventCodeRecipe.HINT },
+                submit.text.toString().trim().ifEmpty { EventCodeRecipe.SUBMIT }
+            )
+        } else {
+            null
+        }
+
+        fun follow() {
+            custom.visibility = if (other.isChecked) android.view.View.VISIBLE else android.view.View.GONE
+            help.text = chosen()?.let { steps(it) } ?: "Chọn một sự kiện."
+        }
+        (
+            presets.firstOrNull {
+                it.second == saved
+            }?.first ?: if (saved is EventCodeRecipe.Field) other else presets.first().first
+            ).isChecked =
+            true
+        choices.setOnCheckedChangeListener { _, _ -> follow() }
         body.addView(Ui.section(c, "Chọn tài khoản để thực hiện"))
         val checked = LinkedHashMap<String, CheckBox>()
         if (accounts.isEmpty()) {
@@ -67,16 +141,9 @@ internal class EventInviteDialog(private val service: CollectorService, private 
         body.addView(buttons)
         val edit = Ui.button(c, "Thêm / sửa / xóa tài khoản sự kiện") {}
         body.addView(edit)
-        body.addView(
-            Ui.text(
-                c,
-                "Mỗi tài khoản: đăng xuất → đăng nhập Garena → Sự kiện → Tổng hợp sự kiện → Thập kỷ chung sức → Nhập mã mời. " +
-                    "Xóa mã có sẵn rồi nhập mã đã lưu; chỉ tính quà khi thấy và lưu được kết quả. Tự dừng nếu trạng thái không rõ.",
-                12f,
-                Ui.muted
-            )
-        )
-        val dialog = AlertDialog.Builder(c).setTitle("Nhiệm vụ mã mời · Nhiều tài khoản")
+        body.addView(help)
+        follow()
+        val dialog = AlertDialog.Builder(c).setTitle("Nhập mã sự kiện · Nhiều tài khoản")
             .setView(ScrollView(c).apply { addView(body) })
             .setPositiveButton("Chọn tác vụ", null).setNegativeButton("Hủy", null).create()
         display(dialog)
@@ -88,7 +155,12 @@ internal class EventInviteDialog(private val service: CollectorService, private 
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
             val value = code.text.toString().trim()
             if (!EventInviteAccounts.validCode(value)) {
-                code.error = "Mã mời phải có 4–40 ký tự chữ/số"
+                code.error = "Mã phải có 4–40 ký tự chữ/số"
+                return@setOnClickListener
+            }
+            val recipe = chosen()
+            if (recipe == null || (recipe is EventCodeRecipe.Field && GameScreens.plain(recipe.event).length < 3)) {
+                eventName.error = "Gõ tên sự kiện như trong danh sách của game"
                 return@setOnClickListener
             }
             val ids = checked.filterValues { it.isChecked }.keys.toList()
@@ -103,7 +175,8 @@ internal class EventInviteDialog(private val service: CollectorService, private 
             try {
                 val fingerprint = EventInviteAccounts.saveCode(service, value)
                 codeDraft = value
-                if (selectTask(BuiltInMacros.eventInvite(ids, fingerprint))) dialog.dismiss()
+                prefs.edit().putString("recipe", recipe.json().toString()).apply()
+                if (selectTask(BuiltInMacros.eventInvite(ids, fingerprint, recipe))) dialog.dismiss()
             } catch (e: Exception) {
                 code.error = e.message ?: "Không lưu được mã"
             }

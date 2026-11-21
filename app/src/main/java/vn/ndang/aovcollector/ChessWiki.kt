@@ -55,7 +55,9 @@ object ChessWiki {
         val synergyDetails: Boolean = false,
         val equipmentDetails: Boolean = false,
         val nativeGroups: Set<String> = emptySet(),
-        val fast: Boolean = true
+        val fast: Boolean = true,
+        /** Inside Bách khoa, [ChessQuickReader]: pixels only, items named by number. Off: names read with OCR. */
+        val quick: Boolean = false
     ) {
         fun topics() = TOPICS.filter { it.key in selected }
 
@@ -592,6 +594,9 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
         val signature: IntArray
         val modal: Boolean
 
+        /** A popup's X as [GameScreens.closeButton] finds it. Read before [discard]. */
+        val closeButton: Pair<Double, Double>? get() = null
+
         fun tiles(topic: ChessWiki.Topic): List<ChessWiki.Tile>
 
         fun nativeTiles(topic: ChessWiki.Topic): List<ChessWiki.Tile> = tiles(topic)
@@ -609,6 +614,35 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
         fun hasHeroCard(x: Double, y: Double): Boolean = false
 
         fun discard()
+
+        // Read from pixels when the screenshot is taken ([ChessPixels]), for [ChessQuickReader]; valid after keep.
+
+        /** Nothing more below: the bottom strip of the page, or of the open drawer, is plain background. */
+        val blankBelow: Boolean get() = false
+
+        /** The open drawer's round picture is drawn. */
+        val drawerArt: Boolean get() = true
+
+        /** A hero drawer's skill picture is drawn. */
+        val skillArt: Boolean get() = true
+
+        /** The game's Save Photo box, if it is showing. */
+        val saveDialog: ChessPixels.Dialog? get() = null
+
+        /** Trang bị's item pictures still loading ([ChessPixels.loadingTiles]). Read before keep. */
+        fun loadingTiles(): Int = 0
+
+        /** Tất cả quân cờ shows a card in the lower third of the screen ([ChessPixels.heroCardsBelow]). Read before keep. */
+        val heroCardsBelow: Boolean get() = false
+
+        /** Chúc phúc pictures wholly on screen; each tile's id is its [ChessPixels.blessingArt]. Read before keep. */
+        fun blessingIcons(): List<ChessWiki.Tile> = emptyList()
+
+        /** The Chúc phúc list's [ChessPixels.blessingProfile], to measure a page drag. Read before keep. */
+        fun blessingProfile(): FloatArray = floatArrayOf()
+
+        /** Like [keep], but [then] may run once the image is queued, and an earlier image of that name is replaced. */
+        fun keepQuick(name: String, then: (Boolean) -> Unit) = keep(name, then)
     }
 
     interface Screen {
@@ -673,6 +707,15 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
         fun note(message: String)
 
         fun say(message: String)
+
+        /** Holds a finger on (x, y) long enough for the game's Save Photo box. */
+        fun longPress(x: Double, y: Double, then: (Boolean) -> Unit) = then(false)
+
+        /** Records a Save Photo confirmed with Sure, so the Pictures import files the new image under [group]. */
+        fun markNative(group: String, item: String) {}
+
+        /** Runs [then] once every image queued by [Look.keepQuick] is written. */
+        fun flush(then: () -> Unit) = then()
     }
 
     companion object {
@@ -681,6 +724,12 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
         const val MAX_NAV = 20
         const val MAX_MODE_TAPS = 3
         const val MAX_ROW_DRAGS = 6
+
+        /** Looks at popups on the way in, half of them taps: rewards can come ten in a row. */
+        const val MAX_POPUP_TRIES = 24
+
+        /** Taps on the way in that did nothing before an X or a button is believed to belong to a popup. */
+        const val DEAF_TAPS = 2
         const val MAX_STILL = 3
         const val WAIT_MS = 1100L
         const val MAX_TILES = 450
@@ -697,6 +746,9 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
     private var rowDrags = 0
     private var veteranAttempts = 0
     private var tipAttempts = 0
+    private var deafTaps = 0
+    private var popupSeen: Pair<Double, Double>? = null
+    private var popupTries = 0
     private var heroes = screen.completedHeroes
     private val timing = ChessWiki.Timing(options.fast)
     private val tried = HashSet<String>()
@@ -843,10 +895,17 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
             if (navigation++ >= 3) return@look fail("Không đóng được bảng chi tiết. Đóng dấu X rồi bấm Tiếp tục.")
             return@look tap(.901, .08, id = "detail.close", label = "Cờ: đóng chi tiết", again = { it.modal }) { navigate() }
         }
-        if (all.contains("bachkhoa") && all.contains("colienquan")) {
+        if (GamePopups.updateNotes(words) == null && all.contains("bachkhoa") && all.contains("colienquan")) {
             l.discard()
             screen.say("Đã vào Bách khoa Cờ Liên Quân")
+            if (options.quick) return@look ChessQuickReader(screen, options) { end(it) }.start()
             return@look topic(0)
+        }
+        val chessFirstTime = onboarding.kind == GameScreens.Kind.CHESS_EXPERIENCE || onboarding.kind == GameScreens.Kind.CHESS_TIP
+        val exit = if (chessFirstTime) null else popupExit(l)
+        if (exit != null) {
+            l.discard()
+            return@look leavePopup(exit)
         }
         if (navigation++ >= MAX_NAV) {
             return@look save(l, "chess__dieu-huong__khong-nhan-dien__trang__001") {
@@ -874,6 +933,7 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                 }
             }
             (all.contains("trangchu") && all.contains("colienquan")) -> {
+                deafTaps++
                 val home = words.firstOrNull { it.plain.contains("trangchu") && it.x < .24 }
                 if (home !=
                     null
@@ -885,16 +945,60 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                     tap(.102, .305, 1800, id = "lobby.home", label = "Cờ: Trang chủ") { navigate() }
                 }
             }
-            entertainment -> chooseChessMode(ChessWiki.modeRow(words))
+            entertainment -> {
+                // A screen further along: earlier taps were not deaf.
+                deafTaps = 0
+                chooseChessMode(ChessWiki.modeRow(words))
+            }
             modeEntry != null -> {
+                deafTaps++
                 screen.note(
                     "Sảnh: chọn chế độ ở " + (modeEntry.first * 100).toInt() + "%, " + (modeEntry.second * 100).toInt() +
                         "% (không bấm N.vụ)"
                 )
                 tap(modeEntry.first, modeEntry.second, 1700, id = "lobby.mode", label = "Sảnh: mở chế độ", relative = true) { navigate() }
             }
-            all.contains("colienquan") -> tap(.105, .30, 2000, id = "lobby.home", label = "Cờ: Trang chủ") { navigate() }
-            else -> screen.later(1800) { navigate() }
+            all.contains("colienquan") -> {
+                deafTaps++
+                tap(.105, .30, 2000, id = "lobby.home", label = "Cờ: Trang chủ") { navigate() }
+            }
+            else -> {
+                deafTaps++
+                screen.later(1800) { navigate() }
+            }
+        }
+    }
+
+    /**
+     * The way out of a popup over the way in. What only a popup shows is believed at once. An X or a button can be
+     * something else on a screen we simply have not moved on from yet, so they wait for [DEAF_TAPS] that did nothing.
+     */
+    private fun popupExit(l: Look): GamePopups.Exit? {
+        GamePopups.updateNotes(l.words)?.let {
+            return GamePopups.Exit(GamePopups.updateNotesClose(it, l.closeButton), "Ghi chú cập nhật: bấm X")
+        }
+        GamePopups.tapToLeave(l.words)?.let { return GamePopups.Exit(it.x to it.y, "chạm \"${it.text}\"") }
+        if (deafTaps < DEAF_TAPS) return null
+        l.closeButton?.let { return GamePopups.Exit(it, "bấm X") }
+        return GamePopups.button(l.words)?.let { GamePopups.Exit(it.x to it.y, "bấm nút \"${it.text}\"") }
+    }
+
+    /** A popup fading in or moving art is not at the same place twice: only what stayed is tapped. */
+    private fun leavePopup(exit: GamePopups.Exit) {
+        if (++popupTries > MAX_POPUP_TRIES) {
+            return fail("Đã thử đóng popup nhiều lần mà vẫn còn (${exit.what}). Đóng popup bằng tay rồi bấm Tiếp tục.")
+        }
+        val (x, y) = exit.at
+        val seen = popupSeen
+        if (seen == null || abs(seen.first - x) >= .012 || abs(seen.second - y) >= .025) {
+            popupSeen = exit.at
+            return screen.later(700) { navigate() }
+        }
+        popupSeen = null
+        screen.note("Popup trên đường vào Bách khoa: ${exit.what} ở " + (x * 100).toInt() + "%, " + (y * 100).toInt() + "%")
+        tap(x, y, 1500, id = "popup.leave", label = "Cờ: đóng popup", relative = true, again = { popupExit(it) != null }) {
+            deafTaps = 0
+            navigate()
         }
     }
 
@@ -1077,6 +1181,8 @@ class ChessWikiReader(private val screen: Screen, private val options: ChessWiki
                 )
                 screen.dragHeroList(d, fling, then)
             }
+
+            override fun heldReach(d: Double) = abs(d) + ChessQuickReader.HELD_SLACK
 
             // Approve has already selected fresh coordinates. Defer the physical tap until
             // native-photo work (if enabled) has finished, then open the drawer exactly once.

@@ -1,6 +1,7 @@
 package vn.ndang.aovcollector
 
 import kotlin.math.abs
+import kotlin.math.ceil
 
 /**
  * Brings card [card] of the All-heroes list on screen and taps it. The game keeps sliding after a swipe
@@ -13,6 +14,7 @@ class ListNavigator(
     private val state: State,
     private val screen: Screen,
     private val approve: Approve? = null,
+    private val watch: Watch? = null,
     private val finish: (Outcome) -> Unit
 ) {
     /**
@@ -22,6 +24,28 @@ class ListNavigator(
      */
     fun interface Approve {
         fun check(s: Shot, x: Double, y: Double, has: Boolean, offset: Double, then: (Pair<Double, Double>?) -> Unit)
+    }
+
+    /**
+     * Shown every screen the list rests on, with the list [offset] screens down, before the navigator moves on
+     * towards [card]: a card to tap there instead, the end of what is sought, or nothing ([HeroSweep]).
+     */
+    fun interface Watch {
+        fun check(s: Shot, offset: Double, then: (Sight) -> Unit)
+    }
+
+    /**
+     * What a [Watch] makes of a screen. [Done]: nothing more to find on the list; the pick ends as at its end. [drift]:
+     * how far past where the list really is the navigator counted it, in screen heights, as the names on it show.
+     */
+    sealed class Sight {
+        open val drift: Double get() = 0.0
+
+        class Next(override val drift: Double = 0.0) : Sight()
+
+        object Done : Sight()
+
+        class Tap(val x: Double, val y: Double, override val drift: Double = 0.0) : Sight()
     }
 
     /** Kept between the picks of one run. [step] shrinks when swipes slide further than can be measured. */
@@ -73,6 +97,12 @@ class ListNavigator(
         /** Drags the content up by [d] screen heights (negative: down). Slow drags rest before lifting; [fling] is a quick flick. */
         fun drag(d: Double, fling: Boolean, then: (Boolean) -> Unit)
 
+        /**
+         * The furthest a slow drag of [d] can move the list, in screen heights, or null when it can glide on. A list
+         * that stops where the finger rests is measured only within that reach.
+         */
+        fun heldReach(d: Double): Double? = null
+
         fun tap(x: Double, y: Double, then: (Boolean) -> Unit)
 
         fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = tap(action.points[0].x, action.points[0].y, then)
@@ -80,6 +110,20 @@ class ListNavigator(
         fun calibratedBack(action: CalibrationAction, then: (Boolean) -> Unit) = back(then)
 
         fun calibratedDrag(action: CalibrationAction, d: Double, fling: Boolean, then: (Boolean) -> Unit) = drag(d, fling, then)
+
+        /**
+         * Whether the screens the list only passed through on its way are kept, or just the one a card is tapped on.
+         * The chess encyclopedia keeps every page of its list; the hero list keeps the page it tapped: each kept page
+         * is a large PNG written on the thread that also measures the next screenshot.
+         */
+        val keepsPassedPages: Boolean get() = true
+
+        /**
+         * Whether a card far up the list is reached by flicking to the top and dragging down, rather than by dragging up
+         * all the way ([nearerTheTop]). The hero list's picks by name go anywhere; the chess lists are read down card by
+         * card and number their pages from the top.
+         */
+        val flicksToTop: Boolean get() = false
 
         /** Taps the game's back arrow at the top left. */
         fun back(then: (Boolean) -> Unit)
@@ -90,8 +134,33 @@ class ListNavigator(
         fun note(text: String) {}
     }
 
-    private companion object {
+    internal companion object {
         const val MAX_BACKS = 3
+
+        /** A card past the end of any list: a pick for it goes down to the end, its [Watch] shown each screen on the way. */
+        const val DOWN = 100_000
+
+        /** Drags allowed beyond twice the ones the distance takes: stalls at the end of the list, short last moves. */
+        const val SPARE_MOVES = 6
+
+        /**
+         * A card this many screens nearer the top of the list than to where the list is, is reached faster from the
+         * top: a few flicks up, then down. On the user's phone a held drag took about 3.7 s and going to the top
+         * about 9; the run that stopped had dragged 16 times up from card 102 towards card 1.
+         */
+        const val TOP_SHORTCUT = 2.0
+
+        /** The drags a list [offset] screens down needs to bring card [card] to [layout]'s park at [step]. */
+        fun drags(layout: HeroGrid.Layout, card: Int, offset: Double, step: Double): Int {
+            val far = abs(layout.centre(card, offset).second - layout.park)
+            return ceil(far / (layout.maxStep * step)).toInt()
+        }
+
+        /** Whether card [card] is reached sooner by flicking to the top than by dragging from [offset]. */
+        fun nearerTheTop(layout: HeroGrid.Layout, card: Int, offset: Double): Boolean {
+            val there = maxOf(0.0, layout.centre(card, 0.0).second - layout.park)
+            return offset - there > there + TOP_SHORTCUT
+        }
     }
 
     private var moves = 0
@@ -99,7 +168,9 @@ class ListNavigator(
     private var resyncs = 0
     private var backs = 0
     private var waited = false
-    private val maxMoves = 16 + 5 * (card / 5)
+
+    /** Drags this pick may make before it counts again from the top; set at its first drag from where the list is. */
+    private var budget = -1
 
     fun start() {
         if (!state.synced || state.ref == null) return toTop(0)
@@ -118,6 +189,11 @@ class ListNavigator(
                     shift.px.toDouble() / s.height
             }
             state.ref = s.profile
+            if (screen.flicksToTop && nearerTheTop(screen.layout, card, state.offset)) {
+                s.done(null)
+                screen.note("Ô ${card + 1} ở gần đầu danh sách: vuốt nhanh lên đầu rồi kéo xuống")
+                return@look toTop(0)
+            }
             aim(s, false)
         }
     }
@@ -184,10 +260,33 @@ class ListNavigator(
 
     private fun page() = "page-%02d-list".format(state.page)
 
+    /** What the pick is for, in the log: a card, or the way down the list. */
+    private fun target() = if (card >= DOWN) "đi xuống danh sách" else "ô ${card + 1}"
+
     private fun aim(s: Shot, keep: Boolean) {
+        val w = watch ?: return plan(s, keep)
+        w.check(s, state.offset) { sight ->
+            // Each measured move may be a pixel off; the names read on the screen say where the list really is.
+            state.offset -= sight.drift
+            when {
+                !screen.alive -> s.done(null)
+                sight is Sight.Tap -> {
+                    s.done(page())
+                    tap(sight.x, sight.y)
+                }
+                sight is Sight.Done -> {
+                    s.done(null)
+                    finish(Outcome.End)
+                }
+                else -> plan(s, keep)
+            }
+        }
+    }
+
+    private fun plan(s: Shot, keep: Boolean) {
         when (val plan = screen.layout.plan(card, state.offset)) {
             is HeroGrid.Plan.Move -> {
-                s.done(if (keep) page() else null)
+                s.done(if (keep && screen.keepsPassedPages) page() else null)
                 move(plan.d * state.step)
             }
             is HeroGrid.Plan.Tap -> {
@@ -248,7 +347,13 @@ class ListNavigator(
 
     private fun move(d: Double) {
         if (!screen.alive) return
-        if (++moves > maxMoves) return fail("Không cuộn tới được ô tướng ${card + 1}")
+        // Never fewer than the 16, and five a row down to the card, a pick was allowed before: the chess lists ran with those.
+        if (budget < 0) budget = moves + maxOf(16 + 5 * (card / 5), SPARE_MOVES + 2 * drags(screen.layout, card, state.offset, state.step))
+        if (++moves > budget) {
+            if (resyncs > 0) return fail("Không cuộn tới được ô tướng ${card + 1}")
+            screen.note("Đã kéo ${moves - 1} lần mà chưa xong (${target()}); về đầu danh sách để đếm lại")
+            return resync()
+        }
         val before = state.ref ?: return resync()
         val offsetBefore = state.offset
         val backsBefore = backs
@@ -256,7 +361,7 @@ class ListNavigator(
             if (!ok) return@drag fail("Không vuốt được danh sách")
             screen.later(800) {
                 look { s ->
-                    val shift = HeroGrid.shift(before, s.profile)
+                    val shift = HeroGrid.shift(before, s.profile, reach(d, s.height))
                     if (shift.reliable) {
                         settle(shift.px.toDouble() / s.height, s, d, backs > backsBefore)
                     } else {
@@ -268,11 +373,19 @@ class ListNavigator(
         }
     }
 
+    /** The moves, in pixels, a slow drag of [d] can have made: from a little back to its reach. Null: any. */
+    private fun reach(d: Double, height: Int): IntRange? {
+        val far = screen.heldReach(d) ?: return null
+        val slack = (.03 * height).toInt()
+        val px = (far * height).toInt()
+        return if (d > 0) -slack..px else -px..slack
+    }
+
     /** [interrupted]: the navigator had to come back to the list after this swipe, so a list that did not move proves nothing. */
     private fun settle(moved: Double, s: Shot, d: Double, interrupted: Boolean) {
         state.offset += moved
         state.ref = s.profile
-        screen.note("Độ cuộn đo được: " + (moved * s.height).toInt() + " px; ô " + (card + 1))
+        screen.note("Độ cuộn đo được: " + (moved * s.height).toInt() + " px; " + target())
         if (abs(moved) >= .01) {
             stalls = 0
             state.page++
@@ -287,7 +400,10 @@ class ListNavigator(
 
     /** The list slid further than one screenshot can follow: drag back, measure against [before], and use smaller steps from now on. */
     private fun undo(d: Double, before: FloatArray, offsetBefore: Double) {
+        val step = state.step
         state.step = maxOf(.25, state.step / 2)
+        // Smaller steps take more drags: allowed anew from where the list is, at most twice (down to a quarter).
+        if (state.step < step) budget = -1
         drag(-d, false) { ok ->
             if (!ok) return@drag fail("Không vuốt được danh sách")
             screen.later(800) {
@@ -340,6 +456,7 @@ class ListNavigator(
                                         state.synced = true
                                         state.page = 1
                                         state.ref = b.profile
+                                        budget = -1
                                         aim(b, true)
                                     } else {
                                         b.done(null)

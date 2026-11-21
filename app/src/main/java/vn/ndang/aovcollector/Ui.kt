@@ -243,14 +243,14 @@ object MacroStore {
         "ranking" -> "Thống kê tướng"
         "board" -> "Chiến khu"
         "chess" -> "Cờ Liên Quân · Bách khoa"
-        "event-invite" -> "Sự kiện · Nhập mã mời nhiều tài khoản"
+        "event-invite" -> "Sự kiện · Nhập mã nhiều tài khoản"
         else -> m.name // Imported macro: show its real name, not the generic "Macro đã nhập".
     }
 
     fun description(m: Macro): String = when (m.json.optString("collectionMode")) {
         "board" ->
             "BXH người chơi · " +
-                (if (m.json.optInt("heroCount", 1) >= BuiltInMacros.ALL) "tất cả tướng" else "${m.json.optInt("heroCount",1)} tướng") +
+                "tất cả tướng" +
                 " · " +
                 BuiltInMacros.boardWants(m.json).joinToString(", ") { w ->
                     w.tab.label +
@@ -260,13 +260,18 @@ object MacroStore {
                             else -> " top ${w.top}"
                         }
                 } +
+                (if (BuiltInMacros.boardPlayers(m.json)) " · mở hồ sơ, sao chép tên và UID từng người" else "") +
                 (if (m.json.optBoolean("openGame")) " · tự vào game" else "")
         "ranking" -> "Bảng xếp hạng tướng · ${BuiltInMacros.rankCombos(m.json).size}/${RankScreens.COMBOS.size} bảng" +
             (if (m.json.optBoolean("openGame")) " · tự vào game" else "")
-        "event-invite" -> "${m.json.optInt("accountCount",0)} tài khoản riêng · Thập kỷ chung sức · đếm quà"
+        "event-invite" -> "${m.json.optInt("accountCount",0)} tài khoản riêng · ${BuiltInMacros.eventRecipe(m.json).label}"
         "chess" -> "${m.json.optJSONArray("chessTopics")?.length() ?: 0} tab đã chọn · luôn chụp đến cuối" +
             (m.json.optJSONArray("chessNativeGroups")?.length()?.let { if (it > 0) " · tải $it nhóm ảnh gốc" else "" } ?: "") +
             (if (m.json.optBoolean("openGame")) " · tự vào game" else "")
+        "pro-builds" ->
+            "Tất cả tướng · " +
+                BuiltInMacros.proCombos(m.json).let { if (it >= BuiltInMacros.ALL) "mọi combo Pro" else "$it combo Pro" } +
+                " mỗi tướng · Dùng combo rồi chụp Chuẩn bị"
         "single", "all", "pick" -> base(m) + (if (m.json.optBoolean("fast")) " · nhanh" else "") +
             (if (m.json.optBoolean("detailOnly")) " · chỉ Chi tiết" else "") +
             (if (m.json.optBoolean("directSkills")) " · chuyển thẳng chiêu" else "") +
@@ -293,7 +298,9 @@ object MacroStore {
     }
 
     fun instruction(m: Macro): String = if (m.json.optString("collectionMode") == "event-invite") {
-        "Từ sảnh Liên Quân, tự đăng xuất/đăng nhập từng tài khoản sự kiện; vào Thập kỷ chung sức, làm sạch và nhập mã, ghi số quà thực nhận."
+        "Từ sảnh Liên Quân, tự đăng xuất/đăng nhập từng tài khoản sự kiện; vào Sự kiện → ${BuiltInMacros.eventRecipe(
+            m.json
+        ).label}, làm sạch và nhập mã, ghi kết quả thực nhận."
     } else if (m.json.optString("collectionMode") == "chess") {
         (
             if (m.json.optBoolean("openGame")) {

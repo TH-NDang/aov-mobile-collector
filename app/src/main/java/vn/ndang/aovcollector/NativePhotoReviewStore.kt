@@ -57,7 +57,7 @@ internal object NativePhotoReviewStore {
         val partial = File(directory, "$token.part")
         val actual = OriginalPhotoCopy.copy(bytes.inputStream(), partial, bytes.size.toLong(), allow)
         require(actual == expected)
-        require(partial.renameTo(target)) { "Không giữ được ảnh chờ đối chiếu" }
+        require(partial.moveOnto(target)) { "Không giữ được ảnh chờ đối chiếu" }
         require(OriginalPhotoCopy.matches(target, expected)) { "Bản giữ ảnh chờ đối chiếu không khớp" }
         if (old == null) {
             candidates.put(

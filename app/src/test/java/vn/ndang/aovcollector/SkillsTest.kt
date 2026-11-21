@@ -17,9 +17,17 @@ class SkillsTest {
         "qi-1", "qi-2", "volkath-1", "volkath-2", "liliana-1", "liliana-2", "edras-1", "edras-2",
         "edras", "capheny", "wonder-woman", "tachi", "jinna", "xeniel", "ilumia", "ignis", "sinestrea", "astrid", "bonnie", "lauriel", "billo", "tee", "wisp"
     )
-    private val rows: Map<String, SkillRow.Row> by lazy {
+    private val rows: Map<String, SkillRow.Row> by lazy { stacked("skill-rows.jpg", names) }
+
+    /**
+     * Rows cut the same way from the user's run of 10/11: Tachi and Aoi with a paper lantern floating behind their ↻,
+     * Edras's second form, whose dark fourth icon was not taken for a row, and Aya, without the button.
+     */
+    private val later: Map<String, SkillRow.Row> by lazy { stacked("skill-rows-lantern.jpg", listOf("tachi", "aoi", "edras-2", "aya")) }
+
+    private fun stacked(file: String, names: List<String>): Map<String, SkillRow.Row> {
         System.setProperty("java.awt.headless", "true")
-        val image = javaClass.getResourceAsStream("/screens/skill-rows.jpg")!!.use {
+        val image = javaClass.getResourceAsStream("/screens/$file")!!.use {
             Class.forName("javax.imageio.ImageIO").getMethod("read", InputStream::class.java).invoke(null, it)!!
         }
         val type = image.javaClass
@@ -37,7 +45,7 @@ class SkillsTest {
         )
             .invoke(image, 0, 0, w, h, null, 0, w) as IntArray
         val band = h / names.size
-        names.withIndex().associate { (n, name) ->
+        return names.withIndex().associate { (n, name) ->
             // The rest of the screen stays black: only the band is read.
             name to
                 SkillRow.read(2400, 1080) { y, row ->
@@ -56,9 +64,20 @@ class SkillsTest {
     }
 
     @Test fun findsTheFormButton() {
-        val forms =
-            setOf("qi-1", "qi-2", "volkath-1", "volkath-2", "liliana-1", "liliana-2", "edras-1", "edras-2", "edras", "capheny", "wonder-woman", "tachi")
+        val forms = setOf("qi-1", "qi-2", "volkath-1", "volkath-2", "liliana-1", "liliana-2", "edras-1", "edras-2") +
+            setOf("edras", "capheny", "wonder-woman", "tachi")
         for (name in names) assertEquals(name, name in forms, rows.getValue(name).swap)
+    }
+
+    @Test fun findsTheFormButtonOverALanternAndADarkSecondForm() {
+        assertEquals(SkillRow.FOUR, later.getValue("tachi").centres)
+        assertTrue(later.getValue("tachi").swap)
+        assertEquals(SkillRow.FOUR, later.getValue("aoi").centres)
+        assertTrue(later.getValue("aoi").swap)
+        assertEquals(SkillRow.FIVE, later.getValue("edras-2").centres)
+        assertTrue(later.getValue("edras-2").swap)
+        assertEquals(SkillRow.FOUR, later.getValue("aya").centres)
+        assertFalse(later.getValue("aya").swap)
     }
 
     @Test fun tellsWhichIconsAFormChanges() {
@@ -107,11 +126,53 @@ class SkillsTest {
         val stopAfter: Int = Int.MAX_VALUE,
         /** Icons whose detail text takes this many boxes; the others fit in one. */
         val longText: Map<Int, Int> = emptyMap(),
-        val refuseScroll: Boolean = false
+        val refuseScroll: Boolean = false,
+        /** Looks a detail text takes to be drawn after its tab is tapped; looks before the page shows its row. */
+        val slowText: Int = 0,
+        var loading: Int = 0,
+        /**
+         * Icons whose text fills its box exactly, which the game will not scroll: with a line under the box's edge
+         * (true, Biron's first skill) or none (false). Held past its end, such a text shows what lies below it.
+         */
+        val fitted: Map<Int, Boolean> = emptyMap(),
+        /** The hero shown alone (a tap landed on his model) until the back arrow is tapped. */
+        var alone: Boolean = false,
+        /** Looks after a tap on ↻ that show no row yet, the icons still changing. */
+        val swapLoads: Int = 0
     ) : SkillReader.Screen {
         private var open = -1
+        private var changing = 0
         private var tab = ""
         private var scrolled = 0
+        private var detailLooks = 0
+
+        /** Text held up past its end, and the lift that ends the hold, run after the screen was looked at. */
+        private var held = false
+        private var lift: ((Boolean) -> Unit)? = null
+        val stretches = ArrayList<Boolean>()
+
+        /** The panel's glyphs: six lines in the box, a seventh under its edge for a hidden line, moved up while held. */
+        private fun glyphs(): SkillDescription.Glyphs {
+            val columns = 552
+            val rows = 523
+            val bits = ByteArray(columns * rows)
+            val lines = if (fitted[open] == true) 7 else 6
+            val up = if (held) 115 else 0
+            for (line in 0 until lines) {
+                // Each line its own words: columns lit by a pattern of its own.
+                val top = 12 + line * 43 - up
+                for (y in maxOf(0, top) until minOf(270, top + 20)) {
+                    for (x in 0 until columns) if ((x * (line + 3) / 7 + line) % 5 < 2) bits[y * columns + x] = 1
+                }
+            }
+            // The divider and the level table under the box stay where they are.
+            for (y in 290 until 292) for (x in 0 until columns) bits[y * columns + x] = 1
+            for (y in 320 until 340) for (x in 0 until columns) if (x % 90 < 20) bits[y * columns + x] = 1
+            return SkillDescription.Glyphs(columns, rows, bits)
+        }
+
+        /** Whether each detail photo was taken once its text was drawn. */
+        val drawnShots = ArrayList<Boolean>()
         var stopped = false
         val taps = ArrayList<String>()
         val shots = ArrayList<String>()
@@ -121,16 +182,24 @@ class SkillsTest {
         override val alive get() = outcome == null && !stopped
 
         override fun look(then: (SkillReader.Look?) -> Unit) {
-            val shown = if (panel) SkillRow.Row(null, false, emptyList()) else forms[form]
+            val shown = if (panel || alone || loading-- > 0 || changing-- > 0) SkillRow.Row(null, false, emptyList()) else forms[form]
+            val heroAlone = alone
             val parts = longText[open] ?: 1
+            if (panel && tab == "detail") detailLooks++
             val text = if (panel && tab == "detail") {
-                SkillDescription.Reading(parts > 1, IntArray(288) { 30 + open * 40 + scrolled * 25 })
+                SkillDescription.Reading(
+                    parts > 1 || open in fitted,
+                    IntArray(288) { 30 + open * 40 + scrolled * 25 + (if (held) 15 else 0) },
+                    detailLooks > slowText,
+                    if (open in fitted) glyphs() else null
+                )
             } else {
                 null
             }
             then(object : SkillReader.Look {
                 override val row = shown
                 override val description = text
+                override val alone = heroAlone
 
                 override fun done(keep: String?) {
                     if (keep != null) kept += keep
@@ -140,15 +209,25 @@ class SkillsTest {
 
         override fun tap(x: Double, y: Double, then: (Boolean) -> Unit) {
             val what = when {
+                x == HeroGrid.BACK_X && y == HeroGrid.BACK_Y -> {
+                    alone = false
+                    "back"
+                }
+                // Alone, the hero's page has no controls: a tap there does nothing.
+                alone -> "nothing"
                 x == SkillRow.SWAP_X -> {
                     if (deaf > 0) deaf-- else form = (form + 1) % forms.size
+                    changing = swapLoads
                     "swap"
                 }
                 x == SkillReader.CLOSE_X -> {
                     panel = false
                     "close"
                 }
-                y == SkillReader.TAB_Y -> (if (x == SkillReader.SUMMARY_X) "summary" else "detail").also { tab = it }
+                y == SkillReader.TAB_Y -> (if (x == SkillReader.SUMMARY_X) "summary" else "detail").also {
+                    tab = it
+                    detailLooks = 0
+                }
                 else -> {
                     panel = true
                     open = (forms[form].centres ?: SkillRow.FOUR).indexOf(x)
@@ -163,6 +242,14 @@ class SkillsTest {
 
         override fun swipe(x: Double, y: Double, toX: Double, toY: Double, then: (Boolean) -> Unit) {
             assertEquals(SkillDescription.SCROLL_X, x, 0.0)
+            if (toY == SkillDescription.STRETCH_TO) {
+                // Up inside the text, held: lifted only after the screen was looked at.
+                assertTrue("Stays in the text", y > toY && toY > SkillDescription.TOP && y < SkillDescription.BOTTOM)
+                taps += "stretch"
+                held = true
+                lift = then
+                return
+            }
             assertTrue("Scrolls the text up, inside its box", y > toY && toY > SkillDescription.TOP && y < SkillDescription.BOTTOM)
             taps += "scroll"
             if (refuseScroll) return then(false)
@@ -172,11 +259,21 @@ class SkillsTest {
 
         override fun shot(name: String, then: (Boolean) -> Unit) {
             shots += name
+            if (name.endsWith("-detail")) drawnShots += detailLooks > slowText
             if (shots.size >= stopAfter) stopped = true
             then(true)
         }
 
-        override fun later(ms: Long, then: () -> Unit) = then()
+        override fun later(ms: Long, then: () -> Unit) {
+            then()
+            // The finger held up past the text comes up after the wait in which the screen is read.
+            lift?.let {
+                lift = null
+                stretches += held
+                held = false
+                it(true)
+            }
+        }
 
         override fun note(text: String) {
             notes += text
@@ -232,6 +329,58 @@ class SkillsTest {
         assertTrue(page.notes.any { it.startsWith("Không cuộn được mô tả skill-1") })
     }
 
+    @Test fun aDetailTextSlowToDrawIsWaitedForBeforeItsPhoto() {
+        val page = Page(listOf(row(1, 2, 3, 4)), slowText = 2).run()
+        assertTrue(page.outcome is SkillReader.Outcome.Done)
+        assertEquals(4, page.drawnShots.size)
+        assertTrue("taken before the text was drawn: ${page.drawnShots}", page.drawnShots.all { it })
+        // A text that never shows is still photographed, with a line in the log, not waited for forever.
+        val never = Page(listOf(row(1, 2, 3, 4)), slowText = 99).run(SkillReader.Options(detailOnly = true))
+        assertEquals(4, never.shots.size)
+        assertTrue(never.notes.any { it.contains("chưa hiện chữ") })
+    }
+
+    @Test fun aHeroPageStillLoadingIsReadAgainBeforeFallingBackToFourPlaces() {
+        val page = Page(listOf(row(1, 2, 3, 4, 5)), loading = 2).run(SkillReader.Options(detailOnly = true))
+        assertTrue(page.outcome is SkillReader.Outcome.Done)
+        // The five icons of the row, not the four places guessed when no row is read.
+        assertEquals(5, page.shots.size)
+        assertTrue(page.notes.none { it.contains("Không nhận ra hàng chiêu") })
+    }
+
+    /**
+     * Biron's first skill: its box a line short, so the game will not scroll it, and its last word lies under the
+     * box's edge. Held up past its end, the text shows that line, kept as the second part; a text that only fills its
+     * box shows nothing new and keeps one photo.
+     */
+    @Test fun aLineUnderTheEdgeOfABoxThatWillNotScrollIsShownByHoldingTheTextUp() {
+        val page = Page(listOf(row(1, 2, 3, 4)), fitted = mapOf(1 to true, 2 to false)).run(SkillReader.Options(detailOnly = true))
+        assertTrue(page.outcome is SkillReader.Outcome.Done)
+        assertEquals(listOf("skill-1-detail-2"), page.kept)
+        val skill1 = page.taps.subList(page.taps.indexOf("icon 1"), page.taps.indexOf("icon 2"))
+        assertEquals(listOf("icon 1", "detail", "scroll", "stretch", "close"), skill1)
+        // Both looked at while held, then let go.
+        assertEquals(listOf(true, true), page.stretches)
+        assertTrue(page.notes.any { it.startsWith("Mô tả skill-1: kéo giữ") })
+        assertTrue(page.notes.none { it.startsWith("Mô tả skill-2: kéo giữ quá") })
+        assertTrue(page.notes.any { it == "Mô tả skill-2: kéo giữ thì chữ dịch lên nhưng không lộ thêm chữ" })
+        assertEquals(4, page.shots.size)
+    }
+
+    /**
+     * Thane, 10/11: the macro's tap on empty space landed on his legs, and the game showed him alone for photos. The
+     * skills are read once his page is back, by its back arrow, not tapped where nothing is.
+     */
+    @Test fun aHeroShownAloneForPhotosIsBroughtBackToHisPageFirst() {
+        val page = Page(listOf(row(1, 2, 3, 4)), alone = true).run(SkillReader.Options(detailOnly = true))
+        assertTrue(page.outcome is SkillReader.Outcome.Done)
+        assertEquals("back", page.taps.first())
+        assertTrue(page.taps.none { it == "nothing" })
+        assertEquals(listOf("passive", "skill-1", "skill-2", "skill-3").map { "hero-007-$it-detail" }, page.shots)
+        assertTrue(page.notes.any { it.startsWith("Đang ở chế độ chụp ảnh tướng") })
+        assertTrue(page.notes.none { it.contains("Không nhận ra hàng chiêu") })
+    }
+
     @Test fun directSkillsScrollALongTextBeforeTheNextIcon() {
         val page = Page(
             listOf(row(1, 2, 3, 4, 5)),
@@ -267,6 +416,20 @@ class SkillsTest {
             listOf("icon 0", "detail", "icon 1", "detail", "icon 2", "detail", "icon 3", "detail", "icon 4", "detail", "close", "swap"),
             page.taps.take(12)
         )
+    }
+
+    @Test fun aFormRowNotShownYetIsLookedForAgain() {
+        val forms = listOf(row(1, 2, 3, 4, 5, swap = true), row(6, 7, 8, 9, 10, swap = true))
+        // Edras's second form, not read on the first look after ↻ (the user's run of 10/11): read on a later one.
+        val page = Page(forms, swapLoads = 2).run(SkillReader.Options(detailOnly = true))
+        assertEquals(10, page.shots.size)
+        assertEquals(listOf("form-2-icons"), page.kept)
+        assertTrue(page.notes.none { it.contains("Không đọc được hàng chiêu") })
+        // Never shown: the screen is kept to look at, and the first form's photos stand.
+        val lost = Page(forms, swapLoads = 99).run(SkillReader.Options(detailOnly = true))
+        assertEquals(5, lost.shots.size)
+        assertEquals(listOf("form-2-unknown"), lost.kept)
+        assertTrue(lost.outcome is SkillReader.Outcome.Done)
     }
 
     @Test fun aThirdFormTakesOnlyIconsNotSeenBefore() {

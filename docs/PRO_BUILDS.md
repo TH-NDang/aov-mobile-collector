@@ -60,3 +60,38 @@ Regressions cover transient descriptor mismatch, persistent mismatch with bounde
 - Thẻ chưa đọc đủ sẽ được đọc lại trên danh sách đứng yên tối đa hai lần. Không vuốt hoặc áp dụng trong khoảng này. Nếu vẫn thiếu, báo số nút/số thẻ đủ và lưu ảnh chẩn đoán trong lượt của người dùng, không thêm ảnh vào mã nguồn.
 - Không bỏ yêu cầu chứng minh đầu/cuối, chuyển động thẻ, danh sách ngắn hai chiều, catalog thứ hạng, khớp duy nhất trước chạm, xác minh đã áp dụng hay khôi phục đúng top 1. Các ca 5/ít hơn/không có đề cử và không chụp lại top 1 giữ nguyên.
 - Kiểm thử tổng hợp bao gồm tên bắt đầu ở x = 0.300/0.310/0.324, OCR số bảng ngọc xung đột, thẻ thiếu/chỉ có nút/thẻ bị cắt; đọc thiếu tạm thời không thêm lần cuộn và không mất thứ hạng; thiếu kéo dài dừng sau đọc lại thay vì 16 lần vuốt. Ảnh người dùng chỉ kiểm tra cục bộ, không đưa vào repo. Chưa xác nhận thu thập trên điện thoại/game thật.
+
+
+## v0.13.46: số combo tự chọn, đọc nút bằng điểm ảnh, chờ Chuẩn bị đứng yên
+
+- **Luôn chạy hết tướng.** Bước `pro-builds` luôn chạy hết danh sách, kể cả macro cũ có lưu `heroes` nhỏ hơn. Chọn tướng vẫn xác minh Tất cả và bỏ tích Đã nhận mỗi lần mở.
+- **Số combo mỗi tướng:** lưu ở `proCombos` của macro và `combos` của bước, từ 1 đến 300 (300 là mọi đề cử). Macro cũ không có khóa này thì lấy 5.
+- **Nút Dùng combo đọc bằng điểm ảnh** (`ProPixels.buttons`):
+  - Viên thuốc vàng ở x .7025–.8135, chiều cao .058.
+  - Một hàng được tính là vàng khi một nửa đoạn x .715–.80 là vàng (r>200, g>150, b<130, r−b>110). Khe do chữ tối cắt ngang được nối lại nếu ≤ .03.
+  - Nút chạm mép khung danh sách (.197/.891) bị bỏ qua.
+  - Đo trên ảnh: .41/.776 ở đầu danh sách, .468/.837 và .304/.672 khi đã cuộn. Không có nút giả trên Chuẩn bị, hai bảng Chọn tướng và các màn Chiến khu.
+- **Các lần nhìn chỉ dùng điểm ảnh** khi về đầu danh sách, sau mỗi lần kéo và khi đọc lại: không OCR. OCR chỉ còn dùng để mở popup và tab, xác minh Chuẩn bị, và xác định danh sách trống.
+- **Bước kéo .24** (trước là .17). Vẫn nhỏ hơn .27, ngưỡng mà một bước kéo có thể bị hiểu nhầm thành ngắn hơn một thẻ. Mỗi nút vẫn được thấy ở ít nhất 2 khung.
+- **Chuẩn bị đứng yên:** sau Dùng combo và OCR xác nhận Chuẩn bị, app so lưới xám 16×12 của bảng phải (x .59–.95, y .15–.80) giữa các lần nhìn cách nhau 0,5 giây. App chụp khi hai lần liên tiếp giống nhau (sai khác trung bình < 3). Sau 6 lần vẫn đổi thì vẫn chụp và ghi nhật ký. Lần dùng lại đề cử 1 ở cuối không cần chờ.
+- **Danh sách trống:** app đọc tối đa 5 lần cách nhau 1,5 giây, hoặc 10 lần nếu game hiện "đang tải", "kết nối", "thử lại". Nếu game ghi rõ là không có đề cử thì kết luận ngay.
+- **Kiểm thử:**
+  - `ProPixelsTest` chạy trên 7 ảnh của bạn (đã làm mờ tên, ảnh người đề cử và UID). Kiểm tra: vị trí nút, không có nút giả, thứ hạng, khoảng cuộn, bảng Chuẩn bị, Đã nhận đang tích và Tất cả trên cả hai bảng Chọn tướng.
+  - `ProSimpleReaderTest` có thêm các ca: số combo, Chuẩn bị vẽ chậm, tab Pro tải chậm.
+
+## v0.13.49: nút Dùng combo theo màu thật của máy; tìm lại khi mất dấu
+
+- Trên ảnh 2400×1080 của máy bạn, nửa trên nút có màu (200, 171, 66), nửa dưới (213, 190, 84). Quy tắc cũ đòi đỏ trên 200, nên nửa trên không được tính, nút bị tách đôi quanh chữ và không nhận ra. Quy tắc mới: đỏ trên 175, xanh lá trên 135, xanh dương dưới 140, đỏ trừ xanh dương trên 90.
+- Kiểm thử bằng ảnh lúc mất dấu trong lượt của bạn (`pro-list-device.jpg`, đã che tên, ảnh người chơi và UID) và một nút vẽ đúng màu máy.
+- Mất dấu thẻ khi cuộn: về đầu danh sách, đếm lại một lần cho đề cử đó. Lần thứ hai mới bỏ qua, giữ các ảnh đã chụp.
+
+## v0.13.50: Chọn tướng không vuốt thử và kéo về đầu ở mỗi tướng
+
+- Lượt bạn gửi mất 3–4 phút mỗi tướng. Mỗi lần mở Chọn tướng, app vuốt thử 30% màn hình (danh sách trôi xa), rồi kéo lên từng đoạn 24% chậm, mỗi đoạn một lần nhìn, cho tới khi hai đoạn liền không nhích.
+- `ProHeroPicker` giờ đi như Chiến khu:
+  - Vuốt thử 10% màn hình (`scroll.probe-flick`, .80 → .70). Về đầu bằng lướt nhanh (`scroll.reset-flick`, .40 → .85): hai lần lướt liền mà ảnh tướng không đổi là tới đầu. Hàng đầu vẫn phải đủ ảnh và bắt đầu không thấp hơn 37% chiều cao.
+  - `ProHeroPicker.Memory` (một bộ cho cả lượt, trong `ProCollectionSession`) nhớ hình đầu danh sách đã xác minh, chỗ vừa chọn tướng và độ cuộn lúc đó.
+  - Lần mở sau: nếu ảnh tướng khớp chỗ cũ (đo bằng `BoardPickerMotion.displacement`) và tướng cần chọn không ở phía trên màn hình, app tìm tiếp từ đó. Nếu khớp hình đầu danh sách thì tìm từ đầu. Chỉ khi cả hai đều không khớp, app mới vuốt thử và về đầu.
+  - Nhật ký ghi "Chọn tướng còn ở chỗ lượt trước", "mở ở đầu danh sách như lần trước" hoặc "đã xác minh đầu danh sách".
+- Kiểm thử (`ProHeroPickerTest`): 30 tướng liên tiếp chỉ vuốt thử và về đầu ở tướng đầu tiên. Chọn tướng mở ở đầu mỗi lần thì nhận ra đầu đã biết. Danh sách bị dời đi chỗ khác vẫn chọn đúng tướng.
+

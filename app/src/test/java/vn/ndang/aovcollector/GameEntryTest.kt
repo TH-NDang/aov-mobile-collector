@@ -334,6 +334,61 @@ class GameEntryTest {
     private val x2 = .78 to .22
     private val heroes = GameScreens.HEROES_X to GameScreens.HEROES_Y
 
+    @Test fun findsTheXOfTheChessUpdateNotesOnTheUsersScreenshot() {
+        // "Ghi chú cập nhật" over the chess lobby, shot on the user's phone: a thick gold X on the dialog's blue.
+        val (x, y) = screen("chess-update-notes").close()!!
+        assertTrue("$x,$y", abs(x - .719) < .008 && abs(y - .186) < .012)
+    }
+
+    @Test fun theUpdateNotesAreAPopupWhateverThePixelsSay() {
+        val title = listOf(word("Ghi chú cập nhật", .34, .186))
+        for (kind in listOf(GameScreens.Kind.OTHER, GameScreens.Kind.HERO_PAGE)) {
+            val notes = GameScreens.refine(at(kind), title, null)
+            assertEquals(GameScreens.Kind.POPUP, notes.kind)
+            assertEquals(.719 to .186, notes.close)
+        }
+    }
+
+    @Test fun anyLineSayingATapLeavesIsTapped() {
+        val blank = at(other)
+        for (line in listOf("Chạm để tiếp tục", "Nhấn vào màn hình để tiếp tục", "Chạm vào vùng trống để đóng")) {
+            val reading = GameScreens.refine(blank, listOf(word(line, .5, .8)), null)
+            assertEquals(line, GameScreens.Kind.CONTINUE, reading.kind)
+            assertEquals(line, .5 to .8, reading.tap)
+        }
+    }
+
+    @Test fun aBoxWithOnlyAButtonIsPressedOnceItHasStayed() {
+        val gotIt = word("Đã rõ", .5, .75)
+        // Sparkles behind it keep the picture changing; the button's words are what stays.
+        val box = (1..8).map { at(other, look = it * 10, words = listOf(gotIt)) }
+        val game = Script(box + listOf(at(lobby), at(lobby), at(listed)))
+        assertTrue(game.run() is GameEntry.Outcome.Ready)
+        assertEquals(.5 to .75, game.taps.first())
+        assertTrue(game.recorded.toString(), game.recorded.any { it.contains("bấm nút Đã rõ") })
+    }
+
+    @Test fun aButtonGoneInAMomentIsNotPressed() {
+        // A loading tip that happens to read "Đóng" for one look, then the game goes on.
+        val game = Script(listOf(at(other, words = listOf(word("Đóng", .5, .75))), at(other, look = 9), at(lobby), at(lobby), at(listed)))
+        assertTrue(game.run() is GameEntry.Outcome.Ready)
+        assertEquals(listOf(heroes), game.taps)
+    }
+
+    @Test fun aPurchaseBoxWaitsForThePlayer() {
+        val box = at(other, words = listOf(word("Mua gói quà với 100 Quân huy?", .5, .4), word("Xác nhận", .5, .75)))
+        val game = Script(listOf(box))
+        assertTrue(game.run() is GameEntry.Outcome.Failed)
+        assertTrue(game.taps.toString(), game.taps.isEmpty())
+    }
+
+    @Test fun aBoxThatKeepsItsButtonStopsTheRun() {
+        val game = Script(listOf(at(other, words = listOf(word("Nhận", .5, .75)))))
+        val outcome = game.run() as GameEntry.Outcome.Failed
+        assertTrue(outcome.toString(), game.kept.contains("entry-button"))
+        assertEquals(GameEntry.MAX_BUTTONS, game.taps.size)
+    }
+
     @Test fun recognizesNewChessAccountExperienceAndTrainingTip() {
         val unknown = at(GameScreens.Kind.OTHER)
         val prompt = GameScreens.refine(

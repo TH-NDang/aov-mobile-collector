@@ -2,6 +2,7 @@ package vn.ndang.aovcollector
 
 import java.io.InputStream
 import kotlin.math.abs
+import kotlin.math.roundToInt
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -63,6 +64,48 @@ class RankingTest {
             }
         )
         assertFalse(RankScreens.same(a, RankScreens.signature(shifted.first, shifted.second, rows(shifted))))
+    }
+
+    /** The picture [p] with its rows gone up by [px], as after a scroll: black where the list is not known. */
+    private fun raised(p: Triple<Int, Int, IntArray>, px: Int) = Triple(
+        p.first,
+        p.second,
+        IntArray(p.third.size) {
+            val y = it / p.first + px
+            if (y < p.second) p.third[y * p.first + it % p.first] else 0
+        }
+    )
+
+    @Test fun aTableStillBeingDrawnIsNotAtRest() {
+        val rates = pixels("ranking-rates")
+        val a = RankScreens.signature(rates.first, rates.second, rows(rates))
+        assertTrue(RankScreens.steady(a, a.copyOf()))
+        // A portrait arriving in one corner: the whole table's mean hardly moves, one square does.
+        val late = a.copyOf().also { it[30 * 48 / 4] += 40 }
+        assertTrue(RankScreens.same(a, late))
+        assertFalse(RankScreens.steady(a, late))
+    }
+
+    @Test fun aScrollIsMeasuredByTheRowsTwoPicturesShare() {
+        val rates = pixels("ranking-rates")
+        val before = RankScreens.profile(rates.first, rates.second, rows(rates))
+        // One row of the table (133 px of 1080), and the scroll the reader makes (.4 of a screen).
+        for (px in listOf(133, 432)) {
+            val after = raised(rates, px)
+            val moved = RankScreens.moved(before, RankScreens.profile(after.first, after.second, rows(after)))!!
+            assertTrue("$px", moved.sure)
+            assertEquals(px / 1080.0, moved.part, .003)
+        }
+        // Not moved at all.
+        val same = RankScreens.moved(before, before.copyOf())!!
+        assertTrue(same.sure)
+        assertEquals(0.0, same.part, .001)
+        // Other heroes altogether, as after a scroll past every row of the photo before: nothing is found again.
+        val figures = pixels("ranking-figures")
+        assertFalse(RankScreens.moved(before, RankScreens.profile(figures.first, figures.second, rows(figures)))!!.sure)
+        // Rows not read: no measure, never a wrong one.
+        assertNull(RankScreens.moved(FloatArray(0), FloatArray(0)))
+        assertNull(RankScreens.moved(before, FloatArray(15)))
     }
 
     private fun w(text: String, x: Double, y: Double) = GameScreens.Word(text, x - .05, y - .02, x + .05, y + .02)
@@ -189,7 +232,14 @@ class RankingTest {
         val failSaveAt: Int = 0,
         val pauseOnSave: Boolean = false,
         var ignoredModeTaps: Int = 0,
-        val popupAfterSave: Boolean = false
+        val popupAfterSave: Boolean = false,
+        /** Looks after each scroll down in which the table is still being drawn: rows, then portraits and bars. */
+        val drawing: Int = 0,
+        /** The scroll down, counted from 1, that slides on by [slide] of a screen past where the finger left it. */
+        val jump: Int = 0,
+        val slide: Double = 0.0,
+        /** Whether a look's rows can be laid over another's: false as on a page the measure does not fit. */
+        val measurable: Boolean = true
     ) : RankingReader.Screen {
         var offset = 0.0
         var open = false
@@ -205,6 +255,10 @@ class RankingTest {
         val savedMenus = ArrayList<Boolean>()
         val savedFrames = ArrayList<RankScreens.Combo>()
         val savedAtLooks = ArrayList<Int>()
+        val savedOffsets = ArrayList<Double>()
+        val savedDrawing = ArrayList<Boolean>()
+        private var drawingLeft = 0
+        private var downs = 0
         val drags = ArrayList<Double>()
         val kept = ArrayList<String>()
         val tapped = ArrayList<String>()
@@ -256,11 +310,26 @@ class RankingTest {
             val frameCombo = RankScreens.Combo(table, mode)
             val atLook = looks
             val menuInFrame = open
-            val signature = IntArray(8) { (offset * 1000).toInt() + table.ordinal * 5000 + mode.ordinal * 20000 }
+            val unfinished = drawingLeft > 0
+            if (unfinished) drawingLeft--
+            val atOffset = offset
+            val signature = IntArray(8) {
+                (offset * 1000).toInt() + table.ordinal * 5000 + mode.ordinal * 20000 + (if (unfinished) 100 * (drawingLeft + 1) else 0)
+            }
+            // The body's 637 screen rows of a 1080 px screen, each row of the list with values of its own.
+            val top = (offset * 1080).roundToInt()
+            val seed = table.ordinal * 7919 + mode.ordinal * 104729 + (if (measurable) 0 else looks * 15485863)
+            val rowsOfTable = FloatArray(637 * 15) { i ->
+                var h = (i / 15 + top) * 31 + i % 15 + seed
+                h = (h xor (h ushr 16)) * -2048144789
+                h = (h xor (h ushr 13)) * -1028477387
+                ((h xor (h ushr 16)) and 255).toFloat()
+            }
             then(object : RankingReader.Look {
                 override val words = shown
                 override val lobby = page == Page.LOBBY
                 override val signature = signature
+                override val profile = rowsOfTable
                 override val menuOverlay = menuInFrame
                 var consumed = false
 
@@ -284,6 +353,8 @@ class RankingTest {
                             kept += name
                             savedFrames += frameCombo
                             savedAtLooks += atLook
+                            savedOffsets += atOffset
+                            savedDrawing += unfinished
                             savedMenus += menuInFrame
                         }
                         if (pauseOnSave) paused = true
@@ -350,11 +421,17 @@ class RankingTest {
             ) {
                 offset =
                     when {
-                        d < 0 -> maxOf(0.0, offset - 3)
+                        d < 0 && fling -> maxOf(0.0, offset - 3)
+                        // Brought back under a resting finger: as far as the finger goes.
+                        d < 0 -> maxOf(0.0, offset + d)
                         offset > .5 && stalls > 0 -> {
                             stalls--
                             offset
-                        } else -> minOf(length, offset + d)
+                        } else -> {
+                            downs++
+                            drawingLeft = drawing
+                            minOf(length, offset + d + (if (downs == jump) slide else 0.0))
+                        }
                     }
             }
             pending.addLast { then(true) }
@@ -726,7 +803,14 @@ class RankingTest {
             listOf("navigation.more", "navigation.community", "navigation.heroes", "navigation.full-ranking"),
             web.calibrationActions.take(4).map { it.id.removePrefix("ranking.v1.") }
         )
-        assertTrue(web.calibrationActions.any { it.id == "ranking.v1.scroll.down.held" && it.relative && it.holdMs == 400L })
+        assertTrue(
+            web.calibrationActions.any {
+                it.id == "ranking.v1.scroll.down.held" &&
+                    it.relative &&
+                    it.durationMs == RankingReader.DRAG_MS &&
+                    it.holdMs == RankingReader.HOLD_MS
+            }
+        )
         assertTrue(web.calibrationActions.any { it.id == "ranking.v1.scroll.up.fling" && it.relative && it.holdMs == 0L })
         assertEquals(listOf("0.084,0.890", "Cộng đồng", "0.083,0.348", "Bảng xếp hạng đầy đủ >"), web.tapped.take(4))
         // Four photos per table: scrolled .4 of a screen at a time down a list one screen longer than the screen.
@@ -820,6 +904,48 @@ class RankingTest {
         assertEquals(listOf("chi-so-dau-hang-tat-ca"), web.finished)
         // 0, .4 … 2.0: six pages, the whole list.
         assertEquals((1..6).map { "chi-so-dau-hang-tat-ca-%02d".format(it) }, web.kept)
+    }
+
+    /** Rows first, their portraits and bars after: a page is kept only once two looks in a row show the same. */
+    @Test fun aPageIsPhotographedOnlyOnceItHasStoppedChanging() {
+        val combo = RankScreens.Combo(Table.RATES, Mode.ALL)
+        val web = Web(Page.RANKING, drawing = 3).run(wanted = listOf(combo))
+        assertEquals(listOf(combo.slug), web.finished)
+        assertEquals((1..4).map { "${combo.slug}-%02d".format(it) }, web.kept)
+        assertTrue("kept while drawing: ${web.savedDrawing}", web.savedDrawing.none { it })
+        // A table that never comes to rest is still taken, with a line in the log, as one look after a wait was.
+        val restless = Web(Page.RANKING, drawing = 1000).run(wanted = listOf(combo))
+        assertEquals(listOf(combo.slug), restless.finished)
+        assertTrue(restless.notes.any { it.contains("chưa đứng yên") })
+    }
+
+    /** A scroll that slides on past the rows of the photo before it is brought back, so no hero is left out. */
+    @Test fun aScrollGoneTooFarIsBroughtBack() {
+        val combo = RankScreens.Combo(Table.FIGURES, Mode.ALL)
+        val web = Web(Page.RANKING, length = 3.0, jump = 2, slide = .3).run(wanted = listOf(combo))
+        assertEquals(listOf(combo.slug), web.finished)
+        assertEquals(2, web.drags.count { it == -RankingReader.BACK })
+        assertTrue(web.notes.toString(), web.notes.any { it.contains("kéo ngược lại") })
+        // Every photo shares rows with the one before it: half a screen apart at most.
+        assertTrue("${web.savedOffsets}", web.savedOffsets.zipWithNext().all { (a, b) -> b - a in .01..0.497 })
+        assertEquals(3.0, web.savedOffsets.last(), .001)
+        // Further than two scrolls back reach: the photo is taken, and the log says heroes may be missing there.
+        val far = Web(Page.RANKING, length = 4.0, jump = 2, slide = 1.5).run(wanted = listOf(combo))
+        assertEquals(listOf(combo.slug), far.finished)
+        assertTrue(far.notes.toString(), far.notes.any { it.contains("có thể sót hàng") })
+        assertEquals(4.0, far.savedOffsets.last(), .001)
+    }
+
+    /** Where the measure never fits, the table is still photographed to its end, and the measure is given up. */
+    @Test fun aTableWhoseScrollsCannotBeMeasuredIsStillPhotographedToItsEnd() {
+        val combo = RankScreens.Combo(Table.RATES, Mode.ALL)
+        val web = Web(Page.RANKING, length = 4.0, measurable = false).run(wanted = listOf(combo))
+        assertEquals(listOf(combo.slug), web.finished)
+        assertEquals(4.0, web.savedOffsets.last(), .001)
+        assertTrue("${web.savedOffsets}", web.savedOffsets.zipWithNext().all { (a, b) -> b - a in .01..0.401 })
+        assertTrue(web.notes.toString(), web.notes.any { it.contains("Không đo được độ dịch") })
+        // Given up after three pages: the rest are scrolled once each, as before.
+        assertTrue(web.drags.count { it == -RankingReader.BACK } <= 3 * RankingReader.MAX_BACK)
     }
 
     @Test fun takesOnlyTheChosenTables() {

@@ -97,7 +97,7 @@ class ZipFilesTest {
 
     @Test fun canonicalFilesAndAnAliasedRootKeepSafeRelativeZipPaths() {
         val alias = File(root.parentFile, "alias-" + root.name)
-        Files.createSymbolicLink(alias.toPath(), root.toPath())
+        symlink(alias, root)
         try {
             for ((i, pair) in listOf(flat.canonicalFile to alias, File(alias, flat.relativeTo(root).path) to root).withIndex()) {
                 val out = File(root, "alias-export-$i.zip")

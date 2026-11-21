@@ -11,7 +11,7 @@ import kotlin.math.roundToInt
  * country and the whole server. Measured on the user's 2400x1080 screenshots; pages are told by their words.
  */
 object BoardScreens {
-    enum class Page { LOBBY, RANKED, SEASON, REGION, BOARD, PICKER, TOP, OTHER }
+    enum class Page { LOBBY, RANKED, SEASON, REGION, BOARD, PICKER, TOP, PROFILE, OTHER }
 
     /**
      * The four tabs of the ranking, by place: their names follow the account's region. And "Số 1 máy chủ", a page
@@ -169,6 +169,11 @@ object BoardScreens {
     val REGION_WANTED = arrayOf("vietnam", "mientrung", "daklak")
 
     fun page(words: List<GameScreens.Word>, lobby: Boolean): Page = when {
+        // A player's page opened from the ranking, "Thông tin kiện tướng"; its "Số 1 máy chủ…" title is lower down.
+        // When its title is not read: two of its own labels, which neither the ranking nor a player's card has.
+        words.any { it.plain.contains("thongtinkientuong") || (it.plain.contains("kientuong") && it.y < .12 && it.x < .45) } ||
+            words.count { w -> listOf("tylethang", "lichsudau", "uytin", "hientuong").any { w.plain.contains(it) } } >= 2 ->
+            Page.PROFILE
         words.any { it.plain.contains("chontuong") } -> Page.PICKER
         words.any { it.plain.contains("vaochienkhu") } -> Page.REGION
         // Before the ranking, whose bottom left names this page too.
@@ -352,15 +357,20 @@ object BoardScreens {
 /**
  * Goes from wherever it is started on the way (lobby, the season's review, the ranked page, the region dialog)
  * to "Chiến khu", then photographs the ranking of each hero of "Chọn tướng" in order, from hero [first], for the
- * tabs [wanted], each down to its top players (scrolling down the list; at most to its end). Taps only what it means
- * to: never the ranked page's own "Đấu hạng", which would start a match. All screen access goes through
- * [Screen], so unit tests run this exact logic on scripted screens.
+ * tabs [wanted], each down to its top players (scrolling down the list; at most to its end). With [players], each of
+ * those top players is also opened: their row, the person icon of the card it opens, their "Thông tin kiện tướng"
+ * page once it has loaded, their picture shown large once it has loaded, then back to the list where it was.
+ * [donePlayers]: players an earlier try of the step already kept. Taps only what it means to: never the ranked
+ * page's own "Đấu hạng", which would start a match, nor a card's add-friend or report icons. All screen access
+ * goes through [Screen], so unit tests run this exact logic on scripted screens.
  */
 class BoardReader(
     private val screen: Screen,
     private val heroes: Int,
     private val wanted: List<BoardScreens.Want>,
     private val first: Int = 0,
+    private val players: Boolean = false,
+    donePlayers: Set<String> = emptySet(),
     private val finish: (Outcome) -> Unit
 ) {
     private val tabs = wanted.map { it.tab }
@@ -390,6 +400,9 @@ class BoardReader(
         val pickerHeight: Int
 
         fun card(col: Int, top: Double, bottom: Double): Boolean
+
+        /** The ranking's players, a card, a player's page or picture, read from pixels; null when not read. */
+        val facts: BoardPlayerPixels.Facts? get() = null
 
         fun done(keep: String?)
     }
@@ -424,6 +437,21 @@ class BoardReader(
 
         /** Hero [index] is photographed: a later try of the step starts after it. */
         fun finished(index: Int) {}
+
+        /** A player's page and their UID box are kept ([key]: hero-001-quoc-gia-hang-02): a later try skips them. */
+        fun player(key: String) {}
+
+        /** Empties the clipboard before a copy icon is tapped, so a text left from before is never taken for the new one. */
+        fun clearClipboard() {}
+
+        /** What the game put on the clipboard after a copy icon was tapped; null when nothing, or Android would not show it. */
+        fun copied(then: (String?) -> Unit) = then(null)
+
+        /**
+         * A player's name and UID ([key]: hero-001-quoc-gia-hang-02), null where not known; [uidCopied]: the UID came
+         * from its copy icon, not from reading the box.
+         */
+        fun playerIds(key: String, name: String?, uid: String?, uidCopied: Boolean) {}
     }
 
     companion object {
@@ -441,6 +469,34 @@ class BoardReader(
         const val LIST_FROM = .78
         const val LIST_TO = .42
         const val LIST_X = .75
+
+        /**
+         * A player's visit. The card slides in, the player's page and picture come over the network: a tap is
+         * followed by a short wait, then looks every [POLL_MS] until what is shown has stopped changing.
+         */
+        const val ROW_MS = 700L
+        const val PROFILE_MS = 1200L
+        const val CLOSE_MS = 500L
+        const val BACK_MS = 1000L
+        const val POLL_MS = 500L
+
+        /** After a copy icon, for the game to fill the clipboard; after the eye, for its box to open. */
+        const val COPY_MS = 500L
+        const val EYE_MS = 700L
+
+        /** A copied text longer than this is not a player's name. */
+        const val MAX_NAME = 40
+
+        /** About 25 s for a player's page before keeping what is there. */
+        const val MAX_PROFILE_LOOKS = 16
+
+        /** About 8 s for a card, or for the eye's box, to come up at all before going on without it. */
+        const val MAX_CARD_LOOKS = 5
+
+        /** After this many looks a page or picture that has stopped changing is kept even if it looks plain. */
+        const val SLOW_LOOKS = 6
+        const val MAX_BACK_STEPS = 8
+        const val MAX_LOSSES = 3
     }
 
     private var ended = false
@@ -455,7 +511,22 @@ class BoardReader(
     private var pickerOffset = 0.0
     private var savedProfile: FloatArray? = null
     private var savedProfileHeight = 0
+
+    /** The grid as it looked at its verified top: a later opening that looks the same is at the top too. */
+    private var topProfile: FloatArray? = null
+    private var topProfileHeight = 0
     private var lastPickedName: String? = null
+
+    /** Players kept, by key; and those given up on after losing the way, so they are not tried forever. */
+    private val playersDone = HashSet(donePlayers)
+
+    /** The tab's players: the next rank to open, rank 1's row and the rows' pitch measured at the list's top. */
+    private var nextRank = 1
+    private var row0 = BoardPlayerPixels.ROW0
+    private var pitch = BoardPlayerPixels.PITCH
+    private var listTop: BoardPlayerPixels.Facts? = null
+    private var playersOff = false
+    private var losses = 0
 
     fun start() = navigate()
 
@@ -553,6 +624,15 @@ class BoardReader(
                 BoardScreens.TOP_BACK_Y,
                 1500,
                 "top.back"
+            )
+            // A player's page left open (with their picture over it, the tap closes the picture first).
+            BoardScreens.Page.PROFILE -> go(
+                l,
+                "Thông tin kiện tướng: quay lại Chiến khu",
+                BoardPlayerPixels.BACK_X,
+                BoardPlayerPixels.BACK_Y,
+                1500,
+                "player.back"
             )
             // Loading, or the season's trailer: wait for it.
             BoardScreens.Page.OTHER -> if (++waits <=
@@ -670,6 +750,20 @@ class BoardReader(
                     }
                 }
             }
+            // The game opens Chọn tướng at the top again after Đã nhận is cleared: one look at the top proven
+            // before saves the probe and the flings back for every hero.
+            val top = topProfile
+            if (top != null &&
+                topProfileHeight == l.pickerHeight &&
+                validPicker(l) &&
+                BoardPickerMotion.validTop(l.rows) &&
+                BoardPickerMotion.sameViewport(top, l.pickerProfile)
+            ) {
+                rowZero = l.rows.first().first
+                pickerOffset = 0.0
+                screen.note("Chiến khu: Chọn tướng mở ở đầu danh sách như lần trước; không vuốt về đầu lại")
+                return seek(l, 0.0, 0)
+            }
             return probeReset(l)
         }
         // A just-cleared checkbox can report a stale ON state during animations.
@@ -713,8 +807,9 @@ class BoardReader(
         val height = before.pickerHeight
         before.done(null)
         // A quick flick, never a short slow press: on the user's phone the game took a .12 slow drag that rested on
-        // a card for a tap and chose that hero, closing Chọn tướng.
-        drag(.62, .80, .50, true, 900, "picker.scroll.probe-flick") {
+        // a card for a tap and chose that hero, closing Chọn tướng. A short one: a long flick sent the list sliding
+        // to its bottom, and every fling back up cost a screenshot.
+        drag(.62, .80, .70, true, 900, "picker.scroll.probe-flick") {
             look(false, true) { after ->
                 if (!validPicker(after) || after.pickerHeight != height) {
                     after.done("board-picker-probe")
@@ -754,7 +849,9 @@ class BoardReader(
                 val same = BoardPickerMotion.sameViewport(prior, after.pickerProfile)
                 val stable = if (same) still + 1 else 0
                 val movedBack = resetMoved || !same
-                if (stable >= 2) {
+                // Once a fling has moved the list back up, flings plainly reach it: one that no longer moves it is
+                // at the top. Without that, two in a row are asked for.
+                if (stable >= (if (movedBack) 1 else 2)) {
                     val fullyVisibleShortList = BoardPickerMotion.validTop(after.rows) &&
                         BoardPickerMotion.clearLastRow(after.rows) &&
                         !bottomSliver(after)
@@ -772,6 +869,8 @@ class BoardReader(
                     }
                     rowZero = after.rows.first().first
                     pickerOffset = 0.0
+                    topProfile = after.pickerProfile
+                    topProfileHeight = after.pickerHeight
                     screen.note("Chiến khu: đã xác minh đầu danh sách bằng ảnh tướng, không dựa vào viền hàng")
                     seek(after, 0.0, 0)
                 } else {
@@ -957,6 +1056,11 @@ class BoardReader(
                 top(t, name, 0)
             }
         } else {
+            nextRank = 1
+            row0 = BoardPlayerPixels.ROW0
+            pitch = BoardPlayerPixels.PITCH
+            listTop = null
+            playersOff = false
             tap(tab.x, tab.y, 2200, "tab.${tab.name.lowercase(java.util.Locale.ROOT)}") { scan(t, name, 1, null, 0) }
         }
     }
@@ -1020,8 +1124,12 @@ class BoardReader(
         }
     }
 
-    /** Photographs the list from its top, the screens its top players take, scrolling until a scroll changes nothing. */
-    private fun scan(t: Int, name: String?, page: Int, last: IntArray?, still: Int): Unit = look(false) { l ->
+    /**
+     * Photographs the list from its top, the screens its top players take, scrolling until a scroll changes nothing;
+     * with [players], opens the top players of each screen before scrolling on. [before]: where the list stood on
+     * the screen before, to measure how far the scroll moved it.
+     */
+    private fun scan(t: Int, name: String?, page: Int, last: IntArray?, still: Int, before: ListAt? = null): Unit = look(false) { l ->
         val tab = tabs[t]
         if (last != null && BoardScreens.same(l.signature, last)) {
             l.done(null)
@@ -1032,16 +1140,333 @@ class BoardReader(
                     if (still ==
                         0
                     ) {
-                        scan(t, name, page, last, 1)
+                        scan(t, name, page, last, 1, before)
                     } else {
-                        drag(LIST_X, LIST_FROM, LIST_TO, false, 1200, "ranking.scroll") { scan(t, name, page, last, still + 1) }
+                        drag(LIST_X, LIST_FROM, LIST_TO, false, 1200, "ranking.scroll") { scan(t, name, page, last, still + 1, before) }
                     }
                 }
             }
+            if (wantsPlayers(t) && nextRank <= wanted[t].top) screen.note("${tab.label}: hết danh sách sau hạng ${nextRank - 1}")
             return@look tab(t + 1, name)
         }
+        val facts = l.facts
         l.done("hero-%03d-%s-%02d".format(index + 1, tab.slug, page))
-        if (page >= wanted[t].pages) return@look tab(t + 1, name)
-        drag(LIST_X, LIST_FROM, LIST_TO, false, 1200, "ranking.scroll") { scan(t, name, page + 1, l.signature, 0) }
+        if (!wantsPlayers(t) || facts == null) return@look more(t, name, page, l.signature)
+        val at = if (page == 1) {
+            measureTop(facts)
+            ListAt(facts, 0.0)
+        } else {
+            before?.let { locate(it, facts, LIST_FROM - LIST_TO) }?.let { ListAt(facts, it) }
+        }
+        if (at == null) {
+            screen.note("${tab.label}: không đo được danh sách đã kéo bao xa; bỏ qua người chơi còn lại của bảng")
+            playersOff = true
+            return@look more(t, name, page, l.signature)
+        }
+        visit(t, name, page, l.signature, at)
+    }
+
+    /** After a screen of the list and its players: the next screen while photos or players are left, else the next tab. */
+    private fun more(t: Int, name: String?, page: Int, signature: IntArray, at: ListAt? = null) {
+        val playersLeft = wantsPlayers(t) && nextRank <= wanted[t].top
+        if (page >= wanted[t].pages && !playersLeft) return tab(t + 1, name)
+        drag(LIST_X, LIST_FROM, LIST_TO, false, 1200, "ranking.scroll") { scan(t, name, page + 1, signature, 0, at) }
+    }
+
+    /** Where a tab's list stands: the pixels it was read from and how far it is scrolled from its top, in screen heights. */
+    private class ListAt(val facts: BoardPlayerPixels.Facts, val offset: Double)
+
+    /** One player of a list: the row tapped, their key and label; [profile] once their page is kept. */
+    private class Visit(
+        val t: Int,
+        val name: String?,
+        val page: Int,
+        val at: ListAt,
+        val y: Double,
+        val rank: Int,
+        val key: String,
+        val label: String
+    ) {
+        var profile: BoardPlayerPixels.Facts? = null
+        var copiedName: String? = null
+    }
+
+    private fun wantsPlayers(t: Int) = players && tabs[t] != BoardScreens.Tab.TOP && !playersOff
+
+    private fun playerKey(t: Int, rank: Int) = "hero-%03d-%s-hang-%02d".format(index + 1, tabs[t].slug, rank)
+
+    /** The rank of the row centred at [y] on a list scrolled [offset] from its top. */
+    private fun rankAt(y: Double, offset: Double) = ((y - row0 + offset) / pitch).roundToInt() + 1
+
+    /** The tab just opened, at the top of its list: rank 1's row and the rows' pitch as they are on this phone. */
+    private fun measureTop(f: BoardPlayerPixels.Facts) {
+        listTop = f
+        val rows = f.rows
+        row0 = rows.firstOrNull()?.takeIf { abs(it - BoardPlayerPixels.ROW0) < .03 } ?: BoardPlayerPixels.ROW0
+        pitch = if (rows.size >= 3) {
+            ((rows.last() - rows.first()) / (rows.size - 1)).takeIf { it in .14..0.165 } ?: BoardPlayerPixels.PITCH
+        } else {
+            BoardPlayerPixels.PITCH
+        }
+    }
+
+    /**
+     * How far the list in [now] is scrolled from its top: measured from [ref] by how far the pictures moved, else,
+     * after a scroll of [nominal], from the rows lining up with the pitch. Null when it cannot be told.
+     */
+    private fun locate(ref: ListAt, now: BoardPlayerPixels.Facts, nominal: Double?): Double? {
+        BoardPlayerPixels.moved(ref.facts, now)?.let { return ref.offset + it }
+        if (nominal == null || now.rows.isEmpty()) return null
+        val guess = ref.offset + nominal
+        val error = now.rows.map {
+            val k = (it - row0 + guess) / pitch
+            k - k.roundToInt()
+        }.average()
+        return guess - error * pitch
+    }
+
+    /** The players of this screen of the list in rank order, the next one opened; when none is left, the next screen. */
+    private fun visit(t: Int, name: String?, page: Int, signature: IntArray, at: ListAt) {
+        val top = wanted[t].top
+        val label = tabs[t].label
+        while (nextRank <= top && playerKey(t, nextRank) in playersDone) nextRank++
+        val ranks = at.facts.rows.map { it to rankAt(it, at.offset) }
+        val next = ranks.firstOrNull { it.second in nextRank..top }
+        if (next == null) {
+            val last = ranks.lastOrNull()
+            if (nextRank <= top && last != null && last.second > top) {
+                screen.note("$label: không thấy dòng hạng $nextRank–$top trên màn hình")
+                nextRank = top + 1
+            } else if (nextRank <= top && (last == null || last.first + pitch < BoardPlayerPixels.ROW_BOTTOM - .01)) {
+                // Nothing in the row below the last one: the list ends here.
+                screen.note("$label: danh sách chỉ có ${last?.second ?: 0} người")
+                nextRank = top + 1
+            }
+            return more(t, name, page, signature, at)
+        }
+        if (next.second > nextRank) screen.note("$label: không thấy dòng hạng $nextRank trên màn hình")
+        nextRank = next.second
+        val v = Visit(t, name, page, at, next.first, next.second, playerKey(t, next.second), "$label hạng ${next.second}")
+        screen.say("Tướng ${index + 1} · ${v.label}: mở thẻ người chơi")
+        tap(BoardPlayerPixels.ROW_X, v.y, ROW_MS, "player.row", true) { card(v, 0) }
+    }
+
+    /**
+     * The row was tapped: its card should be over the right of the list, with the person icon at its bottom. Never
+     * tapped again while waiting: a second tap beside a card that is slow to come would close it.
+     */
+    private fun card(v: Visit, tries: Int): Unit = look(false) { l ->
+        val f = l.facts
+        when {
+            f != null && f.card -> {
+                l.done(null)
+                screen.say("Tướng ${index + 1} · ${v.label}: mở Thông tin kiện tướng")
+                tap(BoardPlayerPixels.PROFILE_X, BoardPlayerPixels.PROFILE_Y, PROFILE_MS, "player.profile") { profile(v, 0, null) }
+            }
+            tries < MAX_CARD_LOOKS -> {
+                l.done(null)
+                screen.later(POLL_MS) { card(v, tries + 1) }
+            }
+            else -> {
+                l.done("board-player-card")
+                screen.note("${v.label}: bấm dòng không mở thẻ người chơi; bỏ qua người này")
+                back(v, 0)
+            }
+        }
+    }
+
+    /**
+     * "Thông tin kiện tướng" is opening. Its data comes over the network and can take a while, so the page is kept
+     * only when its left panel (picture, name, numbers) is the same on two looks in a row, with the numbers and the
+     * picture drawn. The page is told by its title first ([prev] null); the looks after that compare pixels only.
+     */
+    private fun profile(v: Visit, looks: Int, prev: BoardPlayerPixels.Facts?): Unit = look(prev == null) { l ->
+        val f = l.facts
+        if (f == null) {
+            l.done(null)
+            return@look back(v, 0)
+        }
+        if (prev == null && BoardScreens.page(l.words, l.lobby) != BoardScreens.Page.PROFILE) {
+            val last = looks + 1 >= MAX_PROFILE_LOOKS
+            l.done(if (last) "board-player-profile" else null)
+            return@look when {
+                last -> {
+                    screen.note("${v.label}: không mở được Thông tin kiện tướng; bỏ qua người này")
+                    back(v, 0)
+                }
+                // Still the card: the icon was not taken.
+                looks == 2 && f.card -> tap(BoardPlayerPixels.PROFILE_X, BoardPlayerPixels.PROFILE_Y, PROFILE_MS, "player.profile") {
+                    profile(v, looks + 1, null)
+                }
+                else -> screen.later(POLL_MS) { profile(v, looks + 1, null) }
+            }
+        }
+        if (prev != null && f.panelLum < BoardPlayerPixels.POPUP_DIM * prev.panelLum) {
+            // Something came over the page: read it again by its words.
+            l.done(null)
+            return@look screen.later(POLL_MS) { profile(v, looks + 1, null) }
+        }
+        val settled = prev != null &&
+            BoardPlayerPixels.same(prev.panel, f.panel) &&
+            f.stats &&
+            (f.avatarDetail > BoardPlayerPixels.AVATAR_DRAWN || looks >= SLOW_LOOKS)
+        if (!settled && looks + 1 < MAX_PROFILE_LOOKS) {
+            l.done(null)
+            screen.say("Tướng ${index + 1} · ${v.label}: chờ hồ sơ tải xong")
+            return@look screen.later(POLL_MS) { profile(v, looks + 1, f) }
+        }
+        if (!settled) screen.note("${v.label}: hồ sơ tải lâu, đã chụp khi chưa chắc đủ dữ liệu")
+        v.profile = f
+        l.done("${v.key}-ho-so")
+        copyName(v)
+    }
+
+    /** The copy icon beside the eye: the game puts the player's name on the clipboard, spelled exactly as it is. */
+    private fun copyName(v: Visit) {
+        screen.say("Tướng ${index + 1} · ${v.label}: sao chép tên")
+        screen.clearClipboard()
+        tap(BoardPlayerPixels.NAME_COPY_X, BoardPlayerPixels.NAME_COPY_Y, COPY_MS, "player.copy-name") {
+            screen.copied { text ->
+                if (!screen.alive || ended) return@copied
+                v.copiedName = text?.trim()?.takeIf { it.isNotEmpty() && it.length <= MAX_NAME }
+                screen.say("Tướng ${index + 1} · ${v.label}: mở hộp UID")
+                tap(BoardPlayerPixels.EYE_X, BoardPlayerPixels.EYE_Y, EYE_MS, "player.eye") { info(v, 0) }
+            }
+        }
+    }
+
+    /**
+     * The eye's box, told by the UID on its row: kept as a screenshot, then its copy icon tapped. A box that does not
+     * come leaves the player with the name alone: nothing is tapped where the box should have been.
+     */
+    private fun info(v: Visit, looks: Int): Unit = look(true) { l ->
+        val number = BoardPlayerPixels.infoUid(l.words)
+        if (number == null) {
+            val last = looks + 1 >= MAX_CARD_LOOKS
+            l.done(if (last) "board-player-uid" else null)
+            if (!last) return@look screen.later(POLL_MS) { info(v, looks + 1) }
+            screen.note("${v.label}: bấm con mắt không hiện hộp UID; không sao chép UID")
+            return@look done(v, null, false)
+        }
+        val read = GameScreens.uidIn(number.text)
+        val x = (l.facts?.uidCopy ?: (number.right + BoardPlayerPixels.UID_COPY_GAP)).coerceAtMost(.64)
+        l.done("${v.key}-uid")
+        screen.say("Tướng ${index + 1} · ${v.label}: sao chép UID")
+        screen.clearClipboard()
+        tap(x, number.y, COPY_MS, "player.copy-uid", true) {
+            screen.copied { text ->
+                if (!screen.alive || ended) return@copied
+                val copied = text?.let { GameScreens.uidIn(it) }
+                done(v, copied ?: read, copied != null)
+            }
+        }
+    }
+
+    /**
+     * The player is done: what was copied is recorded and the player marked, then the way back to the list is found
+     * a look at a time. The eye's box may take the first tap of the back arrow, and a blind tap beside the card would
+     * land on the page's hero picture instead.
+     */
+    private fun done(v: Visit, uid: String?, uidCopied: Boolean) {
+        val name = v.copiedName
+        screen.playerIds(v.key, name, uid, uidCopied)
+        val got = listOf(
+            if (name != null) "đã sao chép tên" else "không lấy được tên từ nút sao chép",
+            when {
+                uidCopied -> "đã sao chép UID"
+                uid != null -> "UID đọc từ hộp (nút sao chép không cho kết quả)"
+                else -> "không có UID"
+            }
+        )
+        screen.note("${v.label}: " + got.joinToString("; "))
+        playersDone += v.key
+        screen.player(v.key)
+        back(v, 0)
+    }
+
+    /** On the way back to the list, one step at a time: told by pixels, by the page's words when unsure. */
+    private fun back(v: Visit, steps: Int): Unit = look(false) { l ->
+        val f = l.facts
+        val page = v.profile
+        if (f == null || steps >= MAX_BACK_STEPS) {
+            l.done(if (f == null) null else "board-player-back")
+            return@look lost(v)
+        }
+        val signature = l.signature
+        l.done(null)
+        when {
+            BoardPlayerPixels.samePlace(v.at.facts, f) -> if (f.card) {
+                tap(BoardPlayerPixels.CARD_CLOSE_X, BoardPlayerPixels.CARD_CLOSE_Y, CLOSE_MS, "player.card.close") { back(v, steps + 1) }
+            } else {
+                nextRank = v.rank + 1
+                visit(v.t, v.name, v.page, signature, ListAt(f, v.at.offset))
+            }
+            page != null && f.panelLum < BoardPlayerPixels.POPUP_DIM * page.panelLum ->
+                tap(BoardPlayerPixels.PHOTO_CLOSE_X, BoardPlayerPixels.PHOTO_CLOSE_Y, CLOSE_MS, "player.photo.close") { back(v, steps + 1) }
+            page != null && BoardPlayerPixels.same(page.panel, f.panel) ->
+                tap(BoardPlayerPixels.BACK_X, BoardPlayerPixels.BACK_Y, BACK_MS, "player.back") { back(v, steps + 1) }
+            else -> backByWords(v, steps + 1)
+        }
+    }
+
+    private fun backByWords(v: Visit, steps: Int): Unit = look(true) { l ->
+        val f = l.facts
+        val signature = l.signature
+        val where = BoardScreens.page(l.words, l.lobby)
+        l.done(null)
+        when {
+            where == BoardScreens.Page.PROFILE ->
+                tap(BoardPlayerPixels.BACK_X, BoardPlayerPixels.BACK_Y, BACK_MS, "player.back") { back(v, steps + 1) }
+            where == BoardScreens.Page.BOARD && f != null -> if (f.card) {
+                tap(BoardPlayerPixels.CARD_CLOSE_X, BoardPlayerPixels.CARD_CLOSE_Y, CLOSE_MS, "player.card.close") { back(v, steps + 1) }
+            } else {
+                relocate(v, f, signature)
+            }
+            // Loading: wait for it.
+            where == BoardScreens.Page.OTHER && steps < MAX_BACK_STEPS -> screen.later(1000) { back(v, steps + 1) }
+            else -> lost(v)
+        }
+    }
+
+    /** Back on the list, but not where it was left: measured from where it was, else from its top after the tab again. */
+    private fun relocate(v: Visit, f: BoardPlayerPixels.Facts, signature: IntArray) {
+        nextRank = v.rank + 1
+        locate(v.at, f, null)?.let { offset ->
+            screen.note("${tabs[v.t].label}: danh sách đã dịch khi quay lại; đã đo lại vị trí")
+            return visit(v.t, v.name, v.page, signature, ListAt(f, offset))
+        }
+        val tab = tabs[v.t]
+        screen.note("${tab.label}: danh sách đã đổi khi quay lại; mở lại bảng từ đầu")
+        tap(tab.x, tab.y, 2200, "tab.${tab.name.lowercase(java.util.Locale.ROOT)}") {
+            look(false) { l ->
+                val now = l.facts
+                val top = listTop
+                val offset = if (now != null && top != null) locate(ListAt(top, 0.0), now, null) else null
+                val shown = l.signature
+                l.done(null)
+                if (now == null || offset == null) {
+                    screen.note("${tab.label}: không tìm lại được chỗ trong danh sách; bỏ qua người chơi còn lại của bảng")
+                    playersOff = true
+                    return@look tab(v.t + 1, v.name)
+                }
+                visit(v.t, v.name, v.page, shown, ListAt(now, offset))
+            }
+        }
+    }
+
+    /**
+     * Lost on the way back to the list: the whole way to Chiến khu from wherever this is, then this hero again, its
+     * kept players skipped. This player is not tried again, and after [MAX_LOSSES] the step stops.
+     */
+    private fun lost(v: Visit) {
+        playersDone += v.key
+        if (++losses >
+            MAX_LOSSES
+        ) {
+            return fail("Lạc đường $MAX_LOSSES lần khi quay lại Chiến khu từ hồ sơ người chơi. Mở Chiến khu rồi bấm Tiếp tục.")
+        }
+        screen.note("${v.label}: không quay lại được bảng; vào lại Chiến khu, chụp tiếp tướng này")
+        steps = 0
+        navigate()
     }
 }

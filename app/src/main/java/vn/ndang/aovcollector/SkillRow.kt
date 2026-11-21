@@ -35,14 +35,19 @@ object SkillRow {
         val band = Band(width, height, readRow)
         val four = FOUR.minOf { band.ring(it) }
         val five = FIVE.minOf { band.ring(it) }
-        // A correct layout scores .73 or more on its weakest icon and the other at most .65 (129 heroes and Edras).
+        // A correct layout scores .73 or more on its weakest icon and the other at most .65 (129 heroes and Edras), but for
+        // Edras's second form: its dark blue fourth icon scores .54 to .63 (the user's runs of 10/11), and the row was
+        // missed at .58. A page without the row scores .21 at most (Thane's model shown alone).
         val centres = when {
-            maxOf(four, five) < .6 -> null
+            maxOf(four, five) < ROW -> null
             five > four -> FIVE
             else -> FOUR
         }
-        return Row(centres, band.swap() > .75, (centres ?: emptyList()).map { band.icon(it) })
+        return Row(centres, band.swap() > SWAP, (centres ?: emptyList()).map { band.icon(it) })
     }
+
+    private const val ROW = .5
+    private const val SWAP = .75
 
     /** Mean channel difference between two [icon] samples; the same icon reads 0, a changed one over 50. */
     fun differ(a: IntArray, b: IntArray): Boolean = a.size != b.size || a.indices.sumOf { abs(a[it] - b[it]) }.toDouble() / a.size > 25
@@ -70,6 +75,8 @@ object SkillRow {
         }
 
         fun at(x: Int, y: Int): Int = if (x < 0 || x >= w || y < 0 || y >= rows) -1 else luma[y * w + x]
+
+        fun blue(x: Int, y: Int): Int = if (x < 0 || x >= w || y < 0 || y >= rows) -1 else rgb[y * w + x] and 255
 
         /**
          * How round an icon at [x] looks: the share of 48 directions where the luma steps by more than 25 across
@@ -102,8 +109,15 @@ object SkillRow {
             return best
         }
 
-        /** Correlation of the ↻ shape with the screen, at the best shift of up to 4 pixels: .88 or more when there, at most .53 when not. */
-        fun swap(): Double {
+        /**
+         * Correlation of the ↻ shape with the screen, at the best shift of up to 4 pixels: .88 or more when there, at most
+         * .53 when not. In luma and in blue, the better of the two: the glyph is white and pale blue, and the paper lanterns
+         * floating behind it on Tachi's and Aoi's pages are as bright as it in luma (.41 there) but have little blue (.86).
+         * Over the 370 hero photos of the user's runs of 10/11, heroes with the button score .86 or more, others .36 at most.
+         */
+        fun swap(): Double = maxOf(swap(::at), swap(::blue))
+
+        private fun swap(at: (Int, Int) -> Int): Double {
             val cx = SWAP_X * width
             val cy = Y * height - top
             val mean = SWAP_MASK.sumOf { line -> line.count { it == '#' } }.toDouble() / (SWAP_SIZE * SWAP_SIZE)

@@ -163,6 +163,18 @@ object GameText {
         }
     }
 
+    /**
+     * The code typed into an event page's own box, read at twice the size in the box's [strip] (left, top, right,
+     * bottom): the whole code must be one word there.
+     */
+    fun eventCodeInBox(screen: Bitmap, expected: String, strip: DoubleArray): Boolean {
+        if (screen.width <= screen.height || expected.isBlank() || strip.size != 4) return false
+        val (left, top, right, bottom) = strip.map { it.coerceIn(0.0, 1.0) }
+        if (right - left < .02 || bottom - top < .02) return false
+        val target = GameScreens.plain(expected)
+        return rankingCrop(screen, left, top, right, bottom).any { it.y in top..bottom && GameScreens.plain(it.text) == target }
+    }
+
     private fun rankingCrop(
         screen: Bitmap,
         left: Double,

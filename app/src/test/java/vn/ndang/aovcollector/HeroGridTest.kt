@@ -111,19 +111,34 @@ class HeroGridTest {
         startAt: Double = 0.0,
         val names: List<String> = List(heroes) {
             "Hero $it"
-        }
+        },
+        // As the hero list: only the page tapped on is kept, and a card far up is reached from the top. Else as chess.
+        private val heroList: Boolean = false,
+        // How much lower than the app's grid the game writes the names of a row: rows spaced otherwise than measured.
+        private val lower: (Int) -> Double = { 0.0 }
     ) {
         val list = FakeList(heroes, seed, slide).apply { offset = maxOffset * startAt }
         val state = ListNavigator.State()
         val tapped = ArrayList<Int?>()
         val kept = ArrayList<String>()
+        val notes = ArrayList<String>()
+
+        // Cards whose names ML Kit does not read.
+        val blind = HashSet<Int>()
         var swipes = 0
+        var flicks = 0
         var backs = 0
 
         /** Looks after which a hero page that is still closing shows the list by itself. */
         var closingLooks = 0
         val screen = object : ListNavigator.Screen {
             override val alive = true
+            override val keepsPassedPages = !heroList
+            override val flicksToTop = heroList
+
+            override fun note(text: String) {
+                notes += text
+            }
 
             override fun look(then: (ListNavigator.Shot?) -> Unit) {
                 val grid = HeroGrid.isGrid(list.w, list.h, list::readRow)
@@ -148,8 +163,9 @@ class HeroGridTest {
                         ) {
                             emptyList()
                         } else {
-                            names.indices.mapNotNull { i ->
-                                val y = (HeroGrid.ROW0 + (i / 5) * HeroGrid.PITCH) + HeroFinder.NAME_BELOW - list.offset / list.h
+                            names.indices.filter { it !in blind }.mapNotNull { i ->
+                                val y =
+                                    (HeroGrid.ROW0 + (i / 5) * HeroGrid.PITCH) + HeroFinder.NAME_BELOW + lower(i / 5) - list.offset / list.h
                                 val x = HeroGrid.columns[i % 5]
                                 if (y < .15 || y > .98) null else GameScreens.Word(names[i], x - .04, y - .015, x + .04, y + .015)
                             }
@@ -160,6 +176,7 @@ class HeroGridTest {
 
             override fun drag(d: Double, fling: Boolean, then: (Boolean) -> Unit) {
                 swipes++
+                if (fling) flicks++
                 if (list.page ==
                     FakeList.Page.LIST
                 ) {
@@ -213,10 +230,50 @@ class HeroGridTest {
             return tapped to "limit"
         }
 
-        /** Finds [name] with [HeroSearch] from card [hint]: the card tapped and how it ended. */
-        fun search(name: String, hint: Int): Pair<Int?, String> {
+        /** Taps card [card] alone, then is back on the list as after the macro's back tap; how it ended. */
+        fun pick(card: Int): ListNavigator.Outcome? {
+            var outcome: ListNavigator.Outcome? = null
+            ListNavigator(card, state, screen) { outcome = it }.start()
+            list.page = FakeList.Page.LIST
+            return outcome
+        }
+
+        /**
+         * Runs blocks [from] to [to] of a pass down the list for [wanted] ([HeroSweep]), each hero's page closed by the
+         * macro's back tap: the hero each block took, null where it took none. [saved]: where [HeroIndex] last saw a name.
+         */
+        fun sweep(
+            wanted: List<String>,
+            pass: HeroSweep.State = HeroSweep.State(),
+            from: Int = 1,
+            to: Int = wanted.size,
+            saved: (String) -> Int = { -1 }
+        ): List<String?> = (from..to).map { b ->
+            var outcome: ListNavigator.Outcome? = null
+            val key = "hero-%03d".format(b)
+            HeroSweep(
+                pass,
+                wanted,
+                key,
+                { list.heroes },
+                saved,
+                { card, approve, watch, then -> ListNavigator(card, state, screen, approve, watch, then).start() },
+                note = { notes += it }
+            ) { outcome = it }.start()
+            list.page = FakeList.Page.LIST
+            if (outcome is ListNavigator.Outcome.Tapped) pass.picked[key] else null
+        }
+
+        /** Finds [name] with [HeroSearch] from card [hint], or from card [near] when unknown: the card tapped and how it ended. */
+        fun search(name: String, hint: Int, near: Int = -1): Pair<Int?, String> {
             var result: Pair<ListNavigator.Outcome, Int?>? = null
-            HeroSearch(name, hint, { card, approve, then -> ListNavigator(card, state, screen, approve, then).start() }) { o, card ->
+            HeroSearch(
+                name,
+                hint,
+                { card, approve, then -> ListNavigator(card, state, screen, approve, finish = then).start() },
+                note = { notes += it },
+                near = near
+            ) { o, card ->
                 result =
                     o to card
             }.start()
@@ -371,5 +428,231 @@ class HeroGridTest {
         assertFalse(HeroGrid.isGrid(2400, 1080) { _, row -> busy.copyInto(row) })
         val list = FakeList(20, 2, 1.0..1.0)
         assertTrue(HeroGrid.isGrid(list.w, list.h, list::readRow))
+    }
+
+    /**
+     * A match with little overlap can beat the true move by chance: the chess hero list on the user's phone, dragged
+     * 413 px, matched at 650 px, the edge of the search. Within the moves the drag can have made, it is never taken.
+     */
+    @Test fun aMoveBeyondTheDragsReachIsNotTaken() {
+        val rows = 810
+        val random = Random(7)
+        val before = FloatArray(rows * 15) { random.nextInt(256).toFloat() }
+        val after = FloatArray(rows * 15)
+        for (y in 0 until rows) {
+            for (k in 0 until 15) {
+                after[y * 15 + k] = when {
+                    // The edge rows happen to look like the screen far below.
+                    y < 160 -> before[(y + 650) * 15 + k]
+                    y + 413 < rows -> before[(y + 413) * 15 + k] + random.nextInt(-6, 7)
+                    else -> random.nextInt(256).toFloat()
+                }
+            }
+        }
+        val anywhere = HeroGrid.shift(before, after)
+        assertEquals(650, anywhere.px)
+        assertTrue(anywhere.reliable)
+        val reached = HeroGrid.shift(before, after, -32..518)
+        assertTrue("${reached.px}", reached.px != 650)
+    }
+
+    /**
+     * The user's run of 35 heroes by name stopped looking for Biron, card 1, after Bijan, card 102 of 130: a pick was
+     * allowed 16 drags, and the top was 18 away. From that far down the list now goes to the top in a few flicks.
+     */
+    @Test fun aCardNearTheTopIsReachedFromTheTopNotDraggedUpTo() {
+        val run = Run(130, 11, 1.0..1.02, heroList = true)
+        assertTrue(run.pick(101) is ListNavigator.Outcome.Tapped)
+        // Down from the top in drags of .6 of the screen: 14 for the 7.9 screens to card 102.
+        assertTrue("${run.swipes - run.flicks}", run.swipes - run.flicks <= 15)
+        val swipes = run.swipes
+        val flicks = run.flicks
+        assertTrue(run.pick(0) is ListNavigator.Outcome.Tapped)
+        assertEquals(listOf<Int?>(101, 0), run.tapped)
+        assertTrue(run.notes.any { it.contains("vuốt nhanh lên đầu") })
+        // Flicks to the top and the one that shows it is there; not one drag up.
+        assertEquals(run.swipes - swipes, run.flicks - flicks)
+    }
+
+    /** Without the way by the top, as on the chess lists, a pick is allowed the drags its way takes, not 16 and five a row. */
+    @Test fun aLongWayUpIsAllowedTheDragsItTakes() {
+        // Drags that move the list half as far as the finger: 27 up from card 102 to card 1.
+        val run = Run(130, 11, .5..0.52)
+        assertTrue(run.pick(101) is ListNavigator.Outcome.Tapped)
+        val swipes = run.swipes
+        val flicks = run.flicks
+        assertEquals(ListNavigator.Outcome.Tapped, run.pick(0))
+        assertTrue("${run.swipes - swipes}", run.swipes - swipes > 16)
+        assertEquals(flicks, run.flicks)
+        assertEquals(listOf<Int?>(101, 0), run.tapped)
+    }
+
+    @Test fun theTopIsTakenOnlyWhenItIsTheShorterWay() {
+        val l = HeroGrid.DEFAULT_LAYOUT
+
+        fun at(card: Int) = l.centre(card, 0.0).second - l.park
+        // Bijan (card 102) to Biron (card 1).
+        assertTrue(ListNavigator.nearerTheTop(l, 0, at(101)))
+        assertEquals(14, ListNavigator.drags(l, 0, at(101), 1.0))
+        // Aleister (card 89) to Allain (card 38): about as quick either way, so the drags up.
+        assertFalse(ListNavigator.nearerTheTop(l, 37, at(88)))
+        // Down the list, or a row up, never.
+        assertFalse(ListNavigator.nearerTheTop(l, 101, 0.0))
+        assertFalse(ListNavigator.nearerTheTop(l, 60, at(66)))
+    }
+
+    /** Each page passed was written as a 2 MB PNG on the thread that measures the next one; the hero list keeps the page it taps. */
+    @Test fun theHeroListKeepsOnlyThePageItTapsOn() {
+        val run = Run(130, 11, 1.0..1.02, heroList = true)
+        run.pick(101)
+        assertEquals(1, run.kept.size)
+        // The chess encyclopedia's list still keeps every page.
+        val chess = Run(130, 11, 1.0..1.02)
+        chess.pick(101)
+        assertTrue("${chess.kept}", chess.kept.size > 10)
+    }
+
+    @Test fun aHeroNeverSeenIsLookedForFromWhereTheListIs() {
+        val names = List(130) { "Hero $it" }.toMutableList().also {
+            it[47] = "Bolt Baron"
+            it[112] = "Tamyn"
+        }
+        val below = Run(130, 4, 1.0..1.02, names = names)
+        below.pick(80)
+        val swipes = below.swipes
+        assertEquals(112 to "tapped 112", below.search("Tamyn", -1, HeroSearch.middle(below.state.offset)))
+        assertTrue("${below.swipes - swipes}", below.swipes - swipes <= 8)
+        assertTrue(below.notes.any { it.contains("dò từ chỗ danh sách đang đứng") })
+        // Above it: on to the end of the list, then back up.
+        val above = Run(130, 4, 1.0..1.02, names = names)
+        above.pick(80)
+        assertEquals(47 to "tapped 47", above.search("Bolt Baron", -1, HeroSearch.middle(above.state.offset)))
+    }
+
+    /** Names of four letters, matched letter for letter: Aaro, Abro, ... */
+    private fun name(card: Int) = "${'A' + card / 26}${'a' + card % 26}ro"
+
+    private val roster = List(130) { name(it) }
+
+    /** The cards of the user's 35 heroes on the list, in the order typed (Edras 69, Aleister 89, Allain 38, ...). */
+    private val typed = listOf(
+        68, 88, 37, 94, 77, 92, 114, 89, 101, 0, 123, 73, 65, 119, 79, 129, 112, 63, 91, 100, 127, 118, 107, 117, 57,
+        80, 76, 85, 86, 64, 83, 105, 72, 84, 3
+    )
+
+    /**
+     * The places saved before can be another account's, in another order: the pass reads the names on the way and
+     * takes each hero as the list shows it, top first, whatever order they were typed in and wherever they were saved.
+     */
+    @Test fun heroesByNameAreTakenAsOnePassDownTheListMeetsThem() {
+        val run = Run(130, 5, 1.0..1.02, names = roster, heroList = true)
+        val elsewhere = { _: String -> 7 }
+        val taken = run.sweep(typed.map { name(it) }, saved = elsewhere)
+        assertEquals(typed.sorted().map { name(it) }, taken)
+        assertEquals(typed.sorted(), run.tapped)
+        // Down once: 7.9 screens to the last row in drags of .6, a few more to see the end, and the flicks to the top.
+        assertTrue("${run.swipes - run.flicks}", run.swipes - run.flicks <= 18)
+        assertTrue(run.notes.any { it.startsWith("Thấy Aaro ở ô 1") })
+    }
+
+    /** The run stopped after block 4 took its hero, and the app started again: the same hero, then on down. */
+    @Test fun aPassContinuedLaterKeepsEachBlocksHero() {
+        val wanted = typed.map { name(it) }
+        val run = Run(130, 5, 1.0..1.02, names = roster, heroList = true)
+        val pass = HeroSweep.State()
+        run.sweep(wanted, pass, to = 4)
+        val again = HeroSweep.State.parse(pass.json().toString())
+        run.state.synced = false
+        run.state.ref = null
+        val rest = run.sweep(wanted, again, from = 4)
+        assertEquals(typed.sorted().drop(3).map { name(it) }, rest)
+        // Block 4's hero tapped twice, every other once.
+        val sorted = typed.sorted()
+        assertEquals(sorted.take(4) + sorted.drop(3), run.tapped)
+    }
+
+    /** A name the pass never read: looked for once at its saved place; one not on the list at all is left out. */
+    @Test fun aHeroThePassDidNotReadIsLookedForOnceWhereItWasSaved() {
+        val run = Run(130, 5, 1.0..1.02, names = roster, heroList = true)
+        run.blind += 40
+        // Asked after the end of the list; by then ML Kit reads the card.
+        val saved = { n: String ->
+            run.blind.clear()
+            if (n == name(40)) 40 else -1
+        }
+        val pass = HeroSweep.State()
+        val taken = run.sweep(listOf("Xyzw", name(40), name(90)), pass, saved = saved)
+        assertEquals(listOf(name(90), null, name(40)), taken)
+        assertEquals(listOf("Xyzw"), pass.missing)
+        assertTrue(run.notes.any { it == "Đã đi hết danh sách; chưa thấy: Xyzw, ${name(40)}" })
+        assertTrue(run.notes.any { it == "Không thấy Xyzw trong danh sách; bỏ qua tướng này" })
+    }
+
+    /** Under an unowned hero's name the game writes "Chưa có", and the account's UID is faint at the bottom. */
+    @Test fun onlyTheNameLineIsTakenForACardsName() {
+        val y = HeroGrid.ROW0 + HeroFinder.NAME_BELOW
+
+        fun w(t: String, x: Double, at: Double) = GameScreens.Word(t, x - .04, at - .015, x + .04, at + .015)
+        val words =
+            listOf(w("Laville", .337, y), w("Chưa có", .337, y + .057), w("Chưa có", .459, y + .057), w("UID 1754638552", .459, .98))
+        assertEquals(listOf(0 to "Laville"), HeroFinder.cards(words, 0.0).map { it.first to it.second.text })
+        // The rows whose names a screen shows: two at the top; none past the last of 130.
+        assertEquals(0..1, HeroSweep.rows(0.0, 130))
+        assertTrue(HeroSweep.rows(30.0, 130).isEmpty())
+    }
+
+    /**
+     * The user's run of 10/11 read no name past card 70: the app spaced the rows 450 px apart, the game 446.5, and the
+     * names it read sat off the line it expected. Names off their grid together are read where they are, and the list's
+     * offset is set right by them, so the pass goes on to the end with rows spaced either way.
+     */
+    @Test fun namesOffTheGridTogetherAreStillReadDownToTheEnd() {
+        // Off by .0033 a row, as 450 px for 446.5; the list ends where its last row is drawn, the names of the first off most.
+        for (perRow in listOf(.0033, -.0033)) {
+            val run = Run(130, 5, 1.0..1.02, names = roster, heroList = true, lower = { (it - 25) * perRow })
+            val taken = run.sweep(typed.map { name(it) })
+            assertEquals("$perRow", typed.sorted().map { name(it) }, taken)
+            assertEquals("$perRow", typed.sorted(), run.tapped)
+        }
+    }
+
+    @Test fun namesAreTakenOnTheLineMostOfThemShare() {
+        // The list .08 further down than counted: every name .08 higher than expected, and text on a card's art.
+        val y = HeroGrid.ROW0 + HeroGrid.PITCH + HeroFinder.NAME_BELOW - .08
+
+        fun w(t: String, x: Double, at: Double) = GameScreens.Word(t, x - .04, at - .015, x + .04, at + .015)
+        val words = listOf(w("Preyta", .337, y), w("Krizzix", .459, y), w("Yan", .580, y), w("Bolt Baron", .702, y), w("AIC", .823, y - .2))
+        val read = HeroFinder.read(words, 0.0)
+        assertEquals(listOf(5 to "Preyta", 6 to "Krizzix", 7 to "Yan", 8 to "Bolt Baron"), read.cards.map { it.first to it.second.text })
+        assertEquals(-.08, read.line!!, 1e-9)
+        // Two heroes a letter apart are two heroes; a letter misread in a name is the same name.
+        assertFalse(HeroFinder.same("keera", "veera"))
+        assertTrue(HeroFinder.same("superman", "supenman"))
+        assertTrue(HeroFinder.same("kahlii", "kahlij"))
+    }
+
+    /** Each block is the next hero met down the list: no name or saved place in its step. */
+    @Test fun namedHeroesAreBlocksOfOnePassDownTheList() {
+        val typedNames = listOf("Edras", "Aleister", "Allain", "Aya", "Biron", "Bijan")
+        val json = org.json.JSONObject(BuiltInMacros.named(typedNames))
+        assertTrue(json.getBoolean("sweep"))
+        assertEquals(typedNames, BuiltInMacros.heroNames(json))
+        val steps = json.getJSONArray("steps")
+        val finds = (0 until steps.length()).map { steps.getJSONObject(it) }.filter { it.getString("type") == "find" }
+        assertEquals((1..6).map { "hero-%03d".format(it) }, finds.map { it.getString("key") })
+        assertTrue(finds.all { it.getBoolean("sweep") && !it.has("name") && !it.has("hint") })
+        // Each block's steps still end where the next block's "find" begins.
+        finds.dropLast(1).zip(finds.drop(1)).forEach { (a, b) -> assertEquals(b, steps.getJSONObject(a.getInt("skipTo"))) }
+        Macro(json.toString())
+    }
+
+    /** The user's run of 10/11 asked for "Superman" and "Supenman": both read Superman's card, and he was taken twice. */
+    @Test fun aNameReadAsOneAlreadyAskedForIsOneHero() {
+        val json = org.json.JSONObject(BuiltInMacros.named(listOf("Superman", "Aya", "Supenman", "Keera", "Veera")))
+        assertEquals(listOf("Superman", "Aya", "Keera", "Veera"), BuiltInMacros.heroNames(json))
+        // A run made before: the block after Superman's does not take him again.
+        val pass = HeroSweep.State()
+        pass.picked["hero-001"] = "Superman"
+        assertEquals(listOf("Aya"), pass.left(listOf("Superman", "Aya", "Supenman")))
     }
 }

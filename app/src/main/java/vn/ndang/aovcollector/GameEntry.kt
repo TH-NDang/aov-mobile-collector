@@ -112,9 +112,9 @@ object GameScreens {
             return with(Kind.FORM)
         }
         words.firstOrNull { it.plain.contains("kysau") && it.x > .55 && it.y < .35 }?.let { return with(Kind.REGISTER, it.x to it.y) }
-        words.firstOrNull {
-            it.plain.contains("detieptuc") && it.y > .72 && it.x in .3..0.7
-        }?.let { return with(Kind.CONTINUE, it.x to it.y) }
+        // Update notes can have a page's back arrow in the dimmed lobby behind, which makes the pixels leave the X unsearched.
+        GamePopups.updateNotes(words)?.let { return Reading(Kind.POPUP, GamePopups.updateNotesClose(it, r.close), r.signature, words, uid) }
+        GamePopups.tapToLeave(words)?.let { return with(Kind.CONTINUE, it.x to it.y) }
         if (all.any { it.contains("uidcuabanla") }) return with(Kind.UID_DIALOG)
         if (all.any { it.contains("thongtinkientuong") }) return with(Kind.PROFILE)
         return Reading(r.kind, r.close, r.signature, words, uid, r.tap)
@@ -643,6 +643,10 @@ class GameEntry(
         const val MAX_CONTINUES = 10
         const val MAX_LOGINS = 2
 
+        /** A button still in the same words this long is on a box waiting for a tap, not passing on a loading screen. */
+        const val BUTTON_AFTER_MS = 6000L
+        const val MAX_BUTTONS = 8
+
         /** Looks at the lobby for its UID before opening the profile to read it there. */
         const val UID_LOOKS = 3
 
@@ -663,6 +667,9 @@ class GameEntry(
     private var tabs = 0
     private var backs = 0
     private var continues = 0
+    private var buttons = 0
+    private var buttonSeen: String? = null
+    private var buttonSince = 0L
     private var registers = 0
     private var chessVeteranTaps = 0
     private var chessTipTaps = 0
@@ -1184,6 +1191,19 @@ class GameEntry(
         tap(s, "Đóng popup $closes: bấm X ở %.0f%%, %.0f%% màn hình".format(close.first * 100, close.second * 100), close, 1500)
     }
 
+    /** The button of a box with neither an X nor a line to tap, once it has stayed: sparkles behind it may never stop moving. */
+    private fun waitingButton(reading: GameScreens.Reading, now: Long): GameScreens.Word? {
+        val button = (if (phase == Phase.ENTER) GamePopups.button(reading.words) else null) ?: run {
+            buttonSeen = null
+            return null
+        }
+        if (buttonSeen != button.plain) {
+            buttonSeen = button.plain
+            buttonSince = now
+        }
+        return button.takeIf { now - buttonSince > BUTTON_AFTER_MS }
+    }
+
     private fun other(s: Shot, now: Long) {
         val signature = s.reading.signature
         val last = still
@@ -1193,6 +1213,14 @@ class GameEntry(
             still = signature
             stillSince = now
             s.record("Đang chờ game (logo, màn tải, video)")
+        }
+        waitingButton(s.reading, now)?.let { button ->
+            if (++buttons > MAX_BUTTONS) {
+                val reason = "Đã bấm nút của hộp hướng dẫn hay quà $MAX_BUTTONS lần mà vẫn còn. Xử lý bằng tay rồi bấm Tiếp tục."
+                return stop(s, "entry-button", reason)
+            }
+            buttonSeen = null
+            return tap(s, "Hộp hướng dẫn hay quà: bấm nút ${button.text}", button.x to button.y, 2000)
         }
         if (now - stillSince >
             STILL_MS

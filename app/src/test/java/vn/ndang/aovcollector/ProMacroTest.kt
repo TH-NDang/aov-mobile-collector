@@ -19,6 +19,16 @@ class ProMacroTest {
         assertTrue(macro.photosVary)
     }
 
+    @Test fun theNumberOfCombosIsChosenAndOldMacrosTakeFive() {
+        val three = Macro(BuiltInMacros.proBuilds(combos = 3))
+        assertEquals(3, BuiltInMacros.proCombos(three.json))
+        assertEquals(3, BuiltInMacros.proCombos(three.steps.getJSONObject(0)))
+        val old = JSONObject(BuiltInMacros.proBuilds()).apply { remove("proCombos") }
+        old.getJSONArray("steps").getJSONObject(0).remove("combos")
+        assertEquals(ProSimpleReader.MAX, BuiltInMacros.proCombos(Macro(old.toString()).json))
+        assertTrue(runCatching { BuiltInMacros.proBuilds(combos = 0) }.isFailure)
+    }
+
     @Test fun invalidCountsAndWrongModeAreRejected() {
         assertTrue(runCatching { BuiltInMacros.proBuilds(0) }.isFailure)
         assertTrue(runCatching { BuiltInMacros.proBuilds(BuiltInMacros.ALL + 1) }.isFailure)

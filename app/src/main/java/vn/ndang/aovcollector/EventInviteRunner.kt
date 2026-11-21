@@ -3,15 +3,21 @@ package vn.ndang.aovcollector
 import org.json.JSONObject
 
 /**
- * One multi-account event-invite macro step. Every branch starts from a fresh OCR screenshot.
+ * One multi-account event-code macro step. Every branch starts from a fresh OCR screenshot.
  * Progress is committed before pressing the irreversible invitation confirmation button.
  * A process crash during submission must NEVER cause the same account/code to be submitted again.
+ *
+ * Shared by every event: each account signed out and in, the lobby's Sự kiện, the event found by its name in the
+ * list on the left (scrolling it), gift and guide popups on the way and after the code, the ledger, the way back.
+ * What belongs to one event is its [recipe]: Thập kỷ chung sức's popup ([EventCodeRecipe.Anniversary]), or an
+ * event page with its own code box ([EventCodeRecipe.Field], as Ủy Thác của Shuna's Nhiệm vụ chia sẻ).
  */
 class EventInviteRunner(
     private val keys: List<String>,
     private val code: String,
     private val codeFingerprint: String,
     private val screen: Screen,
+    private val recipe: EventCodeRecipe = EventCodeRecipe.Anniversary,
     private val finish: (String?) -> Unit
 ) {
     interface Look {
@@ -46,6 +52,25 @@ class EventInviteRunner(
         fun later(ms: Long, then: () -> Unit)
 
         fun say(message: String)
+
+        /**
+         * The code typed into an event page's own box [target]: the box tapped, the keyboard's field cleared and
+         * filled, its OK pressed, then the code read back in the box while [page] still holds. True only then.
+         */
+        fun typeCode(
+            code: String,
+            target: EventCodeRecipe.Target,
+            page: (List<GameScreens.Word>) -> Boolean,
+            then: (Boolean, String?) -> Unit
+        ) = then(false, "Chưa hỗ trợ nhập mã vào ô của trang sự kiện")
+
+        /** A slow drag at [x] from [from] to [to] (screen heights), to scroll the list of events. */
+        fun drag(x: Double, from: Double, to: Double, then: (Boolean) -> Unit) = then(false)
+    }
+
+    companion object {
+        /** Drags of the list of events looking for one, down then back up. */
+        const val LIST_SCROLLS = 4
     }
 
     private var ended = false
@@ -61,6 +86,12 @@ class EventInviteRunner(
     private var navigating = false
     private var submittedThisSession = false
     private val rewardReadings = mutableListOf<Int?>()
+
+    /** A [EventCodeRecipe.Field] event: drags of the list, taps of its line and of its tab, this account. */
+    private var listScrolls = 0
+    private var itemTaps = 0
+    private var tabTaps = 0
+    private var popupTaps = 0
 
     private fun active() = !ended && screen.alive
 
@@ -80,11 +111,18 @@ class EventInviteRunner(
 
     private fun note(message: String) {
         if (active()) {
-            screen.say(
-                "Sự kiện ${accountIndex + 1}/${keys.size} · $message · " +
-                    "${ledger.optInt("gifts")} quà · ${EventInviteLedger.ticketSummary(ledger)}"
-            )
+            screen.say("Sự kiện ${accountIndex + 1}/${keys.size} · $message · ${tally()}")
         }
+    }
+
+    /** What the accounts done so far got: gifts and Vé nhảy for Thập kỷ chung sức; codes taken for an event page. */
+    private fun tally(): String = if (recipe is EventCodeRecipe.Field) {
+        val results = ledger.optJSONObject("results")
+        val statuses = results?.keys()?.asSequence()?.map { results.optJSONObject(it)?.optString("status") }?.toList().orEmpty()
+        "${statuses.count { it == "done" }} nhận mã · ${statuses.count { it == "used" }} đã đủ lượt · " +
+            "${statuses.count { it == "rejected" }} bị từ chối · ${ledger.optInt("gifts")} quà"
+    } else {
+        "${ledger.optInt("gifts")} quà · ${EventInviteLedger.ticketSummary(ledger)}"
     }
 
     private fun after(ms: Long, then: () -> Unit) = screen.later(ms) {
@@ -153,14 +191,13 @@ class EventInviteRunner(
             // The button may already have succeeded while the app was killed.
             submittedThisSession = true
             note("Đang kiểm tra lượt xác nhận gián đoạn, không nhập lại")
-            inspectSubmission(0)
+            if (recipe is EventCodeRecipe.Field) inspectField(recipe, 0) else inspectSubmission(0)
         } else {
             startAccount()
         }
     }
 
-    private fun summary(): String =
-        "Hoàn thành ${keys.size} tài khoản · ${ledger.optInt("gifts")} quà · ${EventInviteLedger.ticketSummary(ledger)}"
+    private fun summary(): String = "Hoàn thành ${keys.size} tài khoản · ${tally()}"
 
     private fun success() {
         if (ended) return
@@ -186,6 +223,10 @@ class EventInviteRunner(
         navigating = false
         submittedThisSession = false
         rewardReadings.clear()
+        listScrolls = 0
+        itemTaps = 0
+        tabTaps = 0
+        popupTaps = 0
         ledger.remove("imeVerifiedFor")
         ledger.put("active", keys[accountIndex]).put("phase", "login")
         if (!save()) return
@@ -197,7 +238,7 @@ class EventInviteRunner(
             } else {
                 ledger.put("phase", "navigating")
                 if (!save()) return@login
-                note("Đã đăng nhập, tìm Thập kỷ chung sức")
+                note("Đã đăng nhập, tìm ${recipe.label}")
                 after(900) { inspectEvent() }
             }
         }
@@ -209,6 +250,25 @@ class EventInviteRunner(
         look { image ->
             val scene = image.scene
             image.done()
+            val field = recipe as? EventCodeRecipe.Field
+            if (field != null) {
+                when (scene.kind) {
+                    // The event pages, whose list on the left is read as the anniversary's.
+                    EventInviteScreens.Kind.EVENT_LIST, EventInviteScreens.Kind.ANNIVERSARY -> return@look field(field, scene)
+                    EventInviteScreens.Kind.UNKNOWN -> if (field.page(scene.words) ||
+                        field.item(scene.words) != null ||
+                        field.list(scene.words)
+                    ) {
+                        return@look field(field, scene)
+                    }
+                    // Thập kỷ chung sức's popup, not this event's.
+                    EventInviteScreens.Kind.INVITE -> {
+                        unknowns = 0
+                        return@look tap(.796, .198, 700, "Đóng popup Hỗ trợ bạn bè") { inspectEvent() }
+                    }
+                    else -> Unit
+                }
+            }
             when (scene.kind) {
                 EventInviteScreens.Kind.LOBBY -> {
                     val button = EventInviteScreens.eventButton(scene)
@@ -281,7 +341,138 @@ class EventInviteRunner(
                     unknowns = 0
                     after(1100) { inspectEvent() }
                 }
-                EventInviteScreens.Kind.UNKNOWN -> after(1100) { inspectEvent() }
+                EventInviteScreens.Kind.UNKNOWN -> {
+                    // A gift or guide that says a tap leaves it ("Chạm để tiếp tục"): tapped, a few times at most.
+                    val line = GamePopups.tapToLeave(scene.words)
+                    if (line != null && ++popupTaps <= 6) {
+                        tap(line.x, line.y, 900, "Đóng popup \"${line.text.trim()}\"") { inspectEvent() }
+                    } else {
+                        after(1100) { inspectEvent() }
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * On the way to a [EventCodeRecipe.Field] event's code box: the box with its button, else the tab that shows it,
+     * else the event's line in the list, else the list dragged down and then back up to find it.
+     */
+    private fun field(r: EventCodeRecipe.Field, scene: EventInviteScreens.Scene) {
+        val words = scene.words
+        val target = r.target(words)
+        val tab = r.tab(words)
+        val item = r.item(words)
+        when {
+            target != null -> {
+                unknowns = 0
+                fieldInvite(r, scene, target)
+            }
+            tab != null -> {
+                if (++tabTaps > 3) return stop("Đã mở tab ${r.tab} nhưng không thấy ô \"${r.hint}\" và nút ${r.submit}")
+                unknowns = 0
+                tap(tab.x, tab.y, 1100, "Mở tab ${r.tab}") { inspectEvent() }
+            }
+            item != null -> {
+                if (++itemTaps > 3) {
+                    return stop("Đã mở ${r.event} nhưng không thấy ${if (r.tab.isBlank()) "ô \"${r.hint}\"" else "tab ${r.tab}"}")
+                }
+                unknowns = 0
+                tap(item.x, item.y, 1400, "Mở ${r.event}") { inspectEvent() }
+            }
+            listScrolls < 2 * LIST_SCROLLS -> {
+                val down = listScrolls++ < LIST_SCROLLS
+                unknowns = 0
+                note(if (down) "Kéo danh sách sự kiện tìm ${r.event}" else "Kéo danh sách sự kiện lên lại")
+                screen.drag(.17, if (down) .80 else .30, if (down) .35 else .85) { ok ->
+                    if (!active()) return@drag
+                    if (ok) after(900) { inspectEvent() } else stop("Không kéo được danh sách sự kiện")
+                }
+            }
+            else -> stop("Không thấy \"${r.event}\" trong danh sách Sự kiện; kiểm tra tên sự kiện trong tác vụ")
+        }
+    }
+
+    /** The box is there: read how many codes the account has taken, then the code typed in and read back. */
+    private fun fieldInvite(r: EventCodeRecipe.Field, scene: EventInviteScreens.Scene, target: EventCodeRecipe.Target) {
+        val quota = r.quota(scene.words)
+        if (quota != null && quota.first >= quota.second) {
+            note("Tài khoản đã đủ ${quota.first}/${quota.second} ở ${r.label}")
+            complete("used", bonuses, null)
+            return
+        }
+        if (++confirmations > 3) return stop("Ô nhập mã của ${r.label} chưa ổn định; dừng an toàn")
+        if (quota != null) ledger.put("quotaBefore", quota.first) else ledger.remove("quotaBefore")
+        if (!save()) return
+        note("Xóa mã có sẵn và nhập mã đã lưu vào ô của ${r.label}")
+        screen.typeCode(code, target, { r.box(it) != null }) { typed, reason ->
+            if (!active()) return@typeCode
+            if (!typed) {
+                return@typeCode stop(reason ?: "Chưa nhập được mã vào ô của ${r.label}; chưa bấm ${r.submit}")
+            }
+            ledger.put("imeVerifiedFor", keys[accountIndex])
+            if (!save()) return@typeCode
+            after(900) { confirmField(r, 0) }
+        }
+    }
+
+    /** The code is in the box: its button pressed once, after the ledger says so. */
+    private fun confirmField(r: EventCodeRecipe.Field, recheck: Int) {
+        if (recheck >= 4) return stop("Không thấy nút ${r.submit} bên ô nhập mã")
+        look { image ->
+            val scene = image.scene
+            image.done()
+            val target = r.target(scene.words) ?: return@look after(700) { confirmField(r, recheck + 1) }
+            if (ledger.optString("imeVerifiedFor") != keys[accountIndex]) {
+                return@look stop("Thiếu bằng chứng đã nhập đúng mã; không bấm ${r.submit}")
+            }
+            // Commit BEFORE the irreversible button. If the process dies, inspect; never repeat.
+            ledger.put("phase", "submit_pending")
+            if (!save()) return@look
+            submittedThisSession = true
+            tap(target.button.x, target.button.y, 1600, "Bấm ${r.submit} (chỉ một lần)") { inspectField(r, 0) }
+        }
+    }
+
+    /**
+     * After the button: a gift popup, the game's word that the code was or was not taken, or the tab's count going
+     * up. Each is kept as a photo. Popups that say a tap leaves them are photographed and tapped, then looked past.
+     * Nothing clear after a while stops the step with the code marked as sent: it is never sent again.
+     */
+    private fun inspectField(r: EventCodeRecipe.Field, rechecks: Int) {
+        if (rechecks >= 8) {
+            return stop("Không xác minh được kết quả sau khi bấm ${r.submit}. Đã lưu trạng thái submit_pending; không nhập mã lần hai")
+        }
+        look { image ->
+            val scene = image.scene
+            val words = scene.words
+            val before = if (ledger.has("quotaBefore")) ledger.optInt("quotaBefore") else null
+            val now = r.quota(words)
+            val n = "%02d".format(accountIndex + 1)
+
+            fun record(name: String, status: String, gifts: Int, tickets: Int?) = image.keep(name) { kept ->
+                if (!active()) return@keep
+                if (!kept) return@keep stop("Không lưu được ảnh kết quả nhập mã; không ghi nhận tài khoản")
+                complete(status, gifts, tickets)
+            }
+            when {
+                scene.kind == EventInviteScreens.Kind.REWARD -> record("event-$n-code-reward", "done", bonuses + 1, scene.tickets)
+                r.rejected(words) -> record("event-$n-code-rejected", "rejected", bonuses, null)
+                r.accepted(words) || (before != null && now != null && now.first > before) ->
+                    record("event-$n-code-done", "done", bonuses, null)
+                else -> {
+                    val line = GamePopups.tapToLeave(words)
+                    if (line != null) {
+                        image.keep("event-$n-code-popup-${rechecks + 1}") { kept ->
+                            if (!active()) return@keep
+                            if (!kept) return@keep stop("Không lưu được ảnh popup sau khi nhập mã")
+                            tap(line.x, line.y, 900, "Đóng popup sau khi nhập mã") { inspectField(r, rechecks + 1) }
+                        }
+                    } else {
+                        image.done()
+                        after(900) { inspectField(r, rechecks + 1) }
+                    }
+                }
             }
         }
     }
@@ -402,7 +593,17 @@ class EventInviteRunner(
             return stop("Tiến độ quà bị trùng hoặc không hợp lệ: ${e.message}")
         }
         if (!save()) return
-        note("Đã ghi nhận tài khoản; quà thực nhận $gifts, Vé nhảy ${tickets ?: "chưa rõ"}")
+        note(
+            if (recipe is EventCodeRecipe.Field) {
+                "Đã ghi nhận tài khoản: " + when (result) {
+                    "done" -> "đã nhận mã"
+                    "used" -> "đã đủ lượt"
+                    else -> "mã bị từ chối"
+                }
+            } else {
+                "Đã ghi nhận tài khoản; quà thực nhận $gifts, Vé nhảy ${tickets ?: "chưa rõ"}"
+            }
+        )
         if (ledger.optBoolean("complete")) {
             success()
         } else {
@@ -435,7 +636,12 @@ class EventInviteRunner(
                     tap(.083, .057, 800, "Quay lại sảnh từng bước") { returnLobby() }
                 }
                 EventInviteScreens.Kind.UNKNOWN -> {
-                    after(1000) { returnLobby() }
+                    val line = GamePopups.tapToLeave(scene.words)
+                    if (line != null) {
+                        tap(line.x, line.y, 800, "Đóng popup trên đường về sảnh") { returnLobby() }
+                    } else {
+                        after(1000) { returnLobby() }
+                    }
                 }
             }
         }

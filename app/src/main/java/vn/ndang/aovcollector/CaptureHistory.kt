@@ -30,7 +30,7 @@ object CaptureHistory {
     private fun write(c: Context, j: JSONObject) {
         val part = File(c.filesDir, "capture-history.json.part")
         part.writeText(j.toString())
-        check(part.renameTo(file(c)))
+        check(part.moveOnto(file(c)))
     }
 
     private fun subject(c: Context, path: String): String {

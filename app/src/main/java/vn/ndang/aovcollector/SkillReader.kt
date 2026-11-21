@@ -36,6 +36,9 @@ class SkillReader(
         /** The open skill's detail text box, or null when it was not read. */
         val description: SkillDescription.Reading? get() = null
 
+        /** The hero shown alone, the page's controls hidden ([HeroView]): a tap landed on the hero's model. */
+        val alone: Boolean get() = false
+
         fun done(keep: String?)
     }
 
@@ -76,6 +79,13 @@ class SkillReader(
         /** The longest skill texts take two or three boxes; more means the text is not moving as read. */
         const val MAX_DESCRIPTION_PARTS = 6
 
+        /** Taps on the back arrow to leave the hero shown alone ([HeroView]) before the skills are read anyway. */
+        const val MAX_VIEW_BACKS = 2
+
+        /** Looks for the skill row of a page still loading, and for a detail text still being drawn, a second apart. */
+        const val ROW_WAITS = 3
+        const val TEXT_WAITS = 3
+
         /** Up inside the detail text, held still before lifting so the text stops where the finger does. */
         val SCROLL = CalibrationAction(
             "skills.v1.description.scroll",
@@ -87,6 +97,25 @@ class SkillReader(
             durationMs = 450,
             holdMs = 250
         )
+
+        /**
+         * Up inside the text, held while the screen is read ([STRETCH_LOOK_MS] after it is sent): a text held past its
+         * end follows the finger part of the way, as the game's lists do, and springs back once let go. That shows what
+         * lies under the box's edge where a scroll cannot reach it. The finger stays on the text ([SkillDescription.STRETCH_TO]).
+         */
+        val STRETCH = CalibrationAction(
+            "skills.v1.description.stretch",
+            "Tướng: kéo giữ mô tả chiêu",
+            listOf(
+                CalibrationPoint(SkillDescription.SCROLL_X, SkillDescription.SCROLL_FROM),
+                CalibrationPoint(SkillDescription.SCROLL_X, SkillDescription.STRETCH_TO)
+            ),
+            durationMs = 600,
+            holdMs = 1300
+        )
+
+        /** After the stretch is sent: its move (.15 s to clear the panel, .6 s up) is over, and the finger is still down. */
+        const val STRETCH_LOOK_MS = 1100L
 
         /** Empty space on the hero page, which closes a skill or attribute panel. */
         const val CLOSE_X = .60
@@ -166,9 +195,22 @@ class SkillReader(
         }
     }
 
-    private fun first(closed: Boolean, returns: Int): Unit = look { l ->
+    private fun first(closed: Boolean, returns: Int, waits: Int = 0, backs: Int = 0): Unit = look { l ->
         val row = l.row
         when {
+            // The hero alone, for photos: its back arrow brings the page back. Tapping empty space would tap him again.
+            l.alone && backs < MAX_VIEW_BACKS -> {
+                l.done(null)
+                screen.note("Đang ở chế độ chụp ảnh tướng (chạm trúng tướng); bấm quay lại về trang tướng")
+                tap(HeroGrid.BACK_X, HeroGrid.BACK_Y, settle + 600, "view.back", "Tướng: thoát chế độ chụp ảnh") {
+                    first(closed, returns, waits, backs + 1)
+                }
+            }
+            // A page still loading (a new hero's art, a slow phone): read again before deciding there is no row.
+            row.centres == null && waits < ROW_WAITS -> {
+                l.done(null)
+                screen.later(1000) { first(closed, returns, waits + 1, backs) }
+            }
             // Left on another form by a pause: ↻ until the first form is back.
             row.centres != null && known != null && !row.sameAs(known) && row.swap && returns < MAX_FORMS - 1 -> {
                 l.done(null)
@@ -212,14 +254,16 @@ class SkillReader(
             tap(centres[i], SkillRow.Y, settle, "row.${centres.size}.slot.$i", "Tướng: ô chiêu ${i + 1}/${centres.size}", relative = true) {
                 val detail = {
                     tap(DETAIL_X, TAB_Y, tabWait, "detail.tab", "Tướng: Chi tiết chiêu") {
-                        shot("$name-detail") {
-                            rest(name) {
-                                if (options.directSkills &&
-                                    !last
-                                ) {
-                                    one(k + 1)
-                                } else {
-                                    tap(CLOSE_X, CLOSE_Y, settle, "detail.close", "Tướng: đóng chiêu") { one(k + 1) }
+                        drawn(name, 0) { box ->
+                            shot("$name-detail") {
+                                rest(name, box) {
+                                    if (options.directSkills &&
+                                        !last
+                                    ) {
+                                        one(k + 1)
+                                    } else {
+                                        tap(CLOSE_X, CLOSE_Y, settle, "detail.close", "Tướng: đóng chiêu") { one(k + 1) }
+                                    }
                                 }
                             }
                         }
@@ -238,16 +282,85 @@ class SkillReader(
     }
 
     /**
-     * When the detail text of [name] runs down to the bottom of its box, scrolls it and keeps each part that moved,
-     * as [name]-detail-2, -3…, until a scroll leaves it where it was. A refused scroll keeps what was taken and goes on.
+     * The Chi tiết tab of [name] is drawn: its box holds text. On a slow phone the panel can still be opening or the
+     * text loading when the tab's wait is over; the photo would show none of it. Looks again, a second apart, a few
+     * times, then goes on. The reading handed on says whether the text runs past its box.
      */
-    private fun rest(name: String, then: () -> Unit) = peek { first ->
-        val box = first?.description
-        first?.done(null)
-        if (box == null || !box.reachesBottom) return@peek then()
+    private fun drawn(name: String, tries: Int, then: (SkillDescription.Reading?) -> Unit): Unit = peek { l ->
+        val box = l?.description
+        l?.done(null)
+        if (box == null || box.text || tries >= TEXT_WAITS) {
+            if (box != null && !box.text) screen.note("Chi tiết $name chưa hiện chữ sau ${tries + 1} lần nhìn; vẫn chụp")
+            return@peek then(box)
+        }
+        screen.later(1000) { drawn(name, tries + 1, then) }
+    }
+
+    /**
+     * When the detail text of [name] runs down to the bottom of its box ([box], read before its photo), scrolls it and
+     * keeps each part that moved, as [name]-detail-2, -3…, until a scroll leaves it where it was. A refused scroll
+     * keeps what was taken and goes on.
+     */
+    private fun rest(name: String, box: SkillDescription.Reading?, then: () -> Unit) {
+        if (box == null || !box.reachesBottom) return then()
         screen.note("Mô tả $name dài hơn khung; cuộn để chụp phần còn lại")
 
-        fun part(n: Int, before: IntArray) {
+        fun close(kept: Int) {
+            if (kept > 1) screen.note("Mô tả $name: $kept ảnh chi tiết")
+            then()
+        }
+
+        /**
+         * The text no longer scrolls, but its last line or two may lie under the box's edge: the game sizes some boxes
+         * a line short (Biron's first skill, D'Arcy's second). Held past its end, what shows anew is kept as part [n].
+         */
+        fun stretch(n: Int, before: SkillDescription.Reading) {
+            val glyphs = before.glyphs
+            if (glyphs == null) return close(n - 1)
+            var lifted = false
+            var kept: Boolean? = null
+
+            fun both() {
+                val k = kept ?: return
+                if (!lifted) return
+                // The text springs back once let go.
+                screen.later(settle) { close(if (k) n else n - 1) }
+            }
+            screen.calibrated(STRETCH) { ok ->
+                if (!screen.alive) return@calibrated
+                if (!ok) screen.note("Không kéo giữ được mô tả $name")
+                lifted = true
+                both()
+            }
+            screen.later(STRETCH_LOOK_MS) {
+                peek { l ->
+                    val now = l?.description
+                    val held = now?.glyphs
+                    val moved = now != null && SkillDescription.changed(before.signature, now.signature)
+                    if (l != null && held != null && moved && SkillDescription.revealed(glyphs, held)) {
+                        l.done("$name-detail-$n")
+                        screen.note("Mô tả $name: kéo giữ quá cuối khung thấy thêm chữ bị che; đã chụp")
+                        kept = true
+                    } else {
+                        l?.done(null)
+                        // Told apart in the log: a text the game will not move, or one with nothing under its box.
+                        if (l != null && now != null) {
+                            screen.note(
+                                if (moved) {
+                                    "Mô tả $name: kéo giữ thì chữ dịch lên nhưng không lộ thêm chữ"
+                                } else {
+                                    "Mô tả $name: kéo giữ mà chữ không nhúc nhích"
+                                }
+                            )
+                        }
+                        kept = false
+                    }
+                    both()
+                }
+            }
+        }
+
+        fun part(n: Int, before: SkillDescription.Reading) {
             if (n > MAX_DESCRIPTION_PARTS) {
                 screen.note("Mô tả $name vẫn còn sau ${MAX_DESCRIPTION_PARTS - 1} lần cuộn; dừng cuộn")
                 return then()
@@ -261,19 +374,25 @@ class SkillReader(
                 screen.later(settle) {
                     peek { l ->
                         val now = l?.description
-                        if (l == null || now == null || !SkillDescription.changed(before, now.signature)) {
-                            l?.done(null)
-                            if (n > 2) screen.note("Mô tả $name: ${n - 1} ảnh chi tiết")
-                            then()
-                        } else {
-                            l.done("$name-detail-$n")
-                            if (now.reachesBottom) part(n + 1, now.signature) else then()
+                        when {
+                            l == null || now == null -> {
+                                l?.done(null)
+                                close(n - 1)
+                            }
+                            !SkillDescription.changed(before.signature, now.signature) -> {
+                                l.done(null)
+                                stretch(n, before)
+                            }
+                            else -> {
+                                l.done("$name-detail-$n")
+                                if (now.reachesBottom) part(n + 1, now) else close(n)
+                            }
                         }
                     }
                 }
             }
         }
-        part(2, box.signature)
+        part(2, box)
     }
 
     /**
@@ -294,43 +413,50 @@ class SkillReader(
                 tap(SkillRow.SWAP_X, SkillRow.Y, settle + 300, "form.swap", "Tướng: đổi dạng", then = next)
             }
         }
-        act {
-            look { l ->
-                val row = l.row
-                val previous = forms.last()
-                when {
-                    row.centres == null -> {
-                        l.done("form-$form-unknown")
-                        screen.note("Không đọc được hàng chiêu sau khi bấm đổi dạng")
-                        done()
-                    }
-                    row.sameAs(previous) -> if (retries < 2) {
-                        l.done(null)
-                        swap(form, retries + 1)
-                    } else {
-                        l.done(null)
-                        screen.note("Bấm ↻ nhưng hàng chiêu không đổi")
-                        done()
-                    }
-                    // Back to the first form, the end of the cycle; an earlier form again would loop without it.
-                    forms.any { row.sameAs(it) } -> {
-                        l.done(null)
-                        done()
-                    }
-                    else -> {
-                        // Only icons no earlier form showed at that place; a form with another number of icons is new throughout.
-                        val changed = row.icons.indices.filter { i ->
-                            forms.none { f ->
-                                f.icons.size == row.icons.size &&
-                                    !SkillRow.differ(f.icons[i], row.icons[i])
-                            }
+        act { form(form, retries, 0) }
+    }
+
+    /** Reads the row ↻ brought, for form [form]; a row not read yet (the icons still changing) is looked for again. */
+    private fun form(form: Int, retries: Int, waits: Int) {
+        look { l ->
+            val row = l.row
+            val previous = forms.last()
+            when {
+                row.centres == null && waits < ROW_WAITS -> {
+                    l.done(null)
+                    screen.later(1000) { form(form, retries, waits + 1) }
+                }
+                row.centres == null -> {
+                    l.done("form-$form-unknown")
+                    screen.note("Không đọc được hàng chiêu sau khi bấm đổi dạng")
+                    done()
+                }
+                row.sameAs(previous) -> if (retries < 2) {
+                    l.done(null)
+                    swap(form, retries + 1)
+                } else {
+                    l.done(null)
+                    screen.note("Bấm ↻ nhưng hàng chiêu không đổi")
+                    done()
+                }
+                // Back to the first form, the end of the cycle; an earlier form again would loop without it.
+                forms.any { row.sameAs(it) } -> {
+                    l.done(null)
+                    done()
+                }
+                else -> {
+                    // Only icons no earlier form showed at that place; a form with another number of icons is new throughout.
+                    val changed = row.icons.indices.filter { i ->
+                        forms.none { f ->
+                            f.icons.size == row.icons.size &&
+                                !SkillRow.differ(f.icons[i], row.icons[i])
                         }
-                        l.done("form-$form-icons")
-                        forms.add(row)
-                        changes += "dạng $form đổi " + changed.joinToString(", ") { slot(it) }.ifEmpty { "không ô mới" }
-                        screen.note("Dạng $form: ${row.centres.size} ô, đổi ${changed.size} ô")
-                        capture(form, row.centres, changed) { swap(form + 1, 0) }
                     }
+                    l.done("form-$form-icons")
+                    forms.add(row)
+                    changes += "dạng $form đổi " + changed.joinToString(", ") { slot(it) }.ifEmpty { "không ô mới" }
+                    screen.note("Dạng $form: ${row.centres.size} ô, đổi ${changed.size} ô")
+                    capture(form, row.centres, changed) { swap(form + 1, 0) }
                 }
             }
         }

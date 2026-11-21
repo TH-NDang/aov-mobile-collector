@@ -41,7 +41,7 @@ object BlessingPhotoIndex {
         index.parentFile?.mkdirs()
         val temp = File(index.parentFile, index.name + ".part")
         temp.writeText(records.toString(2))
-        require(temp.renameTo(index)) { "Không lưu được dấu ảnh Chúc Phúc đã nhập" }
+        require(temp.moveOnto(index)) { "Không lưu được dấu ảnh Chúc Phúc đã nhập" }
     }
 
     /** Missing, deleted, truncated, replaced or unreadable pictures never suppress a fresh save. */

@@ -14,11 +14,21 @@ object ProComboScreens {
 
     fun popup(words: List<GameScreens.Word>) = label(words, "hethongdexuat") != null && label(words, "decupro") != null
 
-    fun preparation(words: List<GameScreens.Word>) = !popup(words) &&
-        label(words, "chuanbi") != null &&
-        label(words, "trangbi") != null &&
-        label(words, "phuhieu") != null &&
-        label(words, "phutro") != null
+    /**
+     * Chuẩn bị: its title, and three of what is drawn there in front of the hero, by place: the section titles on the
+     * right panel, Thêm hướng dẫn and Ph.án khác. The hero stands behind the see-through panel, and a big one (Max's
+     * machine, moving) hides Phù hiệu, Ngọc or Phụ trợ from the reader: all of Trang bị, Phù hiệu and Phụ trợ were
+     * wanted, so his Chuẩn bị was never known and the run stopped on it. Chọn tướng over Chuẩn bị covers the panel and
+     * Thêm hướng dẫn, leaving at most Ph.án khác; the Pro list is told by its own title.
+     */
+    fun preparation(words: List<GameScreens.Word>): Boolean {
+        if (popup(words) || label(words, "chuanbi")?.takeIf { it.x < .4 && it.y < .2 } == null) return false
+        val sections = SECTIONS.count { key -> label(words, key)?.takeIf { it.x in .4..0.85 && it.y in .1..0.85 } != null }
+        val guide = label(words, "huongdan")?.takeIf { it.x in .6..0.86 && it.y > .83 } != null
+        return sections + (if (guide) 1 else 0) + (if (otherButton(words) != null) 1 else 0) >= 3
+    }
+
+    private val SECTIONS = listOf("trangbi", "phuhieu", "ngoc", "phutro")
 
     fun heroName(words: List<GameScreens.Word>): String? = words.filter {
         it.x in .26..0.55 && it.y in .87..0.94 && it.right - it.left < .3 && it.plain.length in 2..40

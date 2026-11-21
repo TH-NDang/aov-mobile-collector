@@ -121,7 +121,7 @@ object AfterRun {
         val f = file(c, s.getString("run"))
         val temp = File(f.parentFile, f.name + ".part")
         temp.writeText(s.toString(2))
-        require(temp.renameTo(f)) { "Không lưu được tiến độ sau lượt" }
+        require(temp.moveOnto(f)) { "Không lưu được tiến độ sau lượt" }
     }
 
     private fun states(c: Context) = home(c).listFiles().orEmpty().filter { it.extension == "json" }

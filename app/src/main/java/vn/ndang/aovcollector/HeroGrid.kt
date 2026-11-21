@@ -12,12 +12,19 @@ import kotlin.math.hypot
  */
 object HeroGrid {
     val columns = doubleArrayOf(.337, .459, .580, .702, .823)
-    const val ROW0 = .31 // first row's card centre with the list at the top
-    const val PITCH = .4167 // row spacing (450 px of 1080)
+
+    // Measured on the user's 10/11 screenshots: the cards' name lines are 446.5 px apart (rows 0 to 17), the first row's
+    // 450.5 px down with the list at the top. The 450 px used before put row 13's names .04 higher than predicted, and
+    // from there the names read were taken for text off their line, so the pass read none past card 70.
+    const val ROW0 = .317 // first row's card centre with the list at the top
+    const val PITCH = .4134 // row spacing (446.5 px of 1080)
     const val TOP = .20 // card centres between TOP and BOTTOM can be tapped
     const val BOTTOM = .86
     const val PARK = .70 // a scroll leaves the wanted row here, with the row before it still visible
-    const val MAX_STEP = .45 // larger moves leave too little overlap between screenshots to measure
+
+    // Larger moves leave too little overlap between screenshots to measure. On the user's list pages moves up to 780
+    // px (.72) were still measured to the pixel; a held drag moves the list as far as the finger, 2% short at most.
+    const val MAX_STEP = .60
     private const val FEATURES = 15
     private const val MIN_OVERLAP = 160
 
@@ -112,9 +119,15 @@ object HeroGrid {
         val reliable get() = cost < 20f && cost < .45f * median
     }
 
-    fun shift(before: FloatArray, after: FloatArray): Shift {
+    /**
+     * [within]: the moves the gesture can have made, in pixels; the best match is taken among them only, against the
+     * median of every move. With little overlap left, a move far past the finger can match by chance: on the user's
+     * phone a 413 px drag of the chess hero list matched at 650 px, the search's very edge, and the next card was
+     * looked for in the wrong place. [minOverlap]: rows the two screenshots must still share.
+     */
+    fun shift(before: FloatArray, after: FloatArray, within: IntRange? = null, minOverlap: Int = MIN_OVERLAP): Shift {
         val n = minOf(before.size, after.size) / FEATURES
-        val limit = n - MIN_OVERLAP
+        val limit = n - minOverlap
         if (limit < 0) return Shift(0, Float.MAX_VALUE, Float.MAX_VALUE)
         val costs = FloatArray(2 * limit + 1)
         var best = 0
@@ -131,7 +144,7 @@ object HeroGrid {
             }
             val cost = (sum / ((to - from) * FEATURES)).toFloat()
             costs[s + limit] = cost
-            if (cost < bestCost) {
+            if ((within == null || s in within) && cost < bestCost) {
                 bestCost = cost
                 best = s
             }

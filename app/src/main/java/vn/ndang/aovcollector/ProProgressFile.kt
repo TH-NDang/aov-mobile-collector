@@ -6,7 +6,12 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import org.json.JSONObject
 
-/** Sync then atomic replace on the same filesystem; never interpret a damaged journal as a fresh run. */
+/**
+ * Sync then atomic replace on the same filesystem; never interpret a damaged journal as a fresh run. A hero is known
+ * by its place in Chọn tướng; its name is what was read on Chuẩn bị, and may be empty when none could be: such a
+ * journal is whole. Taken as damaged, it stopped every Tiếp tục of its run, and only a new run, from the first hero,
+ * went on.
+ */
 class ProProgressFile(private val file: File) {
     fun exists() = file.exists()
 
@@ -15,7 +20,7 @@ class ProProgressFile(private val file: File) {
         val heroes = it.getJSONObject("heroes")
         for (key in heroes.keys()) {
             val hero = heroes.getJSONObject(key)
-            require(hero.optString("hero").isNotBlank() && hero.optInt("index", -1) >= 0) { "Invalid Pro hero journal" }
+            require(hero.opt("hero") is String && hero.optInt("index", -1) >= 0) { "Invalid Pro hero journal" }
         }
     }
 

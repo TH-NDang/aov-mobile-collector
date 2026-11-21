@@ -156,6 +156,16 @@ class MainActivity : Activity() {
                 } else {
                     "Chi tiết · trang " + (n.substringAfterLast("__").toIntOrNull() ?: "")
                 }
+                // A player of a hero's ranking: 0003-hero-001-quoc-gia-hang-02-ho-so, …-uid (…-anh-dai-dien before v0.13.50).
+                Regex("-(tinh|mien|quoc-gia|may-chu)-hang-(\\d{2,3})-(ho-so|uid|anh-dai-dien)$").find(n) != null ->
+                    Regex("-(tinh|mien|quoc-gia|may-chu)-hang-(\\d{2,3})-(ho-so|uid|anh-dai-dien)$").find(n)!!.groupValues.let { g ->
+                        BoardScreens.Tab.values().first { it.slug == g[1] }.label + " · hạng ${g[2].toInt()} · " +
+                            when (g[3]) {
+                                "ho-so" -> "Thông tin kiện tướng"
+                                "uid" -> "Hộp UID"
+                                else -> "Ảnh đại diện"
+                            }
+                    }
                 // A screen of a hero's players' ranking: 0003-hero-001-quoc-gia-02.
                 Regex(
                     "-(so-1-may-chu|tinh|mien|quoc-gia|may-chu)-(\\d{2})$"
@@ -194,7 +204,7 @@ class MainActivity : Activity() {
             "board" -> "Chiến khu"
             "chess" -> "Cờ Liên Quân · Bách khoa"
             "pro-builds" -> "Đề cử Pro · Combo tướng"
-            "event-invite" -> "Sự kiện · Mã mời nhiều tài khoản"
+            "event-invite" -> "Sự kiện · Mã nhiều tài khoản"
             else -> if (file.name == "manual") "Chụp nhanh" else "Lượt thu thập"
         }
     }
@@ -1275,8 +1285,10 @@ class MainActivity : Activity() {
         val cleanup = file.isDirectory &&
             file.parentFile == captures &&
             GamePhotoSession.state(this, file.name)?.optInt("storageVersion", 0)?.let { it >= 2 } == true
+        val reopenable = file.isDirectory && file.parentFile == captures && CollectorService.current?.reopenable(file) == true
         val labels = if (file.isDirectory) {
             listOfNotNull(
+                if (reopenable) "Chạy tiếp lượt này" else null,
                 "Lưu thư mục thành ZIP",
                 "Sao chép vào Pictures / thư mục…",
                 "Đổi tên",
@@ -1296,9 +1308,20 @@ class MainActivity : Activity() {
                 "Nhật ký lượt" -> runLog(events)
                 "Xem lại các bước vào game" -> entrySteps(steps.parentFile!!)
                 "Dọn ảnh đã đồng bộ…" -> GamePhotoCleanupDialog.show(this, file.name)
+                "Chạy tiếp lượt này" -> reopen(file)
                 else -> delete(listOf(file))
             }
         }.show()
+    }
+
+    /** A run ended before its end (Dừng by a slip), made the open one again: Tiếp tục on the panel goes on with it. */
+    private fun reopen(dir: File) {
+        val service = CollectorService.current
+        val why = if (service == null) "Bật dịch vụ trợ năng của app trước" else service.reopen(dir)
+        AlertDialog.Builder(this).setTitle(if (why == null) "Đã mở lại lượt" else "Chưa mở lại được")
+            .setMessage(why ?: "Mở Liên Quân rồi bấm Tiếp tục trên bảng điều khiển: lượt chạy tiếp từ chỗ đã dừng, giữ ảnh đã có.")
+            .setPositiveButton("OK", null).show()
+        if (why == null) showHistory()
     }
 
     /** Starts, pauses with their reasons, failures and the end of a run, written by the collector. */

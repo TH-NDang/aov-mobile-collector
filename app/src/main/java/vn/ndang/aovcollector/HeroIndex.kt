@@ -118,8 +118,27 @@ object HeroIndex {
 object HeroFinder {
     const val NAME_BELOW = .10
 
-    /** Two names are the same with their letters equal, or one letter off in names of five letters or more. */
-    fun same(a: String, b: String): Boolean = a == b || (minOf(a.length, b.length) >= 5 && distance(a, b) <= 1)
+    /**
+     * How far from the screen's line of names a card's name may be read, in screen heights. Under the name of a hero
+     * not owned the game writes "Chưa có" .057 lower (the user's other account, 12/10), and the account's UID is faint
+     * at the bottom of the screen: both were taken for heroes' names before.
+     */
+    const val NAME_SLACK = .03
+
+    /**
+     * How far the names on a screen may sit from where the list's offset puts them, in screen heights: the offset is
+     * summed from measured moves, and the grid's spacing is measured on one phone. The names read on a screen agree
+     * on where their line is ([Reading.line]); less than half a row off, each still tells its row.
+     */
+    const val DRIFT = .15
+
+    private val labels = setOf("chua-co", "chua-ro-ten")
+
+    /**
+     * Two names are the same with their letters equal, or one letter off in names of five letters or more that begin
+     * alike: ML Kit misreads a letter ("Kahlij." for Kahlii, "Supenman"), but Keera and Veera are two heroes.
+     */
+    fun same(a: String, b: String): Boolean = a == b || (minOf(a.length, b.length) >= 5 && a.take(2) == b.take(2) && distance(a, b) <= 1)
 
     private fun distance(a: String, b: String): Int {
         if (abs(a.length - b.length) > 1) return 2
@@ -136,15 +155,53 @@ object HeroFinder {
         return d[b.length]
     }
 
+    /**
+     * The names on the cards of a list screenshot by card index, and [line]: how far past where the names show the list
+     * to be its offset says it is, in screen heights (null with fewer than [SURE] names to tell).
+     */
+    class Reading(val cards: List<Pair<Int, GameScreens.Word>>, val line: Double?)
+
+    /** Names that agree on their line for it to correct the list's offset. */
+    const val SURE = 3
+
     /** The names on the cards of a list screenshot, by card index, with the list scrolled [offset] screens down. */
-    fun cards(words: List<GameScreens.Word>, offset: Double): List<Pair<Int, GameScreens.Word>> = words.mapNotNull { w ->
-        val col = HeroGrid.columns.indices.minByOrNull { abs(HeroGrid.columns[it] - w.x) }!!
-        val letters = w.plain.count { it.isLetter() }
-        if (abs(HeroGrid.columns[col] - w.x) > .05 || letters < 2 || w.text.contains('/') || w.y < .12 || w.y > .99) return@mapNotNull null
-        // Names sit on one line across the cards' bottoms; other text on the art is elsewhere.
-        val at = (w.y - NAME_BELOW - HeroGrid.ROW0 + offset) / HeroGrid.PITCH
-        val row = at.roundToInt()
-        if (row < 0 || abs(at - row) > .25) null else (row * 5 + col) to w
+    fun cards(words: List<GameScreens.Word>, offset: Double): List<Pair<Int, GameScreens.Word>> = read(words, offset).cards
+
+    fun read(words: List<GameScreens.Word>, offset: Double): Reading {
+        val pitch = HeroGrid.PITCH
+
+        // Off the row's name line, in screen heights, between half a row up and half a row down.
+        fun off(d: Double) = d - pitch * (d / pitch).roundToInt()
+        val found = words.mapNotNull { w ->
+            val col = HeroGrid.columns.indices.minByOrNull { abs(HeroGrid.columns[it] - w.x) }!!
+            val letters = w.plain.count { it.isLetter() }
+            if (abs(HeroGrid.columns[col] - w.x) > .05 ||
+                letters < 2 ||
+                w.text.contains('/') ||
+                w.y < .12 ||
+                w.y > .99
+            ) {
+                return@mapNotNull null
+            }
+            if (HeroNames.slug(w.text) in labels || w.plain.startsWith("uid")) return@mapNotNull null
+            Triple(w, col, w.y - NAME_BELOW - HeroGrid.ROW0 + offset)
+        }
+        if (found.isEmpty()) return Reading(emptyList(), null)
+        // Names sit on one line across the cards' bottoms, other text on the art elsewhere: the line most of them agree
+        // on, the nearer one of two as sure.
+        val offs = found.map { off(it.third) }
+
+        fun near(a: Double, b: Double) = abs(off(a - b)) <= NAME_SLACK
+        val line = offs.maxWithOrNull(compareBy<Double> { o -> offs.count { near(it, o) } }.thenBy { -abs(it) })!!
+        val on = offs.filter { near(it, line) }
+        // Their mean, each taken round the line so that one just past half a row counts on its side.
+        val mean = line + on.sumOf { off(it - line) } / on.size
+        if (abs(mean) > DRIFT) return Reading(emptyList(), null)
+        val cards = found.filter { near(off(it.third), line) }.mapNotNull { (w, col, at) ->
+            val row = ((at - mean) / pitch).roundToInt()
+            if (row < 0) null else (row * 5 + col) to w
+        }
+        return Reading(cards, if (on.size >= SURE) mean else null)
     }
 
     /**
@@ -161,9 +218,10 @@ object HeroFinder {
 /**
  * Looks for the hero [name] on the All-heroes list and taps it: at card [hint] first when known, its name read
  * on the card (or on any card of that screen); else on, two rows a screen, from there to the end of the list
- * (a new hero pushes the others on), then back towards the top, until it is found. [pick] runs a [ListNavigator]
- * for a card with an [ListNavigator.Approve]; [seen] gets every card name read, for [HeroIndex]; [finish] gets
- * how it ended (Tapped, or End when the list has no such hero) and the card tapped.
+ * (a new hero pushes the others on), then back towards the top, until it is found. A hero never seen on the list
+ * is looked for the same way from card [near], on the screen the list is at, or from the top when that is not known.
+ * [pick] runs a [ListNavigator] for a card with an [ListNavigator.Approve]; [seen] gets every card name read, for
+ * [HeroIndex]; [finish] gets how it ended (Tapped, or End when the list has no such hero) and the card tapped.
  */
 class HeroSearch(
     private val name: String,
@@ -171,8 +229,16 @@ class HeroSearch(
     private val pick: (card: Int, approve: ListNavigator.Approve, then: (ListNavigator.Outcome) -> Unit) -> Unit,
     private val seen: (List<Pair<Int, GameScreens.Word>>) -> Unit = {},
     private val note: (String) -> Unit = {},
+    private val near: Int = -1,
+    // False: only the screen of card [hint] is read; a hero not there is not on the list (End).
+    private val scan: Boolean = true,
     private val finish: (ListNavigator.Outcome, Int?) -> Unit
 ) {
+    companion object {
+        /** The first card of the row nearest the middle of the screen, with the list [offset] screens down. */
+        fun middle(offset: Double) = maxOf(0, ((offset + .5 - HeroGrid.ROW0) / HeroGrid.PITCH).roundToInt()) * 5
+    }
+
     private val slug = HeroNames.slug(name)
     private var found: Int? = null
     private val approve = ListNavigator.Approve { shot, _, _, _, offset, then ->
@@ -191,19 +257,32 @@ class HeroSearch(
     /** Screen k shows rows 2k and 2k+1, by asking for the first card of row 2k+1. */
     private fun screen(k: Int) = (2 * k + 1) * 5
 
-    /** The first screen with a row past the hint's, which was seen with the row before it. */
-    private val from = if (hint < 0) 0 else maxOf(1, (hint / 5 + 1) / 2)
+    /** The first screen with a row past the hint's, which was seen with the row before it; with none, the screen at [near]. */
+    private val from = when {
+        hint >= 0 -> maxOf(1, (hint / 5 + 1) / 2)
+        near >= 0 -> near / 5 / 2
+        else -> 0
+    }
 
     fun start() {
+        if (hint < 0 && !scan) return finish(ListNavigator.Outcome.End, null)
         if (hint < 0) {
-            note("Chưa biết vị trí của $name: dò danh sách từ đầu")
-            return on(0)
+            note(
+                if (from > 0) {
+                    "Chưa biết vị trí của $name: dò từ chỗ danh sách đang đứng tới cuối, rồi ngược lên đầu"
+                } else {
+                    "Chưa biết vị trí của $name: dò danh sách từ đầu"
+                }
+            )
+            return on(from)
         }
         pick(hint, approve) { o ->
             when (o) {
-                is ListNavigator.Outcome.Missing, is ListNavigator.Outcome.End -> {
+                is ListNavigator.Outcome.Missing, is ListNavigator.Outcome.End -> if (scan) {
                     note("Ô ${hint + 1} không phải $name: dò tiếp danh sách")
                     on(from)
+                } else {
+                    finish(ListNavigator.Outcome.End, null)
                 }
                 else -> finish(o, found)
             }

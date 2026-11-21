@@ -2,8 +2,32 @@ package vn.ndang.aovcollector
 
 import kotlin.math.abs
 
-/** Preparation's eight-column picker. Artwork, not repeating row geometry, measures every scroll. */
-class ProHeroPicker(private val screen: Screen, private val index: Int, private val finish: (Outcome) -> Unit) {
+/**
+ * Preparation's eight-column picker. Artwork, not repeating row geometry, measures every scroll. [memory] carries what
+ * one pick proved about the list to the next, so a list that opens at its top, or where the last pick left it, is
+ * neither probed nor flung back for every hero.
+ */
+class ProHeroPicker(
+    private val screen: Screen,
+    private val index: Int,
+    private val memory: Memory = Memory(),
+    private val finish: (Outcome) -> Unit
+) {
+    /** The list's verified top and where the last hero was chosen, as portrait profiles of one screen height. */
+    class Memory {
+        var height = 0
+        var rowZero = 0.0
+        var top: FloatArray? = null
+        var last: FloatArray? = null
+        var lastOffset = 0.0
+
+        /** Chọn tướng's header as last read whole, for the looks after whose words the reader misses. */
+        var anchor: Anchor? = null
+    }
+
+    /** The words above the grid on a look where Chọn tướng, Tất cả and Đã nhận were all read, and its title's picture. */
+    class Anchor(val words: List<GameScreens.Word>, val title: FloatArray, val height: Int)
+
     sealed class Outcome {
         data class Selected(val index: Int) : Outcome()
 
@@ -21,6 +45,12 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
         val profile: FloatArray
         val height: Int
 
+        /** The picture of the title strip, as [ProHeroPicker.title]. */
+        val title: FloatArray
+
+        /** [allSelected] and [ownedFilter] on this picture with the header's words from [words], read on another look. */
+        fun header(words: List<GameScreens.Word>): Pair<Boolean, BoardScreens.OwnedFilter?>
+
         fun card(col: Int, top: Double, bottom: Double): Boolean
 
         fun done(keep: String?)
@@ -34,9 +64,17 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
         fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit)
 
         fun later(ms: Long, then: () -> Unit)
+
+        fun note(text: String) {}
     }
 
     companion object {
+        /** Flicks up before the top must have been found: a few screens of list each. */
+        const val MAX_RESET_FLICKS = 25
+
+        /** Readings of one screen before its text is taken as truly missing: the reader misses words now and then. */
+        const val READS = 3
+
         private val layout = HeroGrid.Layout(
             BoardScreens.COLUMNS.take(5).toDoubleArray(), .36, BoardScreens.ROW_PITCH,
             .30, .85, .70, .24, .85, BoardScreens.VIEW_TOP, BoardScreens.VIEW_BOTTOM, .020
@@ -105,6 +143,112 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
             }
             return best > .043 * width
         }
+
+        /**
+         * The strip holding the title "Chọn tướng", as the brightness of small squares. It does not move or glow: on the
+         * user's phone two pictures of it seventeen hours apart are the same to the pixel, while the Pro list's title in
+         * the same frame agrees at .45 and Chuẩn bị not at all.
+         */
+        fun title(width: Int, height: Int, readRow: (Int, IntArray) -> Unit): FloatArray {
+            val cell = maxOf(2, height / 270)
+            val x0 = (.155 * width).toInt()
+            val y0 = (.09 * height).toInt()
+            val cols = ((.265 * width).toInt() - x0) / cell
+            val rows = ((.148 * height).toInt() - y0) / cell
+            if (width <= height || cols <= 0 || rows <= 0) return floatArrayOf()
+            val out = FloatArray(cols * rows)
+            val row = IntArray(width)
+            for (y in 0 until rows * cell) {
+                readRow(y0 + y, row)
+                for (x in 0 until cols * cell) {
+                    val p = row[x0 + x]
+                    out[y / cell * cols + x / cell] += ((p shr 16 and 255) * 3 + (p shr 8 and 255) * 6 + (p and 255)) / 10f
+                }
+            }
+            for (i in out.indices) out[i] /= (cell * cell).toFloat()
+            return out
+        }
+
+        /** Two title strips showing the same title: the same shapes, at the same brightness. */
+        fun sameTitle(a: FloatArray, b: FloatArray): Boolean {
+            if (a.isEmpty() || a.size != b.size) return false
+            val ma = a.average()
+            val mb = b.average()
+            var ab = 0.0
+            var aa = 0.0
+            var bb = 0.0
+            var apart = 0.0
+            for (i in a.indices) {
+                ab += (a[i] - ma) * (b[i] - mb)
+                aa += (a[i] - ma) * (a[i] - ma)
+                bb += (b[i] - mb) * (b[i] - mb)
+                apart += abs(a[i] - b[i])
+            }
+            // Letters on the frame spread the brightness by 40; a plain strip has no title to tell.
+            if (aa / a.size < 100 || bb / a.size < 100) return false
+            return ab / kotlin.math.sqrt(aa * bb) >= .95 && apart / a.size <= 6
+        }
+    }
+
+    /** What a look shows of the header: by its own words, or by its picture and the words of [Memory.anchor]. */
+    private class Head(val picker: Boolean, val all: GameScreens.Word?, val allSelected: Boolean, val filter: BoardScreens.OwnedFilter?)
+
+    private var headOf: Look? = null
+    private var headIs: Head? = null
+    private var byPicture = false
+
+    /**
+     * The reader gives lines, and now and then it misses one of the header's, or joins it to its neighbour: Chọn tướng,
+     * Tất cả, or Đã nhận then is not there by its words, with the frame whole on the picture. Six such readings in a row
+     * stopped the user's run at hero 104 twice, after two at hero 56. So once the header was read whole, a look whose
+     * title strip is that same picture is that same frame: the underline under Tất cả and the box beside Đã nhận are
+     * then looked for where they were read, and the words are not asked again. Another frame, or Chuẩn bị, has another
+     * title strip, and is never taken for it.
+     */
+    private fun head(l: Look): Head {
+        if (headOf === l) headIs?.let { return it }
+        val own = Head(picker(l.words), allButton(l.words), l.allSelected, l.ownedFilter)
+        val anchor = memory.anchor
+        val head = if (own.picker && own.all != null && own.filter != null) {
+            memory.anchor = Anchor(l.words.filter { it.y < BoardScreens.VIEW_TOP }, l.title, l.height)
+            own
+        } else if (anchor != null && anchor.height == l.height && sameTitle(anchor.title, l.title)) {
+            val (allSelected, filter) = l.header(anchor.words)
+            if (!byPicture) {
+                byPicture = true
+                screen.note("Pro: ${unread(l)}; khung Chọn tướng vẫn đúng hình đã đọc trước nên nhận theo hình")
+            }
+            Head(true, allButton(anchor.words), allSelected, filter)
+        } else {
+            own
+        }
+        headOf = l
+        headIs = head
+        return head
+    }
+
+    /** For the log: which of the header's words a look lacks, and the lines the reader did give above the grid. */
+    private fun unread(l: Look): String {
+        val lacking = listOfNotNull(
+            "Chọn tướng".takeIf { !picker(l.words) },
+            "Tất cả".takeIf { allButton(l.words) == null },
+            "ô Đã nhận".takeIf { l.ownedFilter == null }
+        )
+        val read = l.words.filter { it.y < BoardScreens.VIEW_TOP }.joinToString(" | ") { it.text.take(30) }.take(240)
+        return "không đọc được ${lacking.joinToString(", ").ifEmpty { "đầu khung" }} (chữ đọc được: ${read.ifEmpty { "không có" }})"
+    }
+
+    /** For the log: why a look is not the grid to scroll. Before [Look.done]. */
+    private fun why(l: Look): String {
+        val h = head(l)
+        val wrong = listOfNotNull(
+            unread(l).takeIf { !h.picker },
+            "Tất cả chưa được chọn".takeIf { h.picker && !h.allSelected },
+            "không thấy ô Đã nhận".takeIf { h.picker && h.filter == null },
+            "Đã nhận đang bật".takeIf { h.filter?.checked == true },
+            "không thấy hàng tướng".takeIf { l.rows.isEmpty() || l.profile.isEmpty() }
+        )
+        return wrong.joinToString("; ").ifEmpty { "màn hình đổi cỡ" }
     }
 
     private var ended = false
@@ -164,47 +308,54 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
 
     private fun tap(id: String, x: Double, y: Double, then: () -> Unit) = action(id, listOf(CalibrationPoint(x, y)), then = then)
 
-    private fun scroll(d: Double, fling: Boolean = false, then: () -> Unit) = action(
-        if (fling) {
-            "scroll.probe-flick"
-        } else if (d < 0) {
-            "scroll.reset"
-        } else {
-            "scroll.next"
-        },
+    private fun scroll(d: Double, then: () -> Unit) = action(
+        if (d < 0) "scroll.reset" else "scroll.next",
         listOf(CalibrationPoint(.62, if (d < 0) .42 else .78), CalibrationPoint(.62, (if (d < 0) .42 else .78) - d)),
-        fling,
+        false,
         then
     )
 
+    private fun flick(id: String, from: Double, to: Double, then: () -> Unit) =
+        action(id, listOf(CalibrationPoint(.62, from), CalibrationPoint(.62, to)), true, then)
+
+    /** A whole row where the grid's first row is with the list at its top. */
+    private fun topRow(first: Pair<Double, Double>) = first.second - first.first >= BoardScreens.CARD - .015 && first.first <= .37
+
     fun start() {
         require(index in 0 until BuiltInMacros.ALL)
-        look { l ->
-            val isPicker = picker(l.words)
-            val preparation = l.preparation
-            l.done(null)
-            when {
-                isPicker -> filters(0, false, false)
-                preparation -> tap("open", .094, .821) { filters(0, false, false) }
-                else -> fail("Mở màn Chuẩn bị hoặc Chọn tướng trước khi thu thập Pro.")
-            }
+        opening(0)
+    }
+
+    /** Read again before giving up: the session saw Chuẩn bị a moment ago, and one reading had missed it. */
+    private fun opening(reads: Int): Unit = look { l ->
+        val isPicker = head(l).picker
+        val preparation = l.preparation
+        l.done(if (!isPicker && !preparation && reads + 1 >= READS) "pro-picker-open" else null)
+        when {
+            isPicker -> filters(0, false, false)
+            preparation -> tap("open", .094, .821) { filters(0, false, false) }
+            reads + 1 < READS -> screen.later(700) { opening(reads + 1) }
+            else -> fail("Mở màn Chuẩn bị hoặc Chọn tướng trước khi thu thập Pro.")
         }
     }
 
     private fun filters(reads: Int, tappedOwned: Boolean, tappedAll: Boolean): Unit = look { l ->
-        if (!picker(l.words)) {
+        val head = head(l)
+        if (!head.picker) {
+            if (reads >= 3) screen.note("Pro: không mở được Chọn tướng: ${unread(l)}")
             l.done(if (reads >= 3) "pro-picker-unknown" else null)
             if (reads >= 3) fail("Không mở được Chọn tướng.") else screen.later(700) { filters(reads + 1, tappedOwned, tappedAll) }
             return@look
         }
-        val filter = l.ownedFilter
-        val all = allButton(l.words)
+        val filter = head.filter
+        val all = head.all
         when {
-            !l.allSelected && all != null && !tappedAll -> {
+            !head.allSelected && all != null && !tappedAll -> {
                 l.done(null)
                 tap("all", all.x, all.y) { filters(0, tappedOwned, true) }
             }
-            !l.allSelected || filter == null -> {
+            !head.allSelected || filter == null -> {
+                if (reads >= 3) screen.note("Pro: chưa xác minh được Tất cả / Đã nhận: ${why(l)}")
                 l.done(if (reads >= 3) "pro-picker-filter" else null)
                 if (reads >= 3) {
                     fail("Không xác minh được Tất cả / Đã nhận; chưa chọn tướng.")
@@ -224,13 +375,39 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
                     screen.later(700) { filters(reads + 1, true, tappedAll) }
                 }
             }
-            else -> probeReset(l)
+            else -> resume(l)
         }
     }
 
-    private fun valid(l: Look): Boolean = picker(l.words) &&
-        l.allSelected &&
-        l.ownedFilter?.checked == false &&
+    /**
+     * Before any probe: a list still where the last pick left it, or at the top proven before, is used as it is. The
+     * user's run probed, slid down and dragged back up for every hero, three to four minutes a hero.
+     */
+    private fun resume(l: Look) {
+        if (valid(l) && l.height == memory.height) {
+            val delta = memory.last?.let { BoardPickerMotion.displacement(it, l.profile, l.height, 0) }
+            if (delta != null) {
+                val position = memory.lastOffset + delta
+                if (memory.rowZero + index / 8 * BoardScreens.ROW_PITCH - position >= BoardScreens.VIEW_TOP - .005) {
+                    rowZero = memory.rowZero
+                    offset = position
+                    screen.note("Pro: Chọn tướng còn ở chỗ lượt trước; không vuốt về đầu lại")
+                    return seek(l, 0)
+                }
+            }
+            val top = memory.top
+            val first = l.rows.firstOrNull()
+            if (top != null && first != null && topRow(first) && BoardPickerMotion.sameViewport(top, l.profile)) {
+                rowZero = first.first
+                offset = 0.0
+                screen.note("Pro: Chọn tướng mở ở đầu danh sách như lần trước; không vuốt về đầu lại")
+                return seek(l, 0)
+            }
+        }
+        probeReset(l)
+    }
+
+    private fun valid(l: Look): Boolean = head(l).let { it.picker && it.allSelected && it.filter?.checked == false } &&
         l.rows.isNotEmpty() &&
         l.profile.isNotEmpty() &&
         l.height >= 400
@@ -238,6 +415,7 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
     /** Exercise a short downward move before reset; an ineffective learned reset must not masquerade as top. */
     private fun probeReset(before: Look) {
         if (!valid(before)) {
+            screen.note("Pro: không nhận rõ lưới tướng: ${why(before)}")
             before.done("pro-picker-grid")
             return fail("Không nhận rõ lưới tướng.")
         }
@@ -245,8 +423,9 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
         val height = before.height
         before.done(null)
         // A quick flick, never a short slow press: the game takes a short slow drag resting on a card for a tap
-        // and chooses that hero (Chiến khu on the user's phone, the same Chọn tướng grid).
-        scroll(.30, fling = true) {
+        // and chooses that hero (Chiến khu on the user's phone, the same Chọn tướng grid). A short one: a flick of
+        // .3 slid the list far down, and the way back up cost a look per quarter screen.
+        flick("scroll.probe-flick", .80, .70) {
             look { after ->
                 val shift = HeroGrid.shift(profile, after.profile)
                 if (!valid(after) || after.height != height || (shift.reliable && shift.px < -2)) {
@@ -255,60 +434,65 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
                 }
                 // A flick can go further than can be measured: any change proves the grid moves.
                 val moved = if (shift.reliable) shift.px > 2 else !BoardPickerMotion.sameViewport(profile, after.profile)
-                reset(after, 0, 0, moved)
+                reset(after, 0, 0, false, moved)
             }
         }
     }
 
-    private fun reset(before: Look, attempts: Int, still: Int, mustMove: Boolean = false) {
+    /**
+     * Flicks up until the portraits stop moving: twice in a row unmoved is the top, which is then remembered for the
+     * picks after. [movedBack]: a flick has moved the list up; [probeMoved]: the probe moved it down, so the way back
+     * must move it too.
+     */
+    private fun reset(before: Look, attempts: Int, still: Int, movedBack: Boolean, probeMoved: Boolean) {
         if (!valid(before)) {
+            screen.note("Pro: không nhận rõ lưới tướng: ${why(before)}")
             before.done("pro-picker-grid")
             return fail("Không nhận rõ lưới tướng; không coi là hết danh sách.")
         }
-        if (attempts >= 160) {
+        if (attempts >= MAX_RESET_FLICKS) {
             before.done("pro-picker-top")
             return fail("Không xác minh được đầu danh sách tướng.")
         }
         val profile = before.profile
         val height = before.height
         before.done(null)
-        scroll(-.24) {
+        flick("scroll.reset-flick", .40, .85) {
             look { after ->
                 if (!valid(after) ||
                     after.height != height
                 ) {
+                    screen.note("Pro: lưới tướng thay đổi khi cuộn về đầu: ${why(after)}")
                     after.done("pro-picker-grid")
                     return@look fail("Lưới tướng thay đổi khi cuộn.")
                 }
-                val shift = HeroGrid.shift(profile, after.profile)
-                if (!shift.reliable ||
-                    shift.px > height * .01
-                ) {
-                    after.done("pro-picker-shift")
-                    return@look fail("Không đo được khoảng cuộn về đầu; chưa chọn tướng.")
+                val same = BoardPickerMotion.sameViewport(profile, after.profile)
+                val count = if (same) still + 1 else 0
+                val moved = movedBack || !same
+                if (count < 2) return@look reset(after, attempts + 1, count, moved, probeMoved)
+                if (probeMoved && !moved) {
+                    after.done("pro-picker-top")
+                    return@look fail("Đường cuộn về đầu không di chuyển lưới; kiểm tra điểm đã chỉnh.")
                 }
-                val count = if (abs(shift.px) <= 2) still + 1 else 0
-                if (count >= 2) {
-                    if (mustMove) {
-                        after.done("pro-picker-top")
-                        return@look fail("Đường cuộn về đầu không di chuyển lưới; kiểm tra điểm đã chỉnh.")
-                    }
-                    val first = after.rows.first()
-                    if (first.second - first.first < BoardScreens.CARD - .015 || first.first > .37) {
-                        after.done("pro-picker-top")
-                        return@look fail("Không xác minh được hàng đầu đầy đủ.")
-                    }
-                    rowZero = first.first
-                    seek(after, 0)
-                } else {
-                    reset(after, attempts + 1, count, mustMove && abs(shift.px) <= 2)
+                val first = after.rows.first()
+                if (!topRow(first)) {
+                    after.done("pro-picker-top")
+                    return@look fail("Không xác minh được hàng đầu đầy đủ.")
                 }
+                rowZero = first.first
+                offset = 0.0
+                memory.height = after.height
+                memory.rowZero = rowZero
+                memory.top = after.profile
+                screen.note("Pro: đã xác minh đầu danh sách Chọn tướng; các lượt sau dùng lại")
+                seek(after, 0)
             }
         }
     }
 
     private fun seek(l: Look, still: Int) {
         if (!valid(l)) {
+            screen.note("Pro: mất lưới tướng trong lúc tìm: ${why(l)}")
             l.done("pro-picker-grid")
             return fail("Mất lưới tướng trong lúc tìm; chưa xác định hết danh sách.")
         }
@@ -322,6 +506,10 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
             }
             if (l.card(index % 8, band.first, band.second)) {
                 val y = (band.first + band.second) / 2
+                memory.height = l.height
+                memory.rowZero = rowZero
+                memory.last = l.profile
+                memory.lastOffset = offset
                 l.done(null)
                 return tap("card", BoardScreens.COLUMNS[index % 8], y) { selected(0) }
             }
@@ -348,21 +536,33 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
         // Never shorter than a slow drag that could rest on a card and choose it; overshooting only leaves the row higher.
         val distance = minOf(.24, maxOf(BoardReader.MIN_SLOW_DRAG, bottom - .84))
         l.done(null)
-        scroll(distance) {
-            look { after ->
-                if (!valid(after) || after.height != height) {
-                    after.done("pro-picker-grid")
-                    return@look fail("Mất lưới khi cuộn tìm tướng.")
-                }
-                val shift = HeroGrid.shift(profile, after.profile)
-                if (!shift.reliable || shift.px < -2 || shift.px > height * .36) {
-                    after.done("pro-picker-shift")
-                    return@look fail("Không đo chắc chắn khoảng cuộn; chưa kết luận hết danh sách.")
-                }
-                offset += shift.px.toDouble() / height
-                seek(after, if (abs(shift.px) <= 2) still + 1 else 0)
+        scroll(distance) { scrolled(profile, height, still, 0) }
+    }
+
+    /**
+     * The grid after a scroll. A look that is not the grid, by its words or by its picture ([head]), is not a lost
+     * grid at once: it is taken again, as on opening, and only [READS] in a row stop the run, the log saying what each
+     * lacked.
+     */
+    private fun scrolled(profile: FloatArray, height: Int, still: Int, reads: Int): Unit = look { after ->
+        if (!valid(after) || after.height != height) {
+            val why = why(after)
+            if (reads + 1 < READS) {
+                after.done(null)
+                screen.note("Pro: chưa đọc rõ lưới sau khi cuộn ($why); đọc lại (lần ${reads + 2})")
+                return@look screen.later(700) { scrolled(profile, height, still, reads + 1) }
             }
+            screen.note("Pro: mất lưới sau khi cuộn: $why")
+            after.done("pro-picker-grid")
+            return@look fail("Mất lưới khi cuộn tìm tướng.")
         }
+        val shift = HeroGrid.shift(profile, after.profile)
+        if (!shift.reliable || shift.px < -2 || shift.px > height * .36) {
+            after.done("pro-picker-shift")
+            return@look fail("Không đo chắc chắn khoảng cuộn; chưa kết luận hết danh sách.")
+        }
+        offset += shift.px.toDouble() / height
+        seek(after, if (abs(shift.px) <= 2) still + 1 else 0)
     }
 
     /** A stalled gesture alone is not the end: a whole last row and blank trailing space must agree. */
@@ -396,7 +596,7 @@ class ProHeroPicker(private val screen: Screen, private val index: Int, private 
     }
 
     private fun selected(reads: Int): Unit = look { l ->
-        val ok = l.preparation && !picker(l.words)
+        val ok = l.preparation && !head(l).picker
         l.done(if (!ok && reads >= 3) "pro-picker-selection" else null)
         if (ok) {
             end(Outcome.Selected(index))

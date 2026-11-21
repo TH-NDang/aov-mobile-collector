@@ -1,4 +1,387 @@
-# AOV Mobile Collector — v0.13.43
+# AOV Mobile Collector — v0.13.62
+
+## v0.13.62: Thống kê kéo và chụp nhanh hơn, chỉ chụp khi bảng đã vẽ xong, không sót hàng
+
+Phần chụp Thống kê chạy tốt, nhưng mỗi trang mất hơn 3 giây và đôi khi lần kéo có thể bỏ sót.
+
+- **Kéo nhanh hơn:** ngón tay kéo 0,4 giây rồi giữ 0,25 giây (trước là 0,7 + 0,4 giây). Vẫn giữ trước khi nhả nên bảng dừng ngay dưới ngón tay, không trượt tiếp.
+- **Chỉ chụp khi bảng đứng yên:** trước đây sau mỗi lần kéo app chờ cứng 1,2 giây rồi chụp, bảng ra sao cũng lấy. Giờ app nhìn liên tiếp và chỉ chụp khi hai lần nhìn giống hệt nhau từng ô: trang nào vẽ nhanh thì chụp sớm, trang nào còn tải hàng, ảnh tướng hay thanh tỷ lệ thì chờ tiếp. Sau 6 lần nhìn vẫn chưa yên thì chụp như trước và ghi "Bảng chưa đứng yên…" vào nhật ký.
+- **Lúc mới mở bảng hay đổi bảng, đổi chế độ:** vẫn chờ 6 giây như trước, và giờ phải giống hệt nhau từng ô mới bắt đầu chụp. Trước đây chỉ so trung bình cả bảng, nên một ảnh tướng chưa tải ở góc không bị phát hiện.
+- **Đo độ dịch sau mỗi lần kéo:** app tìm lại các hàng của ảnh trước trong ảnh mới. Tìm thấy thì chắc chắn không sót tướng nào. Không tìm thấy thì có thể đã kéo quá: app kéo ngược lại 0,2 màn hình (tối đa 2 lần) rồi mới chụp; vẫn không khớp thì chụp và ghi "có thể sót hàng giữa hai trang". Cuối mỗi bảng nhật ký ghi mỗi lần kéo đi bao nhiêu màn hình.
+- **Nhìn liên tiếp nhanh hơn:** các lần nhìn không đọc chữ của Thống kê cách nhau 0,4 giây trên Android 12 trở lên (trước là 1 giây cho mọi máy). Máy nào từ chối thì app tự quay về nhịp 1 giây. Các chế độ khác giữ nhịp cũ.
+- Phần nhận ra cuối bảng (kéo 3 lần không đổi) giữ nguyên thời gian chờ, để trang đang tải thêm hàng không bị coi là hết.
+
+Ước tính mỗi trang còn khoảng 2,5 giây thay vì khoảng 3,3 giây trên Android 12 trở lên; chưa đo trên máy thật.
+
+## v0.13.61: Đề cử Pro quay lại chụp tướng còn thiếu ảnh
+
+Theo tướng 89 (Florentino) của lượt Đề cử Pro: chỉ có 2 ảnh trên 3, nhật ký ghi "bỏ qua từ đề cử 3 (không đưa được danh sách về đầu)".
+
+- **Vì sao thiếu:** trước mỗi đề cử, app vuốt danh sách đề cử về đầu và chờ các nút "Dùng combo" đứng yên đúng chỗ. Sau 6 lần vuốt mà chưa yên, app bỏ luôn các đề cử còn lại của tướng đó và coi tướng đã xong. Lúc ấy không có ảnh nào được lưu nên không biết chắc màn hình ra sao; quanh thời điểm đó có nhiều lần game phản hồi chậm (bấm Dùng combo chưa về Chuẩn bị), nên nhiều khả năng danh sách chưa kịp đứng yên.
+- **Chờ rồi thử lại:** chưa yên sau 6 lần vuốt thì app chờ 2,5 giây, vuốt lại 6 lần nữa, mỗi lần chờ 1,6 giây thay vì 0,7 giây. Vẫn không được mới bỏ qua, và lần này có lưu ảnh chẩn đoán `…-diagnostic-pro-top.png`.
+- **Quay lại tướng thiếu ảnh:** hết danh sách tướng, app quay lại từng tướng có ít ảnh hơn số combo đã chọn (mỗi tướng một lần), chụp tiếp từ đề cử còn thiếu và giữ các ảnh đã có. Tướng 89 của lượt đang dở cũng được quay lại như vậy. Nhật ký ghi "Pro: hết danh sách tướng; quay lại tướng 89 (pro-089…) mới có 2/3 ảnh". Tướng có danh sách đề cử trống thì không quay lại; tướng thật sự chỉ có ít đề cử thì app xem lại một lần rồi thôi.
+
+## v0.13.60: Đề cử Pro không còn dừng vì "Mất lưới khi cuộn tìm tướng"
+
+Theo lượt Đề cử Pro mở lại bằng v0.13.59: chạy tiếp từ tướng 58 tới 103, rồi dừng hai lần liền ở tướng 104.
+
+- **"Mất lưới khi cuộn tìm tướng" ở tướng 104:** ảnh app lưu lúc dừng cho thấy khung Chọn tướng nguyên vẹn; các phép đo trên ảnh (gạch dưới Tất cả, ô Đã nhận, các hàng tướng) đều đạt. Còn lại chỉ có chữ, nên nhiều khả năng đây là chỗ hỏng (chưa xem được trên máy): bộ đọc chữ trả về từng dòng, và sau lần cuộn đầu nó đọc trượt một trong ba chữ Chọn tướng / Tất cả / Đã nhận, sáu lần liền. Giờ, khi khung đã được đọc đủ chữ một lần, lần đọc sau thiếu chữ vẫn được nhận nếu dải tiêu đề đúng là hình đã đọc (hai ảnh cách nhau 17 giờ trên máy giống nhau từng điểm ảnh; tiêu đề danh sách Đề cử Pro trong cùng khung chỉ giống 0,45). Gạch dưới Tất cả và ô Đã nhận vẫn được kiểm tra trên ảnh mới, nên đổi thẻ hay bật Đã nhận vẫn bị phát hiện.
+- **Nhật ký ghi rõ hơn:** mỗi lần không nhận được lưới, nhật ký ghi thiếu gì và bộ đọc chữ đã đọc được những dòng nào ở đầu khung, ví dụ "Pro: không đọc được Tất cả (chữ đọc được: …); khung Chọn tướng vẫn đúng hình đã đọc trước nên nhận theo hình".
+- **"Đường chạm quá gần cửa sổ khác" lúc 22:18:** một cửa sổ của máy hiện ở giữa cạnh dưới màn hình đúng lúc app sắp cuộn; app dừng ngay và lượt đứng suốt đêm. Giờ app chờ cửa sổ đó ẩn, tối đa 30 giây, rồi mới chạm; quá 30 giây mới dừng. Chưa có thao tác nào được gửi trong lúc chờ.
+
+## v0.13.59: Lỡ bấm Dừng thì vẫn chạy tiếp được lượt cũ
+
+Dừng kết thúc lượt ngay, không hỏi lại. Sau đó nút chính chỉ còn "Tạo lượt mới", làm lại từ tướng đầu, dù thư mục lượt vẫn giữ đủ macro, tiến độ và ảnh.
+
+- **Ngay sau khi bấm Dừng:** bấm nút chính "Tạo lượt mới" thì app hỏi: **Chạy tiếp lượt này** (từ chỗ đã dừng, giữ ảnh và tiến độ) hay **Tạo lượt mới** (làm lại từ đầu).
+- **Đã lỡ tạo lượt mới hoặc chọn tác vụ khác:** trong app, mở danh sách lượt, bấm ⋮ ở lượt cũ (nhãn "Đã kết thúc") → **Chạy tiếp lượt này**, rồi mở game và bấm Tiếp tục. Lượt đang mở dở (nếu có) được kết thúc như khi chọn tác vụ khác; ảnh của nó vẫn giữ.
+- Chỉ lượt còn bước chưa làm, và có macro.json đúng với macro lượt đã chạy, mới mở lại được. Lượt cần tài khoản sẽ hỏi chọn tài khoản lại nếu tài khoản đã không còn ghi trong lượt.
+
+## v0.13.58: Đề cử Pro không còn dừng ở Chuẩn bị của tướng to như Max
+
+Theo lượt Đề cử Pro dừng ở tướng 58 (Max) và Tiếp tục không đi tiếp được.
+
+- **Chuẩn bị của Max không được nhận ra:** app nhận màn Chuẩn bị khi đọc được đủ "Chuẩn bị", "Trang bị", "Phù hiệu" và "Phụ trợ". Cỗ máy của Max đứng sau bảng bên phải và chuyển động, che mất "Phù hiệu"/"Phụ trợ", nên app tưởng chưa về Chuẩn bị và dừng: "Chọn tướng chưa về Chuẩn bị". Giờ chỉ cần tiêu đề "Chuẩn bị" cùng 3 trong số: tên các mục bên phải (Trang bị, Phù hiệu, Ngọc, Phụ trợ), nút "Thêm hướng dẫn", nút "Ph.án khác". Khung Chọn tướng hay danh sách Đề cử Pro đè lên Chuẩn bị vẫn không bị nhầm.
+- **Tiếp tục không đi tiếp:** bấm Tiếp tục thì app về sảnh, mở Trang bị (game mở lại Chuẩn bị của Max), rồi lần đọc kế tiếp lại không nhận ra Chuẩn bị nên dừng ngay: "Mở màn Chuẩn bị hoặc Chọn tướng trước khi thu thập Pro". Giờ app đọc lại tới 3 lần trước khi dừng.
+- **"Mất lưới khi cuộn tìm tướng" ở tướng 56:** hai lần dừng trong khi ảnh lưu lại cho thấy lưới tướng nguyên vẹn; chỉ một lần đọc chữ bị trượt. Giờ app đọc lại tới 3 lần sau mỗi lần cuộn, ghi "Pro: chưa đọc rõ lưới sau khi cuộn; đọc lại".
+
+## v0.13.57: Kiểm thử chạy sạch trên máy Windows
+
+App trên điện thoại chạy như v0.13.56; bản này chỉ để bộ kiểm thử chạy trên Windows không còn 7 lỗi cũ, nên lỗi thật mới không bị lẫn vào đó.
+
+- **Ghi đè tệp tiến độ và ảnh:** các chỗ lưu tệp `.part` rồi đổi tên thành tệp thật giờ thay tệp cũ trong một bước (`moveOnto`). Trên điện thoại đổi tên vốn đã thay được tệp cũ; Windows thì từ chối, nên lần lưu thứ hai luôn lỗi trong kiểm thử.
+- **Kiểm thử symlink:** Windows chỉ cho tạo symlink khi bật Developer Mode hoặc chạy quyền admin. Các kiểm thử này giờ được bỏ qua trên Windows khi không tạo được symlink, thay vì báo lỗi; trên Linux (CI) vẫn chạy và vẫn phải đạt.
+
+## v0.13.56: Tiếp tục đúng chỗ sau khi lỡ tắt màn hình hay tắt máy
+
+Theo lượt Đề cử Pro bị ngắt giữa chừng vì lỡ bấm nút nguồn: mở lại màn hình, bấm tiếp thì lượt chạy lại từ tướng đầu.
+
+### Vì sao Đề cử Pro chạy lại từ đầu
+- Lượt Pro chỉ có một bước, nên khi tạm dừng nút chính vẫn ghi "Chạy" chứ không phải "Tiếp tục". Chọn lại Đề cử Pro trong danh sách tác vụ thì app kết thúc lượt dở và tạo lượt mới, từ tướng 1.
+- Tướng nào lúc chọn không đọc được tên thì tệp tiến độ Pro ghi tên rỗng. Lần Tiếp tục sau, app coi tệp đó là hỏng và dừng với "Không đọc được tiến độ Pro". Lượt không đi tiếp được nữa, chỉ còn cách tạo lượt mới.
+- Mỗi lần Tiếp tục, lượt Pro về sảnh trước, nhưng tướng dở lại được làm tiếp ngay trên màn đang hiện. Màn đó có thể là sảnh (lần nào cũng báo lỗi), hoặc màn Chuẩn bị của một tướng khác (combo chụp nhầm vào thư mục tướng dở).
+- Cài bản app mới khi lượt một bước đang dở: app tạo lại macro, lượt mất chỗ đang chạy.
+
+### Đã sửa
+- Lượt đang dở (chưa bấm Dừng) luôn hiện nút "Tiếp tục", kể cả lượt chỉ có một bước như Đề cử Pro, Cờ, Chiến khu, Thống kê.
+- Chọn lại đúng tác vụ của lượt đang dở thì giữ lượt đó: "Lượt … đang dở: bấm Tiếp tục để chạy tiếp từ chỗ đã dừng". Muốn làm lại từ đầu: Tùy chọn → Tạo lượt mới.
+- Cập nhật app không còn tạo lại macro của lượt đang dở.
+- Màn hình tắt (nút nguồn) thì app tạm dừng ngay, trước khi kịp chạm vào màn khóa hay đọc hụt màn hình giữa một tướng: "Màn hình đã tắt nên tạm dừng…".
+- Đề cử Pro: tệp tiến độ có tướng không đọc được tên vẫn đọc được. Tướng dở chỉ được làm tiếp khi màn Chuẩn bị đang hiện đúng tướng đó (so tên đã đọc lúc chọn). Nếu không, app chọn lại tướng theo vị trí trong Chọn tướng rồi làm tiếp từ đề cử còn thiếu, giữ các ảnh đã chụp. Nhật ký ghi "Pro: chọn lại tướng N (pro-…), làm tiếp từ đề cử K".
+- Thống kê và Chiến khu trước chỉ nhớ tiến độ trong bộ nhớ: tạm dừng thì còn, tắt máy thì mất và chạy lại cả bước. Giờ các bảng đã xong, tướng tiếp theo và người chơi đã chụp được ghi vào `step-progress.json` trong thư mục lượt.
+- Thông tin tướng (theo bước), Cờ và Mời sự kiện vốn đã ghi tiến độ ra tệp. Bước đang dở khi bị ngắt vẫn làm lại từ đầu bước đó, ví dụ chiêu của tướng đang chụp.
+
+
+## v0.13.55: Chụp đủ chiêu dạng khác của Tachi, Aoi, Edras; không lấy trùng tướng khi gõ tên gần giống
+
+Sửa theo lượt `tuong-v5` (8 tên: Edras, Aya, Superman, Tachi, Thane, Yan, Aoi, Supenman; 10/11, 8 phút 47 giây).
+
+### Nút đổi dạng ↻ bị đèn lồng che (Tachi, Aoi)
+- Trang của Tachi và Aoi có đèn lồng giấy bay ở nền. Lúc app đọc hàng chiêu, đèn lồng nằm ngay sau nút ↻. Nút trắng xanh nhạt trên đèn vàng sáng ngang nhau, nên điểm khớp hình chỉ còn 0,41 (ngưỡng 0,75). App tưởng hai tướng này không có dạng khác và bỏ qua chiêu dạng 2.
+- App giờ chấm nút ↻ trên độ sáng và cả kênh xanh lam, lấy điểm cao hơn. Đèn lồng vàng gần như không có xanh lam, còn nút thì có. Trên 370 ảnh trang tướng của 39 tướng qua các lượt v3, v4, v5: tướng có nút ↻ đạt từ 0,86 trở lên, tướng không có nút tối đa 0,36.
+
+### Hàng chiêu dạng 2 của Edras không đọc được
+- Sau khi bấm ↻, ô thứ 4 xanh tối của Edras dạng 2 chấm 0,54–0,63 so với ngưỡng 0,6. Lượt v4 vừa đủ qua, lượt v5 hụt (0,58). App bấm ↻ rồi ghi "Không đọc được hàng chiêu sau khi bấm đổi dạng" và không chụp chiêu nào của dạng 2.
+- Ngưỡng nhận hàng chiêu hạ xuống 0,5. Màn không có hàng chiêu (tướng đứng một mình) chỉ chấm tối đa 0,21.
+- Sau khi bấm ↻, nếu chưa thấy hàng chiêu, app nhìn lại tối đa 3 lần, cách nhau 1 giây, như lúc mở trang tướng.
+
+### Tên gõ gần giống làm lấy trùng tướng
+- Danh sách tên có cả "Superman" và "Supenman". Tên đọc sai một chữ vẫn được coi là cùng tướng, nên khối thứ hai cũng nhận ô của Superman và chụp lại cả tướng (thư mục `superman-2`).
+- App giờ bỏ tên trùng gần đúng ngay khi tạo lượt chạy. Một lượt đã tạo từ trước cũng không lấy lại tướng đã lấy. Keera và Veera vẫn là hai tướng.
+
+
+## v0.13.54: Thoát chế độ chụp ảnh tướng khi lỡ chạm trúng tướng; kéo giữ mô tả chiêu trong vùng chữ
+
+Sửa theo lượt `tuong-v4` (35 tướng theo tên, 10/11: lấy đủ 35 tướng trong 32 phút).
+
+### Chạm trúng tướng mở chế độ chụp ảnh (Thane)
+- Để đóng bảng chiêu hay bảng thuộc tính, macro chạm "chỗ trống" ở (0,6; 0,82): ba lần mỗi tướng, một lần sau khi mở tướng và hai lần sau bảng thuộc tính. Điểm này nằm trong vùng mô hình tướng, ngay cạnh chân phải của Thane. Khi không có bảng nào đang mở, cú chạm trúng tướng và game chuyển sang chế độ chụp ảnh: chỉ còn mũi tên quay lại và nút máy ảnh.
+- Lượt này Thane bị từ ảnh tổng quan: cả 14 ảnh đều là tướng đứng một mình, các ô chiêu bị chạm vào chỗ không có gì, rồi app sang tướng sau.
+- App giờ nhận ra màn này: không có chữ "Chi tiết" ở góc trên trái, và có nút máy ảnh ở giữa mép phải. Trên 332 ảnh trang tướng của lượt, 14 ảnh của Thane khớp, 318 ảnh còn lại không khớp.
+- Sau mỗi cú chạm "chỗ trống", app chụp kiểm tra. Nếu đang ở chế độ chụp ảnh thì bấm mũi tên quay lại một lần để về trang tướng, rồi làm tiếp. Lúc bắt đầu đọc chiêu, app cũng kiểm tra lại như vậy. Nhật ký ghi "Chạm trúng tướng nên game mở chế độ chụp ảnh tướng; bấm quay lại về trang tướng".
+- Mỗi cú chạm "chỗ trống" chờ thêm khoảng 0,6 giây cho ảnh kiểm tra, để màn đã chuyển xong.
+
+### Biron chiêu 1 vẫn thiếu chữ cuối
+- v0.13.53 kéo giữ từ 0,44 lên tới 0,10, tức ra khỏi khung chữ, lên tới tên chiêu. Lượt này Biron chiêu 1 không có ảnh thứ hai.
+- Giờ app kéo giữ trong khung chữ: từ 0,44 lên 0,25.
+- Phần bị che ở Biron chỉ là một chữ ("nửa."), mà ngưỡng "có chữ mới" cũ tính theo cả dòng dài. Giờ một chữ ngắn cũng đủ.
+- Nhật ký ghi kết quả mỗi lần kéo giữ: "thấy thêm chữ bị che; đã chụp", "chữ dịch lên nhưng không lộ thêm chữ", hoặc "chữ không nhúc nhích". Nếu là "không nhúc nhích" thì game không cho kéo quá cuối khung, và app không có cách nào lấy được dòng đó.
+
+### Kiểm tra
+- Vùng tiêu đề và nút máy ảnh cắt từ ảnh của Thane (chế độ chụp ảnh) và Arduin (trang tướng): chỉ Thane được nhận là chế độ chụp ảnh.
+- Trang tướng giả đang ở chế độ chụp ảnh: app bấm quay lại trước rồi mới đọc chiêu, chụp đủ 4 chiêu.
+- Ảnh khung mô tả Biron chiêu 1: khi một chữ ngắn lộ ra lúc kéo giữ thì giữ ảnh; khi chữ chỉ dịch lên thì bỏ.
+- Chưa chạy trên game thật.
+
+## v0.13.53: Quét danh sách đọc được tên tới cuối; chụp dòng mô tả chiêu bị khung che; Keera không còn bị nhận thành Veera
+
+Sửa theo lượt `tuong-v3` (35 tướng theo tên, 10/11).
+
+### Vì sao lượt quét lướt hết danh sách mà ít chụp tướng
+- App tính các hàng tướng cách nhau 450 px, trong khi trên máy bạn là 446,5 px (đo trên ảnh lượt này, từ hàng 0 tới hàng 17). Mỗi hàng lệch thêm 3,5 px, nên tới hàng 13 tên nằm cao hơn chỗ app chờ 0,04 màn hình.
+- v0.13.52 chỉ nhận chữ lệch tối đa 0,03 so với dòng tên, nên từ ô 71 app bỏ hết tên đọc được. Lượt quét đi tới cuối danh sách mà không thấy ai (Yan, Bolt Baron ở ngay màn có Edras). Lần tìm lại sau đó cũng bỏ qua tên vì lý do này, dù Aleister, Aya, Wiro, Zip đều nằm trên màn.
+- Giờ khoảng cách hàng là 446,5 px. Thêm vào đó, app không so từng tên với vị trí tính sẵn, mà lấy dòng mà phần lớn tên trên màn cùng nằm. Tên lệch dòng tới 0,15 màn hình vẫn được nhận đúng ô, còn "Chưa có", dòng UID và chữ trên ảnh tướng thì vẫn bị bỏ.
+- Độ lệch đo được trên mỗi màn được dùng để chỉnh lại vị trí danh sách mà app đang đếm, nên sai số từ các lần kéo không cộng dồn qua cả lượt.
+
+### Keera bị lấy thành Veera
+- Hai tên dài từ 5 chữ cái mà chỉ khác một chữ thì app coi là một (để chịu được lỗi đọc như "Kahlij." cho Kahlii). Vì thế Keera khớp với Veera.
+- Giờ hai tên phải trùng 2 chữ cái đầu mới được coi là một: Keera và Veera là hai tướng, còn "Supenman" vẫn khớp Superman.
+
+### Mô tả chiêu bị cắt dòng cuối (Biron chiêu 1, D'Arcy chiêu 2)
+- Với những chiêu này, khung mô tả vừa khít chữ, đặt ngay trên bảng chỉ số, nhưng game tính chiều cao khung thiếu một dòng. Biron chiêu 1 dừng ở "…hồi máu giảm một", D'Arcy chiêu 2 dừng ở "…<Lập phương thứ". Game coi như chữ đã vừa khung nên cuộn không nhúc nhích, và app chỉ giữ một ảnh.
+- Các chiêu dài có nút "Chú thích" (Allain chiêu 3, Aoi chiêu 2) vẫn cuộn tới hết chữ như trước.
+- Giờ khi lần cuộn không làm chữ di chuyển, app kéo chữ lên quá cuối khung, giữ tay và chụp trong lúc giữ. Ảnh đó chỉ được giữ (thành `…-detail-2`) nếu có chữ mới không có trong ảnh trước. Nếu chữ chỉ dịch lên mà không có gì mới thì app bỏ ảnh. Mỗi chiêu như vậy tốn thêm khoảng 2 giây.
+- Chưa thử trên game thật. Nếu game không cho kéo quá cuối khung thì sẽ không có ảnh thứ hai. Khi đó nhật ký không có dòng "kéo giữ quá cuối khung thấy thêm chữ bị che".
+
+### Kiểm tra
+- ML Kit thật (chạy trên máy ảo) với 4 ảnh danh sách của lượt này, đã che UID: trang đầu, trang có Yue, trang có Edras, trang có Aleister. App đọc đúng ô cả 40 tên, kể cả khi cố ý cho vị trí danh sách lệch ±0,05 màn hình.
+- Danh sách giả 130 tướng có dòng tên lệch 0,0033 màn hình mỗi hàng, về cả hai phía: lấy đủ 35 tướng tới cuối danh sách.
+- Ảnh khung mô tả Biron chiêu 1: có dòng mới lộ ra khi kéo giữ thì giữ ảnh; chữ chỉ dịch lên thì bỏ.
+- Kiểm thử trên máy (UiSmoke) biên dịch lại được; v0.13.52 để lỗi biên dịch ở phần lấy tướng theo tên.
+
+## v0.13.52: Lấy thông tin tướng theo tên bằng một lượt quét, không dựa vào vị trí đã lưu
+
+v0.13.51 xếp thứ tự tướng theo vị trí đã lưu trong `hero-index.tsv`. File này dùng chung cho cả máy, không theo tài khoản hay cách xếp, nên vị trí từ tài khoản khác (xếp theo Thông thạo) sẽ sai.
+
+### Cách quét
+- App đi từ đầu danh sách xuống đúng một lần. Ở mỗi màn hình dừng lại, app đọc tên trên thẻ (ML Kit). Gặp tướng cần lấy thì bấm, chụp, quay lại danh sách, rồi đọc lại màn đó để lấy tướng khác cùng màn.
+- Không còn tướng cần lấy trên màn thì app kéo tiếp 60% màn hình. Một màn đọc được tên của khoảng 80% chiều cao, nhiều hơn một lần kéo, nên không hàng nào bị bỏ qua.
+- Hàng nào đã đọc đủ 5 tên thì không đọc lại, trừ khi trên đó còn tướng cần lấy.
+- Thứ tự lấy là thứ tự trên danh sách, không phải thứ tự bạn gõ. `hero-001` là tướng gặp đầu tiên; thư mục ảnh vẫn mang tên tướng.
+- Biết tổng số tướng (số "130/130" trên đầu danh sách) thì đọc hết hàng cuối là xong, không phải kéo thêm để thấy danh sách hết.
+- Cả danh sách 130 tướng dài khoảng 9,9 màn hình, tức khoảng 17 lần kéo, bất kể lấy bao nhiêu tướng. Lượt trước kéo 64 lần mà mới lấy được 9 tướng.
+
+### Tướng app không đọc được tên
+- Đi hết danh sách mà còn tướng chưa gặp: nhật ký ghi "Đã đi hết danh sách; chưa thấy: …".
+- Mỗi tướng còn lại được tìm **một lần** ở ô đã đọc được tên nó trong lượt quét, hoặc ô đã lưu từ trước. Không có ở đó thì app ghi "Không thấy … trong danh sách; bỏ qua tướng này" và làm tướng sau. Không dò lại cả danh sách.
+
+### Tạm dừng rồi Tiếp tục
+- Tướng từng khối đã lấy, các tên đã đọc trên từng ô và chỗ quét tới được ghi vào `sweep.json` của lượt.
+- Dừng giữa lúc đang chụp một tướng thì Tiếp tục lấy lại đúng tướng đó, để ảnh không lẫn sang thư mục khác.
+
+### Tên đọc sai trên thẻ
+- Ở tài khoản có tướng chưa sở hữu, dưới tên game ghi "Chưa có". Trước đây app nhận chữ này là tên tướng và ghi đè vào vị trí đã lưu. Dòng UID mờ ở đáy màn hình cũng có thể bị nhận nhầm như vậy.
+- Giờ app chỉ nhận chữ nằm đúng dòng tên (lệch tối đa 3% chiều cao), bỏ "Chưa có" và dòng UID.
+
+### Kiểm tra
+- Danh sách giả 130 tướng, 35 tướng của lượt trước theo thứ tự bạn gõ, vị trí đã lưu sai hết: lấy đủ, theo thứ tự trên danh sách, tối đa 18 lần kéo.
+- Dừng sau khối 4 rồi chạy lại (app mất vị trí danh sách): khối 4 lấy lại đúng tướng cũ, các khối sau đi tiếp.
+- Tướng không đọc được tên lúc quét: tìm thấy ở ô đã lưu. Tướng không có trong danh sách: bỏ qua.
+- Chữ "Chưa có" và dòng UID không bị nhận là tên.
+- Chưa chạy trên máy thật.
+
+## v0.13.51: Lấy thông tin tướng theo tên: đi danh sách một lượt từ trên xuống, không dừng giữa chừng
+
+Sửa theo lượt `lay-danh-sach-tuong` (35 tướng theo tên, dừng sau tướng thứ 9).
+
+### Vì sao lượt dừng
+- Sau Bijan (ô 102 trên 130), app đi tìm Biron ở ô 1. Mỗi lần tìm, app chỉ được kéo 16 lần cộng số hàng tới ô cần tìm, tức 16 lần với ô 1. Từ ô 102 lên đầu cần khoảng 18 lần, nên app dừng với "Không cuộn tới được ô tướng 1" khi còn cách đầu chưa tới một màn hình.
+- Giờ số lần kéo được phép tính theo quãng đường từ chỗ danh sách đang đứng tới ô cần tìm: gấp đôi số lần cần, cộng 6, và không ít hơn mức cũ.
+- Hết số lần kéo mà chưa tới, app về đầu danh sách đếm lại một lần rồi mới tạm dừng.
+
+### Vì sao chậm và cách đi mới
+- **Thứ tự đi:** trước đây app đi theo thứ tự bạn gõ, nên kéo lên kéo xuống giữa các tướng (Edras ô 69, rồi Aleister ô 89, Allain ô 38, Aoi ô 95…).
+  - Với 35 tướng của lượt này là khoảng 187 lần kéo, mỗi lần khoảng 3,7 giây: hơn 11 phút chỉ để kéo.
+  - Giờ app xếp các tướng theo ô đã biết, từ trên xuống, và đi danh sách đúng một lượt. Cùng 35 tướng: khoảng 21 lần kéo và một lần vuốt lên đầu.
+  - Tướng chưa biết vị trí đi sau cùng. App dò từ chỗ danh sách đang đứng xuống cuối, rồi ngược lên, không quay về đầu. Tên đọc được trên đường đi đều được lưu, nên tới lượt thì nhiều tướng đã có vị trí.
+  - Thư mục ảnh vẫn mang tên tướng. Chỉ số `hero-001`, `hero-002`… theo thứ tự đi.
+- **Mỗi lần kéo dài hơn:** 60% màn hình thay vì 45%.
+  - Đã thử trên ảnh danh sách của lượt này: dịch tới 780 px vẫn đo đúng từng điểm ảnh.
+  - Kéo có giữ ngón đi đúng bằng ngón tay: 476–487 px cho lần kéo 486 px.
+- **Ô ở gần đầu mà danh sách đang ở xa bên dưới:** app vuốt nhanh lên đầu rồi kéo xuống, thay vì kéo ngược từng đoạn. Chỉ danh sách tướng làm vậy; Cờ đi từng thẻ từ trên xuống như cũ.
+- **Không lưu ảnh mọi trang lướt qua:**
+  - Mỗi trang là một PNG khoảng 2,2 MB. Ảnh được ghi trên cùng luồng với bước đo lần kéo sau, nên bước đo có thể phải chờ.
+  - Lượt này có 65 ảnh như vậy, chiếm phần lớn trong 262 MB của ZIP.
+  - Giờ danh sách tướng chỉ lưu trang có thẻ được bấm. Cờ vẫn lưu mọi trang như cũ.
+
+### Lượt đang tạm dừng
+- Bấm Tiếp tục vẫn chạy được, theo thứ tự cũ, với cách tính số lần kéo mới.
+- Nhanh hơn nhiều: tạo lượt mới với 26 tướng còn lại (từ Biron tới Xeniel). App tự xếp thứ tự.
+
+### Kiểm tra
+- Danh sách giả 130 tướng:
+  - Từ ô 102 tới ô 1 chỉ bằng vuốt nhanh, không kéo ngược.
+  - Không có đường tắt lên đầu (như Cờ) mà danh sách chỉ đi nửa đường ngón tay: kéo ngược hơn 16 lần vẫn được phép, tới được ô 1.
+  - Từ đầu tới ô 102 tối đa 15 lần kéo.
+  - Tướng chưa biết vị trí được tìm từ chỗ đang đứng, cả khi tướng ở bên dưới lẫn bên trên.
+  - Danh sách tướng chỉ lưu trang có thẻ được bấm; danh sách Cờ vẫn lưu mọi trang.
+- Macro 6 tướng xếp đúng thứ tự: ô 1, 38, 72, 89, 102, rồi tướng chưa biết.
+- Chưa chạy trên máy thật.
+
+## v0.13.50: Chiến khu sao chép tên và UID; Đề cử Pro không vuốt về đầu mỗi tướng; Cờ không lưu trùng Chúc Phúc
+
+Sửa theo ba lượt bạn gửi (chienkhu, co-v2, de-cu-pro) và ảnh hộp UID.
+
+### Chiến khu: sao chép tên và UID thay cho ảnh đại diện
+- App không bấm ảnh đại diện nữa. Sau khi chụp **Thông tin kiện tướng**, với mỗi người app làm:
+  1. Bấm **biểu tượng sao chép tên** (góc trên bên phải bảng trái) và đọc tên game vừa chép.
+  2. Bấm **con mắt** bên cạnh. Hộp thông tin hiện ra thì chụp: `hero-001-quoc-gia-hang-01-uid`.
+  3. Bấm **biểu tượng sao chép UID** ngay sau dãy số và đọc UID vừa chép.
+- Tên và UID ghi vào `players.json` của lượt, theo từng người: `{"hero-001-quoc-gia-hang-01": {"hero": "Richter", "name": "…", "uid": "…", "uidSource": "copy"}}`.
+- **Đọc bộ nhớ tạm:** từ Android 10, chỉ ứng dụng đang được chọn mới đọc được bộ nhớ tạm. Vì vậy app mở một cửa sổ 1 điểm ảnh của dịch vụ Trợ năng để đọc, rồi gỡ ngay và trả lại game. Android 12 trở lên có thể báo nhỏ "đã dán từ bộ nhớ tạm".
+  - Máy không cho đọc thì tên để trống, còn UID lấy từ chữ đọc được trong hộp (`"uidSource": "ocr"`). App không đoán tên.
+  - Trước mỗi lần sao chép, app xoá bộ nhớ tạm, nên tên hay UID của người trước không bị gán nhầm cho người sau.
+- Con mắt không mở hộp thì app bỏ qua UID của người đó, không bấm mò vào chỗ hộp lẽ ra hiện. Biểu tượng sao chép UID được tìm bằng điểm ảnh (đo ở 56,6% chiều ngang trên ảnh bạn gửi).
+- Đường quay lại: app nhìn màn hình từng bước. Hộp UID có thể nhận lần bấm mũi tên đầu tiên, nên app không bấm mò ra ngoài thẻ như trước.
+
+### Đề cử Pro: không vuốt xuống rồi kéo lên lại mỗi tướng
+- Trong lượt bạn gửi, mỗi tướng mất 3–4 phút. Mỗi lần mở Chọn tướng, app vuốt thử 30% màn hình (danh sách trôi xa), rồi kéo lên từng đoạn 24% chậm, mỗi đoạn một lần nhìn.
+- Giờ Đề cử Pro dùng cách của Chiến khu:
+  - Vuốt thử chỉ 10% màn hình. Về đầu bằng những lần lướt nhanh, hai lần lướt không làm danh sách nhích là tới đầu.
+  - App nhớ hình đầu danh sách và chỗ đã chọn tướng trước. Lần mở sau, nếu Chọn tướng còn ở chỗ cũ hoặc mở ở đầu danh sách, app đi thẳng tới tướng cần chọn, không vuốt thử, không về đầu. Nhật ký ghi "Chọn tướng còn ở chỗ lượt trước" hoặc "mở ở đầu danh sách như lần trước".
+
+### Bách khoa Cờ
+- **Tất cả quân cờ: không phải đếm lại từ đầu.** Ở ô 36, một lần kéo 413 px bị đo thành 650 px, đúng mép vùng so ảnh (phần hai ảnh còn trùng nhau rất ít nên khớp nhầm). App tìm ô 36 sai chỗ, kéo kiểm tra thấy còn thẻ rồi đếm lại từ đầu, mất hơn một phút. Lần kéo có giữ ngón không làm danh sách trôi xa hơn ngón tay, nên giờ app chỉ tìm độ cuộn trong tầm đó (thêm 8% màn hình).
+- **Chúc Phúc: không bấm và lưu lại thẻ đã lưu.** Mỗi lần kéo, danh sách đi khoảng 59% màn hình. Thẻ ở đáy trang trước hiện lại ở đầu trang sau, bị thanh tab che mất một phần hình. Trước đây app so theo hình nên không nhận ra, và lưu trùng (Thường số 11, 12 là 9, 10; số 25 là 22).
+  - Giờ app đo mỗi lần kéo bằng ảnh và nhận thẻ theo chỗ nó được kéo tới.
+  - Ba Chúc Phúc Truyền thuyết dùng chung một hình (Lãng khách, Cuồng chiến sĩ, Đêm đông cổ tích) không còn bị coi là một.
+  - Không đo được thì app so theo hình như cũ và ghi vào nhật ký.
+
+## v0.13.49: Chiến khu không dừng ở Chọn tướng; Đề cử Pro lấy đủ combo; Cờ không bỏ dở Tất cả quân cờ
+
+Sửa theo hai lượt bạn gửi (ZIP) và ảnh Tất cả quân cờ.
+
+### Chiến khu
+- **Dừng vô lý ở Chọn tướng.** Nhật ký báo "Chưa thấy hàng đầu đủ ảnh tại vị trí chuẩn" dù danh sách đang ở đầu. Game hiện đặt hàng tướng đầu ở 29,4% chiều cao, còn app chỉ nhận 32–37% (đo trên một ảnh cũ). Giờ app nhận từ 28,9%; hàng bị mép trên cắt vẫn không được tính.
+- **Lướt mạnh xuống rồi lướt về đầu rất lâu.**
+  - Lần vuốt thử chiều cuộn ngắn lại (10% màn hình thay vì 30%), nên danh sách không còn trôi xuống tận đáy.
+  - Khi đã lướt ngược lên được một lần, chỉ cần thêm một lần lướt không làm danh sách nhích là coi như tới đầu (trước cần hai lần).
+  - App nhớ hình đầu danh sách đã xác minh. Những lần mở Chọn tướng sau, game mở ở đầu danh sách, app nhận ra ngay và không vuốt thử, không lướt về đầu nữa.
+
+### Đề cử Pro
+- **Còn nút Dùng combo mà không làm tiếp.** Trên ảnh thật 2400×1080 của máy bạn, nửa trên nút "Dùng combo" có màu đỏ 200, còn app đòi trên 200. Nút bị tách làm hai mảnh vàng ngắn quanh chữ, app không thấy nút nào, mất dấu danh sách sau combo 2 rồi bỏ luôn các combo còn lại.
+  - Ngưỡng màu nới ra theo màu thật của máy (đỏ trên 175). Ảnh lúc mất dấu trong ZIP (đã che tên, ảnh người chơi và UID) giờ nhận ra đúng một nút.
+  - Nếu vẫn mất dấu khi cuộn, app về đầu danh sách và đếm lại một lần, rồi mới bỏ qua.
+
+### Bách khoa Cờ: Tất cả quân cờ khi mở từng quân cờ
+- Ảnh của bạn cho thấy app dừng ngay sau một lần kéo từ hàng 3 vàng xuống hàng sau, dù hàng sau đã hiện.
+- **Chờ danh sách đứng yên:** sau mỗi lần kéo, app nhìn lại cho tới khi hai ảnh liền nhau giống nhau mới đo khoảng cuộn. Khi game bận tải hình hàng mới, lần kéo có thể hiện trễ; đo sớm thì mọi ô sau bị tính sai chỗ.
+- **Kiểm tra trước khi coi là hết:** khi không thấy thẻ ở chỗ cần bấm, app kéo danh sách lên một đoạn. Nếu danh sách còn đi gần trọn quãng kéo và phần dưới màn hình còn thẻ, app đếm lại từ đầu danh sách (tối đa 2 lần) thay vì sang Phe & Nghề.
+
+Chưa thử trên game thật.
+
+## v0.13.48: Bách khoa Cờ lấy hết Tất cả quân cờ; Trang bị chờ hình tải xong rồi mới chụp
+
+Sửa hai lỗi của **Chụp nhanh** trong Bách khoa Cờ, tìm ra trên hai ảnh bạn gửi:
+
+- **Tất cả quân cờ dừng giữa danh sách.**
+  - **Nguyên nhân:** app coi dải đáy màn hình là nền trơn tức là trang đã hết. Thẻ quân cờ 1 vàng màu xám nên dải đáy luôn có viền thẻ. Từ 3 vàng trở lên, thẻ xanh và tím gần như cùng màu nền, và phần dưới tên, dưới phe/nghề là màu trơn. Khi dải đáy rơi đúng vào phần đó, app tưởng hết danh sách và dừng ở hàng 3 vàng.
+  - **Sửa:** ở Tất cả quân cờ, app không dùng dải đáy nữa. Danh sách chỉ hết khi kéo mà trang không đổi, tốn thêm 1 lần kéo ở cuối.
+  - **Khi bật mở từng quân cờ:** nếu ở chỗ có thẻ mà chưa thấy chân dung, app chờ rồi nhìn lại một lần trước khi kết luận hết danh sách, phòng khi hình chưa tải.
+  - Sau mỗi lần kéo, app chờ 0,5 giây (trước là 0,3 giây) cho danh sách đứng yên rồi mới chụp.
+- **Trang bị chụp khi hình chưa tải.**
+  - Game vẽ ô vuông sáng có hình thoi xám trước, tải xong mới thay bằng hình trang bị. App giờ đếm các ô này và chờ, tối đa 8 lần nhìn (khoảng 10 giây). Quá thời gian thì vẫn chụp và ghi vào nhật ký. Trên ảnh của bạn app đếm đúng 15 ô chưa tải; trên ảnh đã tải xong thì không đếm ô nào.
+  - **Trang đầu của mọi tab** chỉ được chụp khi hai lần nhìn liên tiếp giống nhau, vì game vẽ hình của tab mới mở chậm hơn một nhịp. Mỗi tab tốn thêm khoảng 1 giây.
+  - **Bảng chi tiết** (quân cờ, phe/nghề, trang bị) chờ hình tròn ở góc trên được vẽ tối đa 5 lần nhìn thay vì 2.
+
+Chưa thử trên game thật.
+
+## v0.13.47: nhập mã sự kiện dạng chung (ví dụ Ủy Thác của Shuna); danh sách tướng chụp đủ chiêu khi máy lag
+
+### Nhập mã sự kiện nhiều tài khoản
+
+Tác vụ trước chỉ làm được Thập kỷ chung sức. Giờ nó tách thành **phần chung** và **phần riêng của từng sự kiện**:
+
+- **Phần chung**, dùng cho mọi sự kiện:
+  - Với từng tài khoản: đăng xuất, đăng nhập, vào Sự kiện.
+  - Tìm sự kiện theo tên trong danh sách bên trái; chưa thấy thì kéo danh sách.
+  - Đóng popup quà và hướng dẫn trên đường đi và sau khi nhập.
+  - Ghi sổ để không bao giờ gửi mã hai lần, rồi quay về sảnh.
+- **Phần riêng** chọn trong form:
+  - **Thập kỷ chung sức:** giữ nguyên như cũ.
+  - **Ủy Thác của Shuna:** tab Nhiệm vụ chia sẻ → ô "Nhập mã để nhận nhiệm vụ…" → Dùng.
+  - **Sự kiện khác:** sự kiện mới có ô nhập mã thì gõ tên sự kiện, tên tab, chữ trong ô và tên nút như trong game, không cần sửa app.
+- **Sự kiện Shuna:**
+  - Đọc số lượt trên tab ("0/2"); đã đủ thì bỏ qua tài khoản đó.
+  - Sau khi bấm Dùng, chụp kết quả: popup quà, chữ báo lỗi, hoặc số lượt tăng.
+- Chi tiết: `docs/EVENT_CODES.md`.
+
+### Danh sách tướng: chiêu dài và máy lag
+
+- **Mô tả chiêu dài giờ được kéo đủ** (ví dụ chiêu 2 của Billow).
+  - **Nguyên nhân:** bản cũ chỉ xem một dải hẹp ở y .445–.468, đo trên chiêu của Dyadia, và chỉ tính chữ sáng. Ở Billow, dải đó chỉ có dòng chữ xám "(giảm nửa với đơn vị không phải tướng)", còn khung chữ kéo xuống tới khoảng y .53. Vì vậy app tưởng mô tả đã hết.
+  - **Cách sửa:** giờ app xem tới y .545 và tính cả chữ xám.
+- **Chờ chữ hiện trước khi chụp Chi tiết:** app nhìn khung chữ trước khi chụp. Chưa có chữ (panel còn đang mở, máy lag) thì chờ thêm, tối đa 3 giây. Lần nhìn này là lần đã có sẵn để quyết định có kéo hay không, chỉ chuyển lên trước ảnh, nên không tốn thêm thời gian.
+- **Chờ trang tướng tải xong:**
+  - Sau khi mở một tướng từ danh sách, app chờ tới khi hàng chiêu đọc được và giống nhau ở 2 lần nhìn, rồi mới chạy các bước chụp tổng quan, thông số, chiêu. Tối đa khoảng 10 giây; quá thì vẫn chụp và ghi nhật ký.
+  - Bước chiêu đọc lại hàng chiêu tới 3 lần trước khi bỏ cuộc và chụp theo 4 vị trí đoán sẵn.
+
+Chưa thử trên game thật. Hai ảnh Billow và ảnh trang sự kiện Shuna bạn gửi không lưu lại được trên máy, nên phần đo dựa trên tọa độ đọc từ ảnh. Kiểm thử dùng màn hình dựng lại theo các tọa độ đó.
+
+## v0.13.46: Chiến khu mở từng người; Đề cử Pro nhanh hơn và chờ combo hiện xong; chọn số người, số combo
+
+**Không còn ô "Số tướng".** Chiến khu và Đề cử Pro luôn chạy hết tướng trong Chọn tướng. Macro cũ có lưu số tướng cũng chạy hết. Cả hai đều bỏ tích **Đã nhận** mỗi lần mở Chọn tướng. Phần này đã kiểm thử trên ảnh hai bảng Chọn tướng bạn gửi: app thấy ô đang tích và biết chỗ bấm để bỏ.
+
+### Chiến khu
+
+- **Số người top mỗi bảng do bạn chọn** (Top 3, Top 10, Hết danh sách hoặc gõ số), thay cho 3/10 cố định. Số này áp dụng cho Tỉnh, Miền, Việt Nam, Toàn máy chủ. "Số 1 máy chủ" vẫn chụp 1 ảnh.
+- Ô mới **Bấm từng người trong top** (bật sẵn). Ngoài ảnh danh sách như trước, app làm lần lượt với từng người trong top:
+  1. Bấm vào dòng của người đó, rồi bấm **biểu tượng người** trên thẻ hiện bên phải.
+  2. Chụp **Thông tin kiện tướng**: `hero-001-quoc-gia-hang-01-ho-so`.
+  3. Bấm ảnh đại diện, chụp **ảnh lớn**: `hero-001-quoc-gia-hang-01-anh-dai-dien`.
+  4. Quay lại bảng, kiểm tra danh sách còn đúng chỗ rồi mới mở người tiếp theo.
+- Nút Kết bạn và Báo cáo trên thẻ không bao giờ được bấm.
+- **Chờ dữ liệu tải xong:**
+  - Hồ sơ chỉ được chụp khi bảng thông tin bên trái giống hệt ở 2 lần nhìn liên tiếp và đã có số trận, tỷ lệ thắng, ảnh đại diện.
+  - Ảnh lớn chỉ được chụp khi đã hiện hình và không còn đổi.
+  - Mạng chậm thì app chờ, tối đa khoảng 25 giây cho hồ sơ và 18 giây cho ảnh. Quá thời gian đó app vẫn chụp và ghi chú "tải lâu" vào nhật ký lượt.
+- **Đường quay lại:** mỗi bước app đọc lại màn hình. Còn ảnh lớn thì bấm X, còn hồ sơ thì bấm mũi tên, còn thẻ thì chạm ra ngoài thẻ.
+  - Danh sách bị dịch hoặc về đầu: app đo lại vị trí bằng ảnh, hoặc bấm lại tab rồi tìm từ đầu.
+  - Lạc hẳn: app vào lại Chiến khu và chụp tiếp tướng đó, bỏ qua người đã chụp.
+- **Nhận dạng bằng điểm ảnh** (`BoardPlayerPixels.kt`), đo trên ảnh bạn gửi: các dòng (theo số hạng bên trái), thẻ, hồ sơ, ảnh lớn. OCR chỉ dùng để nhận trang Thông tin kiện tướng và khi không chắc đang ở đâu.
+- **Tiếp tục sau khi dừng:** bỏ qua người đã có đủ 2 ảnh.
+- **Thời gian:** mỗi người khoảng 12–15 giây, chủ yếu do chờ tải. Ví dụ top 3 thêm khoảng 40 giây mỗi tướng. Ước tính trong form đã tính phần này.
+- Chi tiết: `docs/BOARD_PLAYERS.md`.
+
+### Đề cử Pro
+
+- **Số combo mỗi tướng do bạn chọn** (1, 3, 5, Tất cả hoặc gõ số), thay cho 5 cố định. Tướng có ít đề cử hơn thì lấy hết những gì có.
+- Vẫn làm như trước: Phương án khác → Đề cử Pro → bấm **Dùng combo** từng đề cử → chụp màn Chuẩn bị → cuối mỗi tướng dùng lại đề cử 1.
+- **Chụp khi combo đã hiện xong:** sau Dùng combo, app chỉ chụp khi bảng bên phải của Chuẩn bị (trang bị, phù hiệu, ngọc, phụ trợ) giống hệt ở 2 lần nhìn liên tiếp. Bản cũ chụp ngay lần nhìn đầu.
+- **Nhanh hơn:**
+  - Khi cuộn danh sách đề cử, app tìm nút Dùng combo bằng màu vàng của nút (`ProPixels.kt`), không OCR (bản cũ OCR hai lần mỗi ảnh, một lần ở độ phân giải gấp đôi).
+  - Mỗi lần kéo đi 2/3 thẻ thay vì nửa thẻ.
+- **Danh sách tải chậm:** bản cũ đọc 2 lần không thấy nút là kết luận "không có đề cử". Giờ app chờ khoảng 10 giây (20 giây nếu game báo đang tải hoặc đang kết nối), trừ khi game ghi rõ là không có đề cử.
+
+Chưa thử trên game thật. Với Chiến khu có hai điều chưa rõ, cả hai trường hợp app đều đã xử lý:
+- Bấm vào tên trên dòng có mở thẻ không. Nếu không, dạy lại điểm `board.v1.player.row`.
+- Sau khi quay lại, thẻ còn mở hay danh sách có về đầu không.
+
+## v0.13.45: Bách khoa Cờ chụp nhanh, không OCR, đặt tên theo số thứ tự
+
+Bách khoa Cờ giờ có **Chụp nhanh** (bật sẵn, ô đầu tiên ở "Thu thập nội dung"). Đường vào game và vào Bách khoa giữ nguyên, kể cả phần tự qua popup hướng dẫn, quà và "Ghi chú cập nhật" của v0.13.44. Bên trong Bách khoa thì làm lại (`ChessQuickReader.kt`):
+
+- **Không OCR.** Mọi thứ được đọc từ điểm ảnh (`ChessPixels.kt`), đo trên 15 ảnh Bách khoa bạn gửi: trang đã hết hay còn, bảng chi tiết đã mở và đã vẽ hình, lưới Tất cả quân cờ, hộp Save Photo, hình các thẻ Chúc phúc.
+- **Đặt tên theo số thứ tự** trên trang: `quan-co-001`, `vat-pham-004`, `phe-012`, `nghe-003`, `chuc-phuc-007`. Ảnh nằm cùng thư mục như trước, ví dụ `quan-co/tat-ca-quan-co/tuong/quan-co-001/quan-co-001-detail-1.png`.
+- **Ít ảnh chụp hơn.** Android chỉ cho chụp khoảng 1 ảnh mỗi giây, nên thời gian chủ yếu nằm ở số lần chụp:
+  - Trang có đáy là nền trống (Thông tin cơ bản, Tương tác, Trang bị, bảng chi tiết ngắn) thì không kéo thử nữa.
+  - Mỗi lần kéo đi xa hơn (60% màn hình thay vì 42%), nên ít trang hơn.
+  - Kéo mà trang không đổi là hết. Chỉ lần kéo đầu của mỗi tab được thử lại một lần, thay vì 3 lần ở mọi trang.
+  - Mỗi mục chỉ chụp 1 ảnh để kiểm tra bảng đã mở, không đọc tên, không chờ 3 khung ổn định.
+- **Lưu ảnh chạy nền:** app chụp tiếp trong khi ảnh trước đang được ghi.
+- **Ảnh gốc (Save Photo) vẫn giữ:** nhấn giữ, nhận ra hộp Save Photo bằng điểm ảnh rồi bấm **Sure**. Nếu không chắc là hộp Save Photo thì đọc OCR trước khi bấm, và chỉ bấm Sure khi đọc ra đủ "Save Photo", "Sure", "CANCEL". Hộp Save Photo hiện lên ngoài dự kiến thì bấm CANCEL, không bao giờ Sure. Việc đối chiếu ảnh trong Pictures chạy nền theo thời điểm bấm Sure, không bắt lượt chạy phải chờ.
+- **Tiếp tục sau khi dừng:** bỏ qua tab đã xong, mục đã mở và ảnh gốc đã lưu theo số thứ tự. Tab đang dở được chụp lại từ trang đầu, ghi đè ảnh trang cũ.
+- Bỏ chọn **Chụp nhanh** để quay về cách cũ: đọc tên bằng OCR, chậm hơn. Có thể đổi qua lại mà không cần cài lại app.
+
+Chưa thử trên game thật. Thời gian chưa đo được trên máy thật. Ước tính theo số ảnh chụp: mỗi trang hoặc mục khoảng 1–2 giây, mỗi quân cờ có mở chi tiết khoảng 4–5 giây. Cách cũ cần khoảng 10–20 giây cho mỗi mục.
+
+## v0.13.44: tự qua popup hướng dẫn và quà; Cờ không kẹt ở "Ghi chú cập nhật"
+
+Lỗi trên máy bạn: sau bản cập nhật, sảnh Cờ Liên quân mở hộp **Ghi chú cập nhật**. App không biết hộp này, cứ bấm "Trang chủ" nằm dưới hộp (chạm không có tác dụng) tới khi hết lượt thử rồi dừng với "Không nhận ra đường vào Bách khoa".
+
+App giờ nhận ra 3 kiểu thoát popup, dùng chung một bộ nhận dạng (`GamePopups.kt`):
+
+| Kiểu | Ví dụ | Khi nào bấm |
+| --- | --- | --- |
+| Dòng chữ bảo chạm | "Ấn để tiếp tục", "Chạm vào vùng trống để đóng", "Nhấn để bỏ qua" | Ngay khi thấy |
+| Nút X | "Ghi chú cập nhật" và các popup khác | "Ghi chú cập nhật": ngay khi thấy. Popup lạ: sau khi 2 lần bấm sảnh không có tác dụng |
+| Nút bấm | "Đã rõ", "Đã hiểu", "Nhận", "Nhận thưởng", "Đóng", "Bỏ qua", "Để sau", "Hủy" | Chỉ khi màn hình không đi tiếp và không có X |
+
+- OCR đọc sai hoặc mất **một chữ** vẫn được nhận, như "* Ấn để iếp tục" trên màn quà của bạn (bản cũ bỏ qua dòng này).
+- Điểm chạm phải giữ nguyên qua 2 lần nhìn, để không bấm vào popup đang hiện dần hay hình động.
+- **Bảo vệ tiền và tài khoản:** "Xác nhận", "Tiếp tục", "OK" chỉ được bấm khi đó là nút duy nhất và hộp không có chữ về mua, nạp, đổi, tiêu, Quân huy, thanh toán, đăng xuất, thoát, xóa. Có "Hủy" thì bấm "Hủy". "Đồng ý" không bao giờ tự bấm. Nhãn phải khớp nguyên dòng và nằm giữa màn hình.
+- Thử đóng nhiều lần mà popup vẫn còn: tạm dừng để bạn đóng bằng tay, không bấm mãi.
+- Áp dụng cho **đường vào game** của mọi tác vụ và **đường vào Bách khoa Cờ**. Sau khi đã rời sảnh, Chiến khu, Xếp hạng và Đề cử Pro chưa dùng bộ nhận dạng này.
 
 ## v0.13.43: đọc UID trên nền sảnh động
 

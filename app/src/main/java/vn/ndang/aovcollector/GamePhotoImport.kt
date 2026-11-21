@@ -219,7 +219,7 @@ object GamePhotoImport {
                     OriginalPhotoCopy.copy(input, temp, item.size) { !cancelled() }
                 } ?: error("Không mở được ảnh: " + item.name)
                 require(temp.length() > 0L && temp.length() <= MAX_IMAGE_BYTES) { "Ảnh không hợp lệ" }
-                require(temp.renameTo(target)) { "Không chuyển được ảnh đã sao chép" }
+                require(temp.moveOnto(target)) { "Không chuyển được ảnh đã sao chép" }
                 ledger.put(id, group + "/" + filename)
                 copied++
                 // Save a checkpoint per photo so a stopped job can resume without duplicates.

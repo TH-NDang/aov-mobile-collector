@@ -262,16 +262,16 @@ class RunImageManifestTest {
         try {
             val secret = image(outside, "secret.png", "do not change")
             val link = File(run, "anh-goc/trang-bi/linked.png").apply { parentFile.mkdirs() }
-            Files.createSymbolicLink(link.toPath(), secret.toPath())
+            symlink(link, secret)
             rejects { record(run, link, "trang-bi", "linked") }
             val file = image(run, "anh-goc/trang-bi/item.png")
             val externalManifest = image(outside, "existing.json", "do not change manifest")
-            Files.createSymbolicLink(manifest(run).toPath(), externalManifest.toPath())
+            symlink(manifest(run), externalManifest)
             rejects { record(run, file, "trang-bi", "item") }
             assertEquals("do not change manifest", externalManifest.readText())
             Files.delete(manifest(run).toPath())
             val partial = File(run, "images.json.part")
-            Files.createSymbolicLink(partial.toPath(), secret.toPath())
+            symlink(partial, secret)
             rejects { record(run, file, "trang-bi", "item") }
             assertEquals("do not change", secret.readText())
             Files.delete(partial.toPath())
@@ -288,7 +288,7 @@ class RunImageManifestTest {
         try {
             outside.writeBytes(file.readBytes())
             file.delete()
-            Files.createSymbolicLink(file.toPath(), outside.toPath())
+            symlink(file, outside)
             val next = image(run, "anh-goc/trang-bi/next.png")
             record(run, next, "trang-bi", "next")
             assertEquals(1, images(run).length())

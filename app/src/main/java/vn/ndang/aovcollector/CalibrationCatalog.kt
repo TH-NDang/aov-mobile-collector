@@ -79,6 +79,10 @@ internal object CalibrationCatalog {
         val topics = ChessWiki.TOPICS.filter { it.key in keys }
         if (topics.isEmpty()) return@buildList
         val timing = ChessWiki.Timing(macro.optBoolean("fast", true))
+        // The fast capture drags further and tries a drag at most twice; its paths are the ones shown to teach.
+        val quick = macro.optBoolean("chessQuick", true)
+        // Its drags always take the fast timing.
+        val dragTiming = if (quick) ChessWiki.Timing(true) else timing
         add(recognized("chess.v1.lobby.mode", "Sảnh: mở chế độ", "Mở sảnh chính Liên Quân; nhận diện nút Chọn chế độ ở thanh dưới."))
         add(tap("chess.v1.mode.entertainment", "Cờ: mục giải trí", "Mở màn Chọn chế độ; chọn mục Giải trí bên trái.", .135, .37))
         add(
@@ -177,18 +181,30 @@ internal object CalibrationCatalog {
                     )
                 }
             } else {
-                for (retry in 0..3) {
-                    val x = if (retry % 2 == 1) .55 else .76
+                for (retry in 0..(if (quick) 1 else 3)) {
+                    val x = if (retry % 2 == 1 && !quick) .55 else .76
                     add(
                         swipe(
                             "chess.v1.topic.${topic.key}.scroll.$retry",
                             "Cờ: cuộn ${topic.label}" + if (retry == 0) "" else " (thử lại $retry)",
                             "$hint Đóng bảng chi tiết; kéo từ điểm đầu đến điểm cuối trong danh sách.",
                             x,
-                            if (retry > 0) .84 else .82,
+                            if (quick) {
+                                .90
+                            } else if (retry > 0) {
+                                .84
+                            } else {
+                                .82
+                            },
                             x,
-                            if (retry > 0) .28 else .40,
-                            timing
+                            if (quick) {
+                                .30
+                            } else if (retry > 0) {
+                                .28
+                            } else {
+                                .40
+                            },
+                            dragTiming
                         )
                     )
                 }
@@ -200,10 +216,10 @@ internal object CalibrationCatalog {
                 "Cờ: cuộn mô tả",
                 "Mở chi tiết một quân cờ, Phe, Nghề hoặc trang bị; kéo trong vùng mô tả bên phải.",
                 .75,
-                .82,
+                if (quick) .86 else .82,
                 .75,
-                .42,
-                timing
+                if (quick) .30 else .42,
+                dragTiming
             )
         )
         add(

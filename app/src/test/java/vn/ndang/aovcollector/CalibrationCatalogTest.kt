@@ -22,8 +22,9 @@ class CalibrationCatalogTest {
             .put("builtinVersion", BuiltInMacros.VERSION).put("targetPackage", "com.garena.game.kgvn")
     }
 
+    /** The OCR reader's macro: its drags and retries. The fast capture's are in ChessQuickTest. */
     private fun chess(fast: Boolean = true) = builtin("chess")
-        .put("chessTopics", JSONArray(ChessWiki.TOPICS.map { it.key })).put("fast", fast)
+        .put("chessTopics", JSONArray(ChessWiki.TOPICS.map { it.key })).put("fast", fast).put("chessQuick", false)
 
     @Test fun customReaderStepsDoNotEnableStoredOverrides() {
         for (type in listOf("skills", "ranking", "chess")) {

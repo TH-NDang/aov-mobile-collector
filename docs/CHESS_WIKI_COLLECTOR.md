@@ -10,7 +10,48 @@ Nếu bật **Tự mở game**, ứng dụng dùng trình vào sảnh sẵn có,
 **Chọn chế độ → Chế độ giải trí → chọn thẻ Cờ Liên Quân → Bắt đầu → Trang chủ/Bách khoa**.
 Không chạm **Đấu thường** hoặc **Đấu hạng** trong phòng Cờ Liên Quân.
 
+Popup che đường vào, như **Ghi chú cập nhật** sau mỗi bản cập nhật game, được đóng trước khi bấm tiếp. Xem `GamePopups.kt`: dòng chữ bảo chạm và **Ghi chú cập nhật** được xử lý ngay; nút X hoặc nút bấm của popup lạ chỉ dùng sau khi 2 lần thao tác trên sảnh không có tác dụng.
+
 Nếu không tự mở game, hãy mở sẵn sảnh Cờ Liên Quân hoặc Bách khoa rồi mới nhấn **Chạy**.
+
+## Chụp nhanh (mặc định từ v0.13.45)
+
+Khi đã vào Bách khoa, **Chụp nhanh** (`ChessQuickReader.kt`) chỉ đọc điểm ảnh (`ChessPixels.kt`), không OCR, và đặt tên theo thứ tự trên trang:
+
+| Tab | Tên mục | Ví dụ ảnh |
+| --- | --- | --- |
+| Tất cả quân cờ | `quan-co-001`… | `quan-co/tat-ca-quan-co/tuong/quan-co-001/quan-co-001-detail-1.png` |
+| Tương tác → Phe / Nghề | `phe-001`…, `nghe-001`… | `tuong-tac/phe/phe-001-page-1.png` |
+| Trang bị | `vat-pham-001`… | `trang-bi/tat-ca-trang-bi/vat-pham-001-page-1.png` |
+| Ảnh gốc Chúc phúc | `chuc-phuc-001`… | theo nhóm ảnh gốc |
+
+Ảnh trang của mỗi tab giữ tên như trước (`<tab>-page-N.png`); trên lưới quân cờ, ảnh trang là các ảnh danh sách chụp sau mỗi lần cuộn. Ảnh gốc quân cờ là `quan-co-001-head`, ảnh chiêu là `quan-co-001-skill-1`.
+
+Cách đọc màn hình bằng điểm ảnh, đo trên ảnh 2000×900 của người dùng:
+
+- **Trang hoặc bảng chi tiết đã hết:** dải đáy (86–99,5% chiều cao) là nền trơn. Khi đó app không kéo thêm.
+  - **Trừ Tất cả quân cờ** (từ v0.13.48). Thẻ từ 3 vàng trở lên màu xanh hoặc tím, gần như cùng màu nền, và trơn ở phần dưới tên. Dải đáy rơi vào phần đó thì trơn dù danh sách còn tiếp. Danh sách quân cờ chỉ hết khi kéo mà trang không đổi.
+- **Trang đã vẽ xong** (từ v0.13.48):
+  - Trang đầu của mỗi tab được chụp khi hai lần nhìn liên tiếp giống nhau.
+  - Trang bị: không còn ô đang tải (ô vuông sáng có hình thoi xám). App chờ tối đa 8 lần nhìn; quá thì chụp như đang thấy và ghi nhật ký.
+- **Lưới Tất cả quân cờ:** khe giữa 5 cột thẻ là nền trơn từ trên xuống dưới. `ListNavigator` vẫn đo độ cuộn như trước, chỉ không còn cần OCR.
+  - Sau mỗi lần kéo, app nhìn lại tới khi hai ảnh liền nhau giống nhau rồi mới đo khoảng cuộn (từ v0.13.49).
+  - Khoảng cuộn chỉ được tìm trong tầm lần kéo có giữ ngón có thể đi: quãng ngón tay cộng 8% màn hình (từ v0.13.50). Trên máy bạn, một lần kéo 413 px từng bị đo thành 650 px. Đó là mép vùng so ảnh, nơi hai ảnh chỉ còn trùng một dải hẹp nên khớp nhầm. Kết quả là ô 36 bị tìm sai chỗ và cả danh sách phải đếm lại từ đầu.
+  - Chỗ cần bấm mà không thấy thẻ: app kéo lên một đoạn để kiểm tra. Danh sách còn đi gần trọn quãng kéo và phần dưới màn hình còn thẻ thì đếm lại từ đầu danh sách, tối đa 2 lần; ngược lại mới là hết danh sách.
+- **Bảng chi tiết đã vẽ xong:** hình tròn góc trên của bảng, và với quân cờ là hình chiêu, đã có chi tiết. Nếu chưa, app nhìn lại tối đa 5 lần.
+- **Hộp Save Photo:** thanh tiêu đề đen, ngay dưới là hai nút sáng. Chỉ bấm **Sure** khi thấy đúng hộp này. Màn hình đổi mà không khớp hộp thì đọc OCR, và chỉ bấm Sure khi đọc ra đủ Save Photo, Sure, CANCEL.
+- **Thẻ Chúc phúc:** hình nét trắng ở hai cột. Chỉ nhấn giữ hình đủ cao (từ 9% chiều cao) và không chạm mép dưới.
+  - **Thẻ đã có ở trang trước** (từ v0.13.50) được nhận theo chỗ: app đo mỗi lần kéo bằng `ChessPixels.blessingProfile` (5 dải dọc danh sách, từ dưới thanh tab tới đáy). Một lần kéo đi khoảng 59% màn hình, ít hơn ở cuối danh sách; hai trang chỉ còn trùng chừng 1/9, nên phép so chấp nhận phần trùng nhỏ cỡ đó. Thẻ ở trang trước, dời lên đúng khoảng đã đo, trùng chỗ (lệch dưới 7% chiều cao) với thẻ trang này thì không bị nhấn lại.
+  - Trước đây app so theo hình. Thẻ bị thanh tab che một phần hình nên không khớp, và bị lưu lại (Thường số 11, 12, 25 trong lượt của bạn). Còn ba Chúc Phúc Truyền thuyết dùng chung một hình thì có thể bị coi là một.
+  - Không đo được lần kéo: app so theo hình như cũ và ghi nhật ký "không đo được độ cuộn trang N".
+
+Tiến độ được lưu trong `chess-progress.json` với tiền tố `quick:`: tab xong, mục đã mở, ảnh gốc đã lưu. Tab đang dở được chụp lại từ đầu, ghi đè ảnh trang cũ cùng tên.
+
+Giới hạn của chụp nhanh:
+
+- Không có tên quân cờ, trang bị, phe hay nghề trong tên file. Muốn có tên, bỏ chọn **Chụp nhanh** để dùng cách cũ ở các phần dưới.
+- Chỉ nhấn giữ một hình chiêu, ở trang đầu bảng chi tiết của quân cờ.
+- Dừng giữa một tab Chúc phúc rồi tiếp tục: số thứ tự ảnh gốc có thể lệch nếu lần kéo khác lần trước.
 
 ## Những gì có thể tick
 

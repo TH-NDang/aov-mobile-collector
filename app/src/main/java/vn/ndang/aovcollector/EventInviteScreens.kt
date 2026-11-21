@@ -280,6 +280,7 @@ object EventInviteLedger {
         updateTotals(journal)
         journal.put("phase", "pending")
         journal.remove("imeVerifiedFor")
+        journal.remove("quotaBefore")
         journal.remove("active")
         journal.put("complete", journal.getInt("next") == journal.getJSONArray("accounts").length())
     }

@@ -30,9 +30,16 @@ class CollectorService : AccessibilityService() {
         @Volatile var libraryBusy = false
         const val TAP_MS = 100L
 
+        /** Looks, about 1.6 s apart, for a newly opened hero page to stop changing ([heroSettled]). */
+        const val HERO_SETTLE_LOOKS = 6
+
         /** Time for the hidden panel's window change to reach input dispatch before touching the game. */
         const val SHIELD_MS = 150L
         const val GESTURE_RETRIES = 2
+
+        /** How long a touch waits for a passing window of the phone's own to leave, looked at every step. */
+        const val WINDOW_WAIT_MS = 30_000L
+        const val WINDOW_WAIT_STEP_MS = 1_000L
         const val GAME = "com.garena.game.kgvn"
 
         /** Runs that take heroes one after another from the list: its first cards, or heroes by name. */
@@ -40,6 +47,7 @@ class CollectorService : AccessibilityService() {
 
         /** Android accepts one accessibility screenshot per second; a little margin avoids a refused one. */
         const val SHOT_INTERVAL_MS = 1050L
+        const val FAST_SHOT_INTERVAL_MS = 400L
 
         /** Screenshots saved in the background at once before the macro waits for the disk. */
         const val MAX_PENDING_SAVES = 2
@@ -47,6 +55,12 @@ class CollectorService : AccessibilityService() {
 
     private val handler = Handler(Looper.getMainLooper())
     private val io = Executors.newSingleThreadExecutor()
+
+    /** Reads Bách khoa screenshots apart from [io], so a look never waits behind PNG writes. */
+    private val chessReads = Executors.newSingleThreadExecutor()
+
+    /** Records Save Photo for the Pictures import, whose lock can be held while it copies files. */
+    private val chessMarks = Executors.newSingleThreadExecutor()
     private var gestureDebug: GestureDebugOverlay? = null
     private var debugGeneration = 0
     internal val gestureDebugView: View? get() = gestureDebug?.overlayView
@@ -167,8 +181,10 @@ class CollectorService : AccessibilityService() {
         val oldUid = runAccountUid
         val oldListRef = listRef
         val oldListTotal = listTotal
+        val oldSweep = sweepState
         val oldRanking = rankingDone
         val oldBoard = boardNext
+        val oldPlayers = boardPlayers
         val oldNames = boardNames.toMap()
         val oldSkill = skillForm
         val oldActive = activeMs
@@ -184,8 +200,10 @@ class CollectorService : AccessibilityService() {
             runAccountUid = oldUid
             listRef = oldListRef
             listTotal = oldListTotal
+            sweepState = oldSweep
             rankingDone = oldRanking
             boardNext = oldBoard
+            boardPlayers = oldPlayers
             boardNames.clear()
             boardNames.putAll(oldNames)
             skillForm = oldSkill
@@ -197,8 +215,10 @@ class CollectorService : AccessibilityService() {
         }
         listRef = null
         listTotal = null
+        sweepState = null
         rankingDone = null
         boardNext = null
+        boardPlayers = null
         boardNames.clear()
         skillForm = null
         activeMs = 0L
@@ -625,7 +645,8 @@ class CollectorService : AccessibilityService() {
             }
             "single" -> RunTimes.get(uiPrefs, heroKey(m))?.let { maxOf(0.0, it - elapsed() / 1000.0) }
             "board" -> {
-                val heroes = m.json.optInt("heroCount", 1).let { if (it >= BuiltInMacros.ALL) 130 else it }
+                // Every hero, about 130.
+                val heroes = 130
                 val doneHeroes = boardNext?.takeIf { it.first.startsWith("$runId/") }?.second ?: 0
                 RunTimes.remaining(heroes - doneHeroes, doneHeroes, spent, RunTimes.get(uiPrefs, boardKey(m)))
             }
@@ -639,10 +660,11 @@ class CollectorService : AccessibilityService() {
         return " · còn ~" + clock(((rest + entry) * 1000).toLong())
     }
 
-    private fun boardKey(m: Macro) = boardKey(BuiltInMacros.boardWants(m.json))
+    private fun boardKey(m: Macro) = boardKey(BuiltInMacros.boardWants(m.json), BuiltInMacros.boardPlayers(m.json))
 
-    /** Kept times of Chiến khu runs are per hero, for the same tabs and depths. */
-    private fun boardKey(wanted: List<BoardScreens.Want>) = "time:board:" + wanted.joinToString(",") { "${it.tab.slug}${it.top}" }
+    /** Kept times of Chiến khu runs are per hero, for the same tabs and depths, with or without opening the players. */
+    private fun boardKey(wanted: List<BoardScreens.Want>, players: Boolean) =
+        "time:board:" + wanted.joinToString(",") { "${it.tab.slug}${it.top}" } + if (players) ":nguoi-choi" else ""
 
     private fun heroKey(m: Macro) = RunTimes.hero(
         m.json.optString("collectionMode") in LISTED,
@@ -828,6 +850,19 @@ class CollectorService : AccessibilityService() {
         current = this
         // Killed during a run: its Do Not Disturb must not outlive it.
         quietRun.stop()
+        if (!screenOffWatched) {
+            try {
+                val filter = android.content.IntentFilter(Intent.ACTION_SCREEN_OFF)
+                if (android.os.Build.VERSION.SDK_INT >= 33) {
+                    registerReceiver(screenOff, filter, RECEIVER_NOT_EXPORTED)
+                } else {
+                    registerReceiver(screenOff, filter)
+                }
+                screenOffWatched = true
+            } catch (e: Exception) {
+                CrashLog.record(this, "Không theo dõi được lúc tắt màn hình", e)
+            }
+        }
         updateGestureDebug()
         CrashLog.install(this)
         upgradeBuiltIn()
@@ -888,6 +923,19 @@ class CollectorService : AccessibilityService() {
         afterRunChat = runner
         runner.start()
     }
+
+    /**
+     * The power button pressed during a run: paused at once, before a tap lands on the lock screen or a look fails part
+     * way through a hero. Tiếp tục then goes on from the run's saved place ([unfinished]).
+     */
+    private val screenOff = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context, intent: Intent) {
+            if (intent.action == Intent.ACTION_SCREEN_OFF && running) {
+                pause("Màn hình đã tắt nên tạm dừng. Mở lại game ở chỗ đó rồi bấm Tiếp tục để chạy tiếp")
+            }
+        }
+    }
+    private var screenOffWatched = false
 
     private val awayCheck = Runnable {
         val p = foreground()
@@ -969,6 +1017,12 @@ class CollectorService : AccessibilityService() {
             save()
         }
         quietRun.stop()
+        if (screenOffWatched) {
+            screenOffWatched = false
+            try {
+                unregisterReceiver(screenOff)
+            } catch (_: Exception) {}
+        }
         generation++
         captureShield.reset()
         handler.removeCallbacksAndMessages(null)
@@ -1378,7 +1432,7 @@ class CollectorService : AccessibilityService() {
                     teaching -> status("Đang chỉnh theo macro; dùng Chạy bước / Tiếp hoặc Dừng")
                     running -> pause("Đã tạm dừng")
                     busy || manualBusy -> status("Đang hoàn tất thao tác hiện tại…")
-                    ended() -> {
+                    ended() -> stoppedEarly()?.let(::askReopen) ?: run {
                         reset()
                         status("Lượt mới sẵn sàng. " + (selected()?.let { MacroStore.instruction(it) } ?: ""))
                     }
@@ -1455,6 +1509,17 @@ class CollectorService : AccessibilityService() {
         return prefs.getString("hash", "") == m.hash && (prefs.getBoolean("stopped", false) || prefs.getInt("step", 0) >= m.steps.length())
     }
 
+    /**
+     * A run of [m] begun and not ended, cut part way (Tạm dừng, the screen turned off, the phone restarted): Chạy goes
+     * on with it where it was. Also at its first step, which is all of a Đề cử Pro, Cờ, Chiến khu or Thống kê run: the
+     * readers keep their own place inside it.
+     */
+    private fun unfinished(m: Macro?): Boolean = m != null &&
+        prefs.getString("hash", "") == m.hash &&
+        !prefs.getString("run", "").isNullOrEmpty() &&
+        !prefs.getBoolean("stopped", false) &&
+        prefs.getInt("step", 0) < m.steps.length()
+
     private fun refreshPanel() {
         val m = selected()
         val step = if (m != null && prefs.getString("hash", "") == m.hash) prefs.getInt("step", 0) else 0
@@ -1483,7 +1548,7 @@ class CollectorService : AccessibilityService() {
             running -> "Tạm dừng"
             busy || manualBusy -> "Đang xử lý…"
             ended() -> "Tạo lượt mới"
-            step > 0 -> "Tiếp tục"
+            step > 0 || unfinished(m) -> "Tiếp tục"
             else -> "Chạy"
         }
         val glyph = when {
@@ -1612,7 +1677,8 @@ class CollectorService : AccessibilityService() {
                 "Chiến khu" to "Bảng xếp hạng người chơi của từng tướng",
                 "Cờ Liên Quân · Bách khoa" to "Chọn từng mục, tab, chi tiết; cuộn hết trang và lưu theo thư mục",
                 "Đề cử Pro · Combo tướng" to "Tất cả tướng · tối đa 5 combo · kết thúc giữ top 1",
-                "Sự kiện · Mã mời nhiều tài khoản" to "Tài khoản Garena riêng, không UID/UUID · Thập kỷ chung sức · đếm quà"
+                "Sự kiện · Mã mời nhiều tài khoản" to
+                    "Tài khoản Garena riêng, không UID/UUID · chọn sự kiện (Thập kỷ chung sức, Ủy Thác của Shuna…)"
             ) +
                 saved.map { it.name to "Macro đã nhập" }
         var visible = choices.indices.toList()
@@ -2043,9 +2109,6 @@ class CollectorService : AccessibilityService() {
                         uiPrefs.edit().putString("pickNames", chosen.joinToString("\n")).apply()
                         BuiltInMacros.named(
                             heroes,
-                            heroes.map { n ->
-                                HeroIndex.find(known, n).firstOrNull()?.index ?: -1
-                            },
                             fast.isChecked,
                             detailOnly.isChecked,
                             directSkills.isChecked,
@@ -2194,31 +2257,17 @@ class CollectorService : AccessibilityService() {
         }
     }
 
-    /** The players' ranking of each hero, "Chiến khu" ([BoardReader]): how many heroes, which tabs, how deep. */
+    /** The players' ranking of each hero, "Chiến khu" ([BoardReader]): which tabs, how many top players, opened or not. */
     private fun boardForm() {
         val c = themed()
         val body = Ui.stack(c).apply { setPadding(dp(20), dp(6), dp(20), dp(6)) }
         body.addView(
             Ui.text(
                 c,
-                "Từ sảnh, app vào Đấu hạng → Chiến khu (qua các màn mở mùa mới và chọn khu vực nếu có), rồi lần lượt chọn từng tướng trong Chọn tướng và chụp bảng xếp hạng người chơi của tướng đó.",
+                "Từ sảnh, app vào Đấu hạng → Chiến khu (qua các màn mở mùa mới và chọn khu vực nếu có), rồi lần lượt chọn từng tướng trong Chọn tướng (bỏ tích Đã nhận, chạy hết tướng) và chụp bảng xếp hạng người chơi của tướng đó.",
                 14f
             )
         )
-        body.addView(Ui.section(c, "Số tướng"))
-        val count = Ui.field(c, "1–${BuiltInMacros.ALL}", uiPrefs.getInt("boardCount", BuiltInMacros.ALL).toString(), true)
-        body.addView(count)
-        val quick = LinearLayout(c)
-        listOf(2 to "2 tướng", 11 to "11 tướng", BuiltInMacros.ALL to "Tất cả").forEach { (n, text) ->
-            quick.addView(
-                Ui.button(c, text) { count.setText(n.toString()) },
-                LinearLayout.LayoutParams(0, dp(40), 1f).apply {
-                    marginEnd =
-                        dp(4)
-                }
-            )
-        }
-        body.addView(quick)
         val estimate = Ui.text(c, "", 13f, Ui.ink, true).also { body.addView(it) }
 
         fun check(text: String, on: Boolean) = CheckBox(c).apply {
@@ -2242,16 +2291,40 @@ class CollectorService : AccessibilityService() {
         val tabs = order.associateWith { t ->
             check(
                 when (t) {
-                    BoardScreens.Tab.COUNTRY -> "Việt Nam (quốc gia) · top 3"
-                    BoardScreens.Tab.TOP -> "Số 1 máy chủ (người mạnh nhất mỗi miền)"
-                    BoardScreens.Tab.SERVER -> "Toàn máy chủ · ít nhất top 10 (kéo 4 màn)"
-                    BoardScreens.Tab.PROVINCE -> "Tỉnh (ví dụ Đắk Lắk) · top 3"
-                    BoardScreens.Tab.AREA -> "Miền (ví dụ Miền Trung) · top 3"
+                    BoardScreens.Tab.COUNTRY -> "Việt Nam (quốc gia)"
+                    BoardScreens.Tab.TOP -> "Số 1 máy chủ (người mạnh nhất mỗi miền, 1 ảnh)"
+                    BoardScreens.Tab.SERVER -> "Toàn máy chủ"
+                    BoardScreens.Tab.PROVINCE -> "Tỉnh (ví dụ Đắk Lắk)"
+                    BoardScreens.Tab.AREA -> "Miền (ví dụ Miền Trung)"
                 },
                 t.slug in saved
             )
         }
-        val deep = check("Kéo hết danh sách các bảng đã chọn (lâu hơn nhiều)", uiPrefs.getBoolean("boardDeep", false))
+        body.addView(Ui.section(c, "Số người top mỗi bảng"))
+        body.addView(
+            Ui.text(
+                c,
+                "Chụp danh sách tới hạng này ở Tỉnh, Miền, Việt Nam, Toàn máy chủ (và mở từng người nếu chọn bên dưới). ${BoardScreens.ALL} là hết danh sách.",
+                12f,
+                Ui.muted
+            )
+        )
+        val top = Ui.field(c, "1–${BoardScreens.ALL}", uiPrefs.getInt("boardTop", 3).toString(), true)
+        body.addView(top)
+        val quickTop = LinearLayout(c)
+        listOf(3 to "Top 3", 10 to "Top 10", BoardScreens.ALL to "Hết danh sách").forEach { (n, text) ->
+            quickTop.addView(
+                Ui.button(c, text) { top.setText(n.toString()) },
+                LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(4) }
+            )
+        }
+        body.addView(quickTop)
+
+        fun topN() = top.text.toString().toIntOrNull()?.takeIf { it in 1..BoardScreens.ALL }
+        val people = check(
+            "Bấm từng người trong top: chụp Thông tin kiện tướng, sao chép tên và UID (chờ dữ liệu tải xong, rồi quay lại bảng)",
+            uiPrefs.getBoolean("boardPlayers", true)
+        )
         body.addView(Ui.section(c, "Vào game"))
         val openGame =
             check(
@@ -2274,31 +2347,28 @@ class CollectorService : AccessibilityService() {
         checkAccount.setOnCheckedChangeListener { _, on -> if (on) openGame.isChecked = true }
 
         fun chosen() = order.filter { tabs.getValue(it).isChecked }.map {
-            BoardScreens.Want(
-                it,
-                if (deep.isChecked &&
-                    it != BoardScreens.Tab.TOP
-                ) {
-                    BoardScreens.ALL
-                } else {
-                    BoardScreens.defaultTop(it)
-                }
-            )
+            BoardScreens.Want(it, if (it == BoardScreens.Tab.TOP) 1 else topN() ?: BoardScreens.defaultTop(it))
         }
 
         fun updateEstimate() {
-            val asked = count.text.toString().toIntOrNull()?.coerceIn(0, BuiltInMacros.ALL) ?: 0
-            val heroes = if (asked >= BuiltInMacros.ALL) 130 else asked
+            // Every hero, about 130.
+            val heroes = 130
             val n = chosen().size
-            if (n == 0 || asked == 0) {
-                estimate.text = "Chọn ít nhất một bảng và một tướng."
+            if (n == 0 || topN() == null) {
+                estimate.text = if (n == 0) "Chọn ít nhất một bảng." else "Nhập số người top từ 1 đến ${BoardScreens.ALL}."
                 estimate.setTextColor(Ui.danger)
                 return
             }
             // A hero: about 8 s to choose it, then 3 s a tab and 3.5 s a screen; a whole list about 12 screens.
+            // A player opened: about 14 s for the card, the page, the picture and the way back; a whole list about 30.
             val pages = chosen().sumOf { if (it.pages >= BoardScreens.ALL) 12 else it.pages }
-            val kept = RunTimes.get(uiPrefs, boardKey(chosen()))
-            val seconds = heroes * (kept ?: (8.0 + n * 3.0 + pages * 3.5)) + (
+            val opened = if (people.isChecked) {
+                chosen().filter { it.tab != BoardScreens.Tab.TOP }.sumOf { if (it.top >= BoardScreens.ALL) 30 else it.top }
+            } else {
+                0
+            }
+            val kept = RunTimes.get(uiPrefs, boardKey(chosen(), people.isChecked))
+            val seconds = heroes * (kept ?: (8.0 + n * 3.0 + pages * 3.5 + opened * 14.0)) + (
                 if (openGame.isChecked) {
                     RunTimes.get(
                         uiPrefs,
@@ -2308,9 +2378,9 @@ class CollectorService : AccessibilityService() {
                     20.0
                 }
                 )
-            val photos = heroes * pages
+            val photos = heroes * (pages + opened * 2)
             estimate.text =
-                "Ước tính: " + (if (asked >= BuiltInMacros.ALL) "khoảng " else "") +
+                "Ước tính: khoảng " +
                 "$heroes tướng · khoảng $photos ảnh · khoảng ${Format.duration(seconds.toLong())}" +
                 (if (kept != null) " (theo lượt chạy trọn trước)" else "") +
                 "\nCần khoảng ${Format.size(photos * averageShot())} · máy còn trống ${Format.size(filesDir.usableSpace)}"
@@ -2322,8 +2392,8 @@ class CollectorService : AccessibilityService() {
             follow()
             updateEstimate()
         }
-        (tabs.values + deep).forEach { it.setOnCheckedChangeListener { _, _ -> updateEstimate() } }
-        count.addTextChangedListener(object : android.text.TextWatcher {
+        (tabs.values + people).forEach { it.setOnCheckedChangeListener { _, _ -> updateEstimate() } }
+        top.addTextChangedListener(object : android.text.TextWatcher {
             override fun afterTextChanged(s: android.text.Editable?) {
                 updateEstimate()
             }
@@ -2344,11 +2414,9 @@ class CollectorService : AccessibilityService() {
             .setPositiveButton("Chọn tác vụ", null).setNegativeButton("Hủy", null).create()
         display(dialog)
         dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-            val heroes = count.text.toString().toIntOrNull() ?: 0
-            if (heroes !in
-                1..BuiltInMacros.ALL
-            ) {
-                count.error = "Nhập số từ 1 đến ${BuiltInMacros.ALL}; ${BuiltInMacros.ALL} là lấy hết"
+            val topPlayers = topN()
+            if (topPlayers == null) {
+                top.error = "Nhập số từ 1 đến ${BoardScreens.ALL}; ${BoardScreens.ALL} là hết danh sách"
                 return@setOnClickListener
             }
             val wanted = chosen()
@@ -2356,12 +2424,12 @@ class CollectorService : AccessibilityService() {
                 status("Chọn ít nhất một bảng")
                 return@setOnClickListener
             }
-            uiPrefs.edit().putInt("boardCount", heroes).putString(
+            uiPrefs.edit().putInt("boardTop", topPlayers).putString(
                 "boardWants",
                 wanted.joinToString(",") {
                     "${it.tab.slug}:${it.top}"
                 }
-            ).putBoolean("boardDeep", deep.isChecked)
+            ).putBoolean("boardPlayers", people.isChecked)
                 .putBoolean(
                     "boardOpenGame",
                     openGame.isChecked
@@ -2371,8 +2439,9 @@ class CollectorService : AccessibilityService() {
                         openGame.isChecked,
                         checkAccount.isChecked && checkAccount.isEnabled,
                         traceEntry.isChecked,
-                        heroes,
-                        wanted
+                        BuiltInMacros.ALL,
+                        wanted,
+                        people.isChecked
                     )
                 )
             ) {
@@ -2428,8 +2497,12 @@ class CollectorService : AccessibilityService() {
             isChecked = on
         }.also { body.addView(it) }
         body.addView(Ui.section(c, "Thu thập nội dung"))
+        val quickCapture = check(
+            "Chụp nhanh: chỉ đọc điểm ảnh, không OCR; đặt tên theo số thứ tự (quan-co-001, vat-pham-001…)",
+            uiPrefs.getBoolean("chessQuick", true)
+        )
         val fast = check(
-            "Chạy nhanh: tốc độ như Lấy thông tin tướng · Chạy nhanh",
+            "Chạy nhanh khi tắt Chụp nhanh: tốc độ như Lấy thông tin tướng · Chạy nhanh",
             uiPrefs.getBoolean("chessFast", true)
         )
         val heroDetails = check(
@@ -2528,12 +2601,13 @@ class CollectorService : AccessibilityService() {
             }
             val options = ChessWiki.Options(
                 selected, openGame.isChecked, checkAccount.isChecked && checkAccount.isEnabled,
-                trace.isChecked, heroDetails.isChecked, synergyDetails.isChecked, equipmentDetails.isChecked, native, fast.isChecked
+                trace.isChecked, heroDetails.isChecked, synergyDetails.isChecked, equipmentDetails.isChecked, native, fast.isChecked,
+                quick = quickCapture.isChecked
             )
             uiPrefs.edit().putString("chessTopics", selected.joinToString(","))
                 .putString("chessNativeGroups", native.joinToString(","))
                 .putBoolean("chessHeroDetails", heroDetails.isChecked)
-                .putBoolean("chessFast", fast.isChecked)
+                .putBoolean("chessFast", fast.isChecked).putBoolean("chessQuick", quickCapture.isChecked)
                 .putBoolean("chessSynergyDetails", synergyDetails.isChecked).putBoolean("chessEquipmentDetails", equipmentDetails.isChecked)
                 .putBoolean("chessOpenGame", openGame.isChecked).putBoolean("chessCheckAccount", checkAccount.isChecked)
                 .putBoolean("chessTraceEntry", trace.isChecked).apply()
@@ -2545,15 +2619,44 @@ class CollectorService : AccessibilityService() {
      * Adapter to Android's screenshot/gesture APIs. Each image is written before the reader advances.
      * The progress ledger lets a paused/restarted step revisit the encyclopedia without resaving finished topics.
      */
+
+    /** Đề cử Pro for every hero ([ProSimpleReader]): how many combos to apply and photograph each. */
     private fun proBuildsForm() {
-        val dialog = AlertDialog.Builder(themed()).setTitle("Đề cử Pro · Combo tướng")
-            .setMessage(
-                "Mở sảnh chính hoặc Chuẩn bị trong game trước. Thu thập lần lượt tất cả tướng, tối đa 5 combo Pro thực có; mỗi combo được áp dụng rồi mới chụp. Cuối mỗi tướng giữ đúng top 1 ban đầu, không khôi phục bộ cũ. Không tự đăng nhập, không dùng Lưu ảnh của game. Nếu không xác minh được màn hình hoặc thao tác đã áp dụng, lượt dừng để kiểm tra."
+        val c = themed()
+        val body = Ui.stack(c).apply { setPadding(dp(20), dp(6), dp(20), dp(6)) }
+        body.addView(
+            Ui.text(
+                c,
+                "Mở sảnh chính hoặc Chuẩn bị trong game trước. App chạy hết tướng trong Chọn tướng (bỏ tích Đã nhận). Với mỗi tướng: Phương án khác → Đề cử Pro, bấm Dùng combo từng đề cử rồi chụp màn Chuẩn bị khi combo đã hiện xong. Cuối mỗi tướng dùng lại đề cử 1. Không tự đăng nhập, không dùng Lưu ảnh của game.",
+                14f
             )
-            .setPositiveButton("Chọn tác vụ") { _, _ -> selectMacro(BuiltInMacros.proBuilds()) }
-            .setNegativeButton("Hủy", null).create()
-        dialog.window?.setType(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY)
-        dialog.show()
+        )
+        body.addView(Ui.section(c, "Số combo mỗi tướng"))
+        body.addView(
+            Ui.text(c, "Tướng có ít đề cử hơn thì lấy hết những gì có. ${BuiltInMacros.ALL} là mọi đề cử trong danh sách.", 12f, Ui.muted)
+        )
+        val combos = Ui.field(c, "1–${BuiltInMacros.ALL}", uiPrefs.getInt("proCombos", ProSimpleReader.MAX).toString(), true)
+        body.addView(combos)
+        val quick = LinearLayout(c)
+        listOf(1 to "1 combo", 3 to "3 combo", 5 to "5 combo", BuiltInMacros.ALL to "Tất cả").forEach { (n, text) ->
+            quick.addView(
+                Ui.button(c, text) { combos.setText(n.toString()) },
+                LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(4) }
+            )
+        }
+        body.addView(quick)
+        val dialog = AlertDialog.Builder(c).setTitle("Đề cử Pro · Combo tướng").setView(ScrollView(c).apply { addView(body) })
+            .setPositiveButton("Chọn tác vụ", null).setNegativeButton("Hủy", null).create()
+        display(dialog)
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+            val n = combos.text.toString().toIntOrNull()
+            if (n == null || n !in 1..BuiltInMacros.ALL) {
+                combos.error = "Nhập số từ 1 đến ${BuiltInMacros.ALL}; ${BuiltInMacros.ALL} là mọi đề cử"
+                return@setOnClickListener
+            }
+            uiPrefs.edit().putInt("proCombos", n).apply()
+            if (selectMacro(BuiltInMacros.proBuilds(combos = n))) dialog.dismiss()
+        }
     }
 
     /**
@@ -2594,7 +2697,7 @@ class CollectorService : AccessibilityService() {
                 } else {
                     val temp = File(directory, "event-invite-progress.json.part")
                     temp.writeText(journal.toString(2))
-                    val saved = temp.renameTo(journalFile)
+                    val saved = temp.moveOnto(journalFile)
                     if (!saved) temp.delete()
                     saved
                 }
@@ -2738,7 +2841,11 @@ class CollectorService : AccessibilityService() {
                 touchGame(tapAt(x, y), true, then)
             }
 
-            override fun typeInviteCode(code: String, then: (Boolean, String?) -> Unit) {
+            /**
+             * The code into a game field through the keyboard: [open] taps the field, the input adapter clears and
+             * fills the keyboard's editor and presses its OK, then [matches] must find the code back in the game.
+             */
+            fun typeInto(code: String, open: ((Boolean) -> Unit) -> Unit, matches: (Bitmap) -> Boolean, then: (Boolean, String?) -> Unit) {
                 if (!alive || foreground() != GAME || !EventInviteAccounts.validCode(code)) {
                     return then(false, "Chưa xác minh được màn hình game trước khi mở bàn phím nhập mã")
                 }
@@ -2752,9 +2859,7 @@ class CollectorService : AccessibilityService() {
                     gamePackage = GAME,
                     code = code,
                     active = { alive },
-                    open = { cb ->
-                        touchGame(tapAt(.506, .464), true, cb)
-                    },
+                    open = open,
                     holdInputShield = {
                         val lease = captureShield.acquire()
                         val release: () -> Unit = { captureShield.release(lease) }
@@ -2810,23 +2915,15 @@ class CollectorService : AccessibilityService() {
                                 }
                                 try {
                                     io.execute {
-                                        val matches = try {
-                                            val pixels = GameScreens.read(bitmap.width, bitmap.height) { y, row ->
-                                                bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
-                                            }
-                                            val recognized = EventInviteScreens.classify(
-                                                GameText.words(bitmap),
-                                                pixels.kind == GameScreens.Kind.LOBBY
-                                            )
-                                            recognized.kind == EventInviteScreens.Kind.INVITE &&
-                                                GameText.eventInviteEnteredCode(bitmap, code)
+                                        val matched = try {
+                                            matches(bitmap)
                                         } catch (e: Exception) {
                                             CrashLog.record(this@CollectorService, "Không kiểm chứng được mã trong game", e)
                                             false
                                         } finally {
                                             bitmap.recycle()
                                         }
-                                        handler.post { cb(alive && matches && foreground() == GAME) }
+                                        handler.post { cb(alive && matched && foreground() == GAME) }
                                     }
                                 } catch (_: Exception) {
                                     bitmap.recycle()
@@ -2843,6 +2940,38 @@ class CollectorService : AccessibilityService() {
                     }
                 )
                 input.start()
+            }
+
+            /** Thập kỷ chung sức: the field of its "Hỗ trợ bạn bè" popup, and the code read back in it. */
+            override fun typeInviteCode(code: String, then: (Boolean, String?) -> Unit) = typeInto(
+                code,
+                { cb -> touchGame(tapAt(.506, .464), true, cb) },
+                { bitmap ->
+                    val pixels = GameScreens.read(bitmap.width, bitmap.height) { y, row ->
+                        bitmap.getPixels(row, 0, bitmap.width, 0, y, bitmap.width, 1)
+                    }
+                    EventInviteScreens.classify(GameText.words(bitmap), pixels.kind == GameScreens.Kind.LOBBY).kind ==
+                        EventInviteScreens.Kind.INVITE &&
+                        GameText.eventInviteEnteredCode(bitmap, code)
+                },
+                then
+            )
+
+            /** An event page's own box: tapped where its hint was read, the code read back in its strip. */
+            override fun typeCode(
+                code: String,
+                target: EventCodeRecipe.Target,
+                page: (List<GameScreens.Word>) -> Boolean,
+                then: (Boolean, String?) -> Unit
+            ) = typeInto(
+                code,
+                { cb -> touchGame(tapAt(target.tap.first, target.tap.second), true, cb) },
+                { bitmap -> page(GameText.words(bitmap)) && GameText.eventCodeInBox(bitmap, code, target.strip) },
+                then
+            )
+
+            override fun drag(x: Double, from: Double, to: Double, then: (Boolean) -> Unit) {
+                touchGame(this@CollectorService.drag(x, from, to, 700, 400), false, then)
             }
 
             override fun capture(name: String, then: (Boolean) -> Unit) {
@@ -2863,7 +2992,7 @@ class CollectorService : AccessibilityService() {
             }
         }
 
-        EventInviteRunner(keys, invite, fingerprint, adapter, finish).start()
+        EventInviteRunner(keys, invite, fingerprint, adapter, BuiltInMacros.eventRecipe(step), finish).start()
     }
 
     /** Pro readers never bypass the existing foreground, path, cancellation, or screenshot shields. */
@@ -2990,7 +3119,7 @@ class CollectorService : AccessibilityService() {
                     progressState.put("finished", org.json.JSONArray(doneIds.sorted()))
                         .put("detailPages", detailPages).toString()
                 )
-                require(part.renameTo(ledger)) { "Không thay được file tiến độ" }
+                require(part.moveOnto(ledger)) { "Không thay được file tiến độ" }
                 true
             } catch (e: Exception) {
                 CrashLog.record(this@CollectorService, "Không ghi được tiến độ Bách khoa", e)
@@ -2999,6 +3128,9 @@ class CollectorService : AccessibilityService() {
         }
         val options = BuiltInMacros.chessOptions(readMacro().json)
         val timing = ChessWiki.Timing(options.fast)
+
+        // A background save that failed stops the fast capture at its next image.
+        var quickSaveFailed = false
         val screen = object : ChessWikiReader.Screen {
             override val alive get() = alive()
             override val completedHeroes get() = doneIds.count { it.startsWith("item:tat-ca-quan-co:hero-") }
@@ -3012,9 +3144,11 @@ class CollectorService : AccessibilityService() {
                 grab(anyApp = true) { b ->
                     if (b == null) return@grab then(null)
                     val nodes = if (words) screenWords() else emptyList()
+                    val rows = { y: Int, row: IntArray -> b.getPixels(row, 0, b.width, 0, y, b.width, 1) }
                     try {
-                        io.execute {
+                        chessReads.execute {
                             var itemTitle: String? = null
+                            var facts: ChessFacts? = null
                             val data: Triple<List<GameScreens.Word>, IntArray, Boolean>? = try {
                                 val modal = ChessWiki.modal(b)
                                 val readWords = if (words) nodes + GameText.words(b) else nodes
@@ -3022,6 +3156,7 @@ class CollectorService : AccessibilityService() {
                                     itemTitle = ChessPopupTitle.select(readWords) { ChessPopupTitle.whiteHeading(b, it) }
                                         ?: GameText.chessItemTitle(b)
                                 }
+                                if (options.quick) facts = ChessFacts.read(b.width, b.height, modal, rows)
                                 Triple(readWords, ChessWiki.signature(b, modal), modal)
                             } catch (e: Throwable) {
                                 CrashLog.record(this@CollectorService, "Không đọc được màn hình Bách khoa", e)
@@ -3035,14 +3170,24 @@ class CollectorService : AccessibilityService() {
                                     b.recycle()
                                     then(null)
                                 } else {
+                                    val quick = facts
                                     then(object : ChessWikiReader.Look {
                                         override val words = data.first
                                         override val itemTitle = itemTitle
                                         override val signature = data.second
                                         override val modal = data.third
                                         override val height = b.height
+                                        override val blankBelow = quick?.blankBelow ?: false
+                                        override val drawerArt = quick?.drawerArt ?: true
+                                        override val skillArt = quick?.skillArt ?: true
+                                        override val saveDialog = quick?.saveDialog
+                                        override val closeButton by lazy {
+                                            GameScreens.closeButton(b.width, b.height) { yy, row ->
+                                                b.getPixels(row, 0, b.width, 0, yy, b.width, 1)
+                                            }
+                                        }
                                         override val heroProfile by lazy {
-                                            if (!modal && ChessWiki.heroListVisible(this.words)) {
+                                            if (!modal && (quick?.heroGrid ?: ChessWiki.heroListVisible(this.words))) {
                                                 HeroGrid.profile(b, ChessWiki.HERO_LAYOUT)
                                             } else {
                                                 floatArrayOf()
@@ -3066,6 +3211,40 @@ class CollectorService : AccessibilityService() {
 
                                         override fun keep(name: String, then: (Boolean) -> Unit) {
                                             readerStore(b, adapterRun, dryRun, alive, stamp + "-" + name, then)
+                                        }
+
+                                        override fun loadingTiles() = ChessPixels.loadingTiles(b.width, b.height, rows)
+
+                                        override val heroCardsBelow get() = ChessPixels.heroCardsBelow(b.width, b.height, rows)
+
+                                        override fun blessingIcons() = ChessPixels.blessingIcons(b.width, b.height, rows).map { (x, y) ->
+                                            ChessWiki.Tile(x, y, ChessPixels.blessingArt(b.width, b.height, x, y, rows))
+                                        }
+
+                                        override fun blessingProfile() = ChessPixels.blessingProfile(b.width, b.height, rows)
+
+                                        override fun keepQuick(name: String, then: (Boolean) -> Unit) {
+                                            if (quickSaveFailed || dryRun || !alive()) {
+                                                b.recycle()
+                                                return then(dryRun && alive() && !quickSaveFailed)
+                                            }
+                                            pendingSaves++
+                                            store(b, adapterRun, stamp + "-" + name, replace = true) { ok ->
+                                                pendingSaves--
+                                                if (!ok) {
+                                                    quickSaveFailed = true
+                                                    note("Không lưu được ảnh $name")
+                                                }
+                                                saveWaiters.removeFirstOrNull()?.invoke()
+                                                refreshPanel()
+                                            }
+                                            if (pendingSaves <=
+                                                MAX_PENDING_SAVES
+                                            ) {
+                                                then(true)
+                                            } else {
+                                                saveWaiters.addLast { then(!quickSaveFailed) }
+                                            }
                                         }
 
                                         override fun discard() {
@@ -3877,6 +4056,34 @@ class CollectorService : AccessibilityService() {
                     refreshPanel()
                 }
             }
+
+            override fun longPress(x: Double, y: Double, then: (Boolean) -> Unit) {
+                // No Save Photo while teaching: nothing may reach Pictures.
+                if (dryRun) return then(true)
+                val b = screen()
+                val point = Path().apply { moveTo((x * (b.width() - 1)).toFloat(), (y * (b.height() - 1)).toFloat()) }
+                touchGame(GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(point, 0, 850L)).build(), false, then)
+            }
+
+            override fun markNative(group: String, item: String) {
+                if (dryRun) return
+                val run = runId
+                val at = System.currentTimeMillis()
+                try {
+                    chessMarks.execute {
+                        try {
+                            GamePhotoSession.mark(this@CollectorService, run, group, item, time = at)
+                            GamePhotoSync.request(this@CollectorService)
+                        } catch (e: Exception) {
+                            CrashLog.record(this@CollectorService, "Không ghi được ảnh gốc đã lưu", e)
+                        }
+                    }
+                } catch (e: Exception) {
+                    CrashLog.record(this@CollectorService, "Không ghi được ảnh gốc đã lưu", e)
+                }
+            }
+
+            override fun flush(then: () -> Unit) = afterSaves(then)
         }
         if (dryRun || options.nativeGroups.isEmpty()) {
             ChessWikiReader(screen, options, finish).start()
@@ -3951,6 +4158,17 @@ class CollectorService : AccessibilityService() {
         }
         try {
             val m = Macro(raw)
+            // The task of a run cut part way, chosen again from the list: that run goes on, it is not ended for a new
+            // one. A Đề cử Pro run chosen again after the screen went off started over at its first hero.
+            if (unfinished(m)) {
+                MacroStore.current(this).writeText(raw)
+                selectionCache = null
+                status(
+                    "Lượt ${MacroStore.title(m)} đang dở: bấm Tiếp tục để chạy tiếp từ chỗ đã dừng. " +
+                        "Muốn làm lại từ đầu: Tùy chọn → Tạo lượt mới."
+                )
+                return true
+            }
             val previous = macro
             if (runId.isNotBlank() && previous != null && index < previous.steps.length()) {
                 stopped = true
@@ -4299,15 +4517,18 @@ class CollectorService : AccessibilityService() {
             ) {
                 return
             }
-            val step = if (prefs.getString("hash", "") == m.hash) prefs.getInt("step", 0) else 0
-            if (step > 0 && step < m.steps.length() && !prefs.getBoolean("stopped", false)) return
+            // A run begun keeps its steps, also one still at its first and only step (Đề cử Pro, Cờ, Chiến khu…):
+            // new steps have a new hash, and the run would start over.
+            if (unfinished(m)) return
             if (mode == "event-invite") {
                 val stepData = m.steps.getJSONObject(0)
                 val jsonKeys = stepData.getJSONArray("accountKeys")
                 val keys = (0 until jsonKeys.length()).map { jsonKeys.getString(it) }
-                MacroStore.current(this).writeText(BuiltInMacros.eventInvite(keys, stepData.getString("codeFingerprint")))
+                MacroStore.current(this).writeText(
+                    BuiltInMacros.eventInvite(keys, stepData.getString("codeFingerprint"), BuiltInMacros.eventRecipe(stepData))
+                )
             } else if (mode == "pro-builds") {
-                MacroStore.current(this).writeText(BuiltInMacros.proBuilds(m.json.optInt("heroCount", BuiltInMacros.ALL)))
+                MacroStore.current(this).writeText(BuiltInMacros.proBuilds(combos = BuiltInMacros.proCombos(m.json)))
             } else if (mode == "chess") {
                 MacroStore.current(this).writeText(BuiltInMacros.chess(BuiltInMacros.chessOptions(m.json)))
             } else if (mode ==
@@ -4319,7 +4540,8 @@ class CollectorService : AccessibilityService() {
                         m.json.optBoolean("checkAccount"),
                         m.json.optBoolean("traceEntry", true),
                         m.json.optInt("heroCount", BuiltInMacros.ALL),
-                        BuiltInMacros.boardWants(m.json)
+                        BuiltInMacros.boardWants(m.json),
+                        BuiltInMacros.boardPlayers(m.json)
                     )
                 )
             } else if (mode ==
@@ -4412,6 +4634,91 @@ class CollectorService : AccessibilityService() {
             prefs.getInt("step", 0) < m.steps.length()
     }
 
+    /** The folder of the run in prefs when Dừng ended it before its end, so that it can go on. */
+    private fun stoppedEarly(): File? {
+        val m = selected() ?: return null
+        val run = prefs.getString("run", "").orEmpty()
+        if (run.isEmpty() || prefs.getString("hash", "") != m.hash || !prefs.getBoolean("stopped", false)) return null
+        if (prefs.getInt("step", 0) >= m.steps.length()) return null
+        return File(filesDir, "captures/$run").takeIf { reopenable(it) }
+    }
+
+    private fun askReopen(dir: File) {
+        val title = selected()?.let { MacroStore.title(it) } ?: dir.name
+        display(
+            AlertDialog.Builder(themed()).setTitle("Lượt đã bấm Dừng khi chưa xong")
+                .setMessage(
+                    "Lượt $title kết thúc bằng Dừng nhưng chưa làm hết. Chạy tiếp lượt này từ chỗ đã dừng (giữ ảnh và tiến " +
+                        "độ đã có), hay tạo lượt mới làm lại từ đầu?"
+                )
+                .setPositiveButton("Chạy tiếp lượt này") { _, _ ->
+                    val why = reopen(dir)
+                    if (why != null) status(why) else handler.post { start() }
+                }
+                .setNeutralButton("Tạo lượt mới") { _, _ ->
+                    reset()
+                    status("Lượt mới sẵn sàng. " + (selected()?.let { MacroStore.instruction(it) } ?: ""))
+                }
+                .setNegativeButton("Hủy", null).create()
+        )
+    }
+
+    /** A run folder ended before its end (Dừng, or left for another task) that [reopen] can take up again. */
+    fun reopenable(dir: File): Boolean = try {
+        RunReopen.allowed(
+            dir.name,
+            JSONObject(File(dir, "run.json").readText()),
+            File(dir, "macro.json").readText(),
+            prefs.getString("run", ""),
+            prefs.getBoolean("stopped", false)
+        )
+    } catch (_: Exception) {
+        false
+    }
+
+    /**
+     * Opens again a run ended before its end, from its folder: the macro it ran, its next step and its own progress
+     * files (pro-progress.json, step-progress.json…) are all there, and Tiếp tục goes on where it was. Dừng asks
+     * nothing, and one slip ended a Đề cử Pro of 57 heroes: Chạy then only offered a new run, from the first hero.
+     * The run open now, if another, is ended as choosing another task ends it; its photos stay. Null when open again,
+     * otherwise why not.
+     */
+    fun reopen(dir: File): String? {
+        if (teaching || running || busy || manualBusy || libraryBusy) return "Chờ thao tác hiện tại hoàn tất"
+        if (!reopenable(dir)) return "Lượt này đã xong hoặc không còn đủ tệp để chạy tiếp"
+        val record = JSONObject(File(dir, "run.json").readText())
+        val raw = File(dir, "macro.json").readText()
+        val m = Macro(raw)
+        val same = dir.name == prefs.getString("run", "")
+        val current = macro
+        if (!same && runId.isNotBlank() && current != null && index < current.steps.length() && !stopped) {
+            stopped = true
+            save()
+        }
+        val accountId = if (same) prefs.getString("accountId", null) else null
+        val accountUid = if (same) prefs.getString("accountUid", null) else null
+        generation++
+        captureProgress.resetSession()
+        listTotal = null
+        listRef = null
+        MacroStore.current(this).writeText(raw)
+        selectionCache = null
+        macro = m
+        index = record.getInt("nextStep")
+        runId = dir.name
+        runAccountId = accountId
+        runAccountUid = accountUid
+        stopped = false
+        activeMs = record.optLong("activeMs", 0L)
+        prefs.edit().clear().putString("hash", m.hash).putInt("step", index).putString("run", runId)
+            .putString("accountId", accountId).putString("accountUid", accountUid).putBoolean("stopped", false)
+            .putBoolean("running", false).putLong("activeMs", activeMs).commit()
+        note("Mở lại lượt đã kết thúc trước khi xong; chạy tiếp từ chỗ đã dừng")
+        save()
+        refreshPanel()
+        return null
+    }
+
     private fun stop() {
         if (teaching) return endTeaching("Đã dừng chỉnh từng bước; các điểm đã lưu được giữ lại")
         calibrationEditor?.close()
@@ -4431,7 +4738,7 @@ class CollectorService : AccessibilityService() {
         prefs.edit().putBoolean("clean", false).apply()
         save()
         note("Kết thúc lượt")
-        status("Đã kết thúc lượt · ảnh đã được giữ lại")
+        status("Đã kết thúc lượt · ảnh đã được giữ lại. Lỡ tay: bấm Tạo lượt mới → Chạy tiếp lượt này")
     }
 
     private fun save() {
@@ -4686,7 +4993,8 @@ class CollectorService : AccessibilityService() {
                     }
                 }
                 "pro-builds" -> {
-                    proBuilds(s, { !finished && token == generation }) { reason ->
+                    // Every hero: the hero count is no longer a choice, also for macros saved with one.
+                    proBuilds(JSONObject(s.toString()).put("heroes", BuiltInMacros.ALL), { !finished && token == generation }) { reason ->
                         if (finished || token != generation) return@proBuilds
                         done(reason == null, reason)
                     }
@@ -4748,7 +5056,7 @@ class CollectorService : AccessibilityService() {
                     pick(card, "%04d".format(index + 1), { !finished && token == generation }) { outcome ->
                         if (finished || token != generation) return@pick
                         when (outcome) {
-                            is ListNavigator.Outcome.Tapped -> done(true)
+                            is ListNavigator.Outcome.Tapped -> heroSettled({ !finished && token == generation }) { done(true) }
                             is ListNavigator.Outcome.End -> listEnded(card)
                             is ListNavigator.Outcome.Missing -> done(false, "Không chạm được ô tướng ${card + 1}")
                             is ListNavigator.Outcome.Failed -> done(false, outcome.reason)
@@ -4759,10 +5067,16 @@ class CollectorService : AccessibilityService() {
                 "find" -> find(s, { !finished && token == generation }) { outcome ->
                     if (finished || token != generation) return@find
                     when (outcome) {
-                        is ListNavigator.Outcome.Tapped -> done(true)
+                        is ListNavigator.Outcome.Tapped -> heroSettled({ !finished && token == generation }) { done(true) }
                         is ListNavigator.Outcome.Failed -> done(false, outcome.reason)
                         else -> {
-                            note("Không tìm thấy tướng ${s.getString("name")} trong danh sách; bỏ qua tướng này")
+                            // A pass down the list says itself which hero it did not find.
+                            if (!s.optBoolean(
+                                    "sweep"
+                                )
+                            ) {
+                                note("Không tìm thấy tướng ${s.getString("name")} trong danh sách; bỏ qua tướng này")
+                            }
                             index = s.getInt("skipTo") - 1
                             done(true)
                         }
@@ -4789,7 +5103,15 @@ class CollectorService : AccessibilityService() {
                         !swipe
                     ) {
                         val defaults = CalibrationCatalog.steps(m.json).firstOrNull { it.action.id == actionId }?.action
-                        if (defaults != null) calibratedTouch(defaults) { done(it) } else touchGame(gesture, true) { done(it) }
+                        // A tap on empty space can land on the hero's model and show him alone: back to the page then.
+                        val after = { ok: Boolean ->
+                            if (ok && actionId == "hero.v1.overview" && !teaching) {
+                                heroShown(m, { !finished && token == generation }) { done(true) }
+                            } else {
+                                done(ok)
+                            }
+                        }
+                        if (defaults != null) calibratedTouch(defaults) { after(it) } else touchGame(gesture, true) { after(it) }
                     } else {
                         calibratedTouch(
                             CalibrationAction(
@@ -4980,10 +5302,29 @@ class CollectorService : AccessibilityService() {
             }
             part(0)
         }
+
+        // Nothing is sent yet: a window of the phone's own that will leave only delays the touch. One at the bottom
+        // of the screen for a moment refused a scroll at once, and the user's Pro run stood paused for the night.
+        fun begin(waited: Long) {
+            if (!allowRetries &&
+                !finished &&
+                captureShield.contains(session) &&
+                waited < WINDOW_WAIT_MS &&
+                !calibrationGameAllowed(gestures) &&
+                WindowForegroundSafety.passing(calibrationSafetyReason)
+            ) {
+                if (waited == 0L && running) {
+                    note("Có cửa sổ khác của máy che đường chạm; chờ nó ẩn rồi mới chạm, tối đa ${WINDOW_WAIT_MS / 1000} giây")
+                }
+                handler.postDelayed({ begin(waited + WINDOW_WAIT_STEP_MS) }, WINDOW_WAIT_STEP_MS)
+            } else {
+                send(0)
+            }
+        }
         if (teaching || calibrationTesting) {
             handler.postDelayed({ send(0) }, SHIELD_MS)
         } else {
-            whenClear { clear -> if (clear) handler.postDelayed({ send(0) }, SHIELD_MS) else refuse("notification-covering") }
+            whenClear { clear -> if (clear) handler.postDelayed({ begin(0) }, SHIELD_MS) else refuse("notification-covering") }
         }
     }
 
@@ -5036,28 +5377,127 @@ class CollectorService : AccessibilityService() {
      * reading every card's name. The names read are kept in the index for the next time.
      */
     private fun find(s: JSONObject, alive: () -> Boolean, finish: (ListNavigator.Outcome) -> Unit) {
+        if (s.optBoolean("sweep")) return sweep(s, alive, finish)
         val name = s.getString("name")
         val stamp = "%04d".format(index + 1)
         val asked = s.optInt("hint", -1)
         val hint = HeroIndex.find(HeroIndex.load(filesDir), name).minByOrNull { kotlin.math.abs(it.index - asked) }?.index ?: asked
+        // Where the run's previous pick left the list: a hero never seen on it is looked for from there.
+        val near = try {
+            val saved = JSONObject(File(filesDir, "captures/$runId/list.json").readText())
+            if (teaching || !saved.optBoolean("synced")) -1 else HeroSearch.middle(saved.optDouble("offset", 0.0))
+        } catch (_: Exception) {
+            -1
+        }
         HeroSearch(
             name,
             hint,
-            { card, approve, then -> pick(card, stamp, alive, approve, then) },
+            { card, approve, then -> pick(card, stamp, alive, approve, finish = then) },
             seen = { cards -> if (!teaching) io.execute { HeroIndex.seen(filesDir, cards.map { it.first to it.second.text }) } },
-            note = { note(it) }
+            note = { note(it) },
+            near = near
         ) { outcome, card ->
             if (!teaching && outcome is ListNavigator.Outcome.Tapped && card != null) io.execute { HeroIndex.record(filesDir, card, name) }
             finish(outcome)
         }.start()
     }
 
+    /** The run's pass down the list for heroes by name ([HeroSweep]); a dry run keeps its own, in memory only. */
+    private var sweepState: Pair<String, HeroSweep.State>? = null
+
+    private fun sweepFile(run: String) = File(filesDir, "captures/$run/sweep.json")
+
+    private fun sweepState(): HeroSweep.State {
+        sweepState?.takeIf { it.first == runId }?.let { return it.second }
+        val state = try {
+            if (teaching) HeroSweep.State() else HeroSweep.State.parse(sweepFile(runId).readText())
+        } catch (_: Exception) {
+            HeroSweep.State()
+        }
+        sweepState = runId to state
+        return state
+    }
+
+    /** The hero a block of a pass down the list took, as asked; null when it took none or the run has no pass. */
+    private fun sweptName(run: String, key: String): String? = try {
+        HeroSweep.State.parse(sweepFile(run).readText()).picked[key]
+    } catch (_: Exception) {
+        null
+    }
+
+    /**
+     * A block of heroes by name: the next of them met going down the list, read screen by screen ([HeroSweep]). What
+     * the pass has read and taken is written to sweep.json before the step goes on, so a run continued later keeps
+     * each block's hero and goes on from where the pass was.
+     */
+    private fun sweep(s: JSONObject, alive: () -> Boolean, finish: (ListNavigator.Outcome) -> Unit) {
+        val stamp = "%04d".format(index + 1)
+        val run = runId
+        val state = sweepState()
+        val known = if (teaching) emptyList() else HeroIndex.load(filesDir)
+        HeroSweep(
+            state,
+            BuiltInMacros.heroNames(macro?.json ?: JSONObject()),
+            s.getString("key"),
+            total = { listTotal ?: 0 },
+            saved = { name -> HeroIndex.find(known, name).firstOrNull()?.index ?: -1 },
+            pick = { card, approve, watch, then -> pick(card, stamp, alive, approve, watch, then) },
+            seen = { cards -> if (!teaching) io.execute { HeroIndex.seen(filesDir, cards.map { it.first to it.second.text }) } },
+            note = { note(it) }
+        ) { outcome ->
+            if (!teaching && run == runId) {
+                try {
+                    sweepFile(run).apply { parentFile?.mkdirs() }.writeText(state.json().toString())
+                } catch (e: Exception) {
+                    CrashLog.record(this, "Không ghi được sweep.json", e)
+                }
+            }
+            finish(outcome)
+        }.start()
+    }
+
     /** Runs a [ListNavigator] for card [card] against the real screen; its state survives in list.json. */
+
+    /**
+     * A hero just opened from the list: waits until its page has stopped changing, its skill row read the same on two
+     * looks, before the fixed steps (overview, attributes, skills) tap and photograph it. A new hero's art loading, or
+     * a phone busy with animations, can hold the page back for seconds; taps sent before it is ready are lost and
+     * the photos show the wrong screen. Gives up after about ten seconds and goes on, with a line in the log.
+     */
+    private fun heroSettled(alive: () -> Boolean, looks: Int = 0, previous: SkillRow.Row? = null, then: () -> Unit) {
+        if (!alive()) return
+        if (teaching) return then()
+        grab { b ->
+            if (!alive()) {
+                b?.recycle()
+                return@grab
+            }
+            if (b == null) return@grab then()
+            val row = try {
+                SkillRow.read(b.width, b.height) { y, line -> b.getPixels(line, 0, b.width, 0, y, b.width, 1) }
+            } catch (e: Throwable) {
+                CrashLog.record(this, "Không đọc được hàng chiêu khi chờ trang tướng", e)
+                null
+            } finally {
+                b.recycle()
+            }
+            when {
+                row?.centres != null && previous?.centres != null && row.sameAs(previous) -> then()
+                looks >= HERO_SETTLE_LOOKS -> {
+                    note("Trang tướng tải lâu (máy đang chậm?); vẫn chụp tiếp")
+                    then()
+                }
+                else -> handler.postDelayed({ heroSettled(alive, looks + 1, row ?: previous, then) }, 600)
+            }
+        }
+    }
+
     private fun pick(
         card: Int,
         stamp: String,
         alive: () -> Boolean,
         approve: ListNavigator.Approve? = null,
+        watch: ListNavigator.Watch? = null,
         finish: (ListNavigator.Outcome) -> Unit
     ) {
         val dryRun = teaching
@@ -5085,6 +5525,12 @@ class CollectorService : AccessibilityService() {
             override fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = calibratedTouch(action, then)
 
             override val alive get() = alive()
+
+            // A 2 MB PNG of every page passed was written on the io thread, where the next measurement waits behind it.
+            override val keepsPassedPages = false
+
+            // Heroes by name are anywhere on the list: one near the top is reached from the top.
+            override val flicksToTop = true
 
             override fun look(then: (ListNavigator.Shot?) -> Unit) {
                 grab { b ->
@@ -5180,7 +5626,7 @@ class CollectorService : AccessibilityService() {
                 if (alive()) this@CollectorService.note(text)
             }
         }
-        ListNavigator(card, state, screen, approve) { outcome ->
+        ListNavigator(card, state, screen, approve, watch) { outcome ->
             if (!alive()) return@ListNavigator
             listRef = state.ref
             try {
@@ -5201,6 +5647,43 @@ class CollectorService : AccessibilityService() {
             }
             finish(outcome)
         }.start()
+    }
+
+    /**
+     * After a tap on the hero page's empty space ([HeroView]): a hero whose model stands there (Thane, 10/11) is shown
+     * alone, his page's controls hidden, and every photo after it shows him alone. The back arrow brings the page back.
+     */
+    private fun heroShown(m: Macro, alive: () -> Boolean, tries: Int = 0, then: () -> Unit) {
+        handler.postDelayed({
+            if (!alive()) return@postDelayed
+            grab { b ->
+                if (!alive()) {
+                    b?.recycle()
+                    return@grab
+                }
+                if (b == null) return@grab then()
+                io.execute {
+                    val alone = try {
+                        HeroView.alone(b.width, b.height) { y, line -> b.getPixels(line, 0, b.width, 0, y, b.width, 1) }
+                    } catch (e: Throwable) {
+                        false
+                    }
+                    b.recycle()
+                    handler.post {
+                        if (!alive()) return@post
+                        if (!alone || tries >= 2) return@post then()
+                        note("Chạm trúng tướng nên game mở chế độ chụp ảnh tướng; bấm quay lại về trang tướng")
+                        val back = CalibrationCatalog.steps(m.json).firstOrNull { it.action.id == "hero.v1.back" }?.action
+                            ?: CalibrationAction(
+                                "hero.v1.back",
+                                "Tướng: quay lại",
+                                listOf(CalibrationPoint(HeroGrid.BACK_X, HeroGrid.BACK_Y))
+                            )
+                        calibratedTouch(back) { ok -> if (ok) heroShown(m, alive, tries + 1, then) else then() }
+                    }
+                }
+            }
+        }, if (tries == 0) 600L else 1200L)
     }
 
     /**
@@ -5237,6 +5720,12 @@ class CollectorService : AccessibilityService() {
                                 CrashLog.record(this@CollectorService, "Không đọc được khung mô tả chiêu", e)
                                 null
                             }
+                            val heroAlone = read?.centres == null &&
+                                try {
+                                    HeroView.alone(b.width, b.height) { y, line -> b.getPixels(line, 0, b.width, 0, y, b.width, 1) }
+                                } catch (e: Throwable) {
+                                    false
+                                }
                             handler.post {
                                 if (read == null) {
                                     b.recycle()
@@ -5245,6 +5734,7 @@ class CollectorService : AccessibilityService() {
                                     then(object : SkillReader.Look {
                                         override val row: SkillRow.Row = read
                                         override val description = text
+                                        override val alone = heroAlone
 
                                         override fun done(keep: String?) {
                                             if (keep !=
@@ -5309,7 +5799,11 @@ class CollectorService : AccessibilityService() {
         val rankingSteps =
             macro?.steps?.let { steps -> (0 until steps.length()).count { steps.getJSONObject(it).optString("type") == "ranking" } } ?: 0
         val key = "$runId/$stamp"
-        val done = rankingDone?.takeIf { it.first == key }?.second ?: HashSet<String>().also { rankingDone = key to it }
+        // In memory while the app runs; from the run's folder after the phone was turned off.
+        val saved = if (dryRun) null else StepProgress(File(filesDir, "captures/$adapterRun/${StepProgress.NAME}"))
+        val done = rankingDone?.takeIf { it.first == key }?.second
+            ?: StepProgress.strings(saved?.read("ranking-$stamp"), "tables").also { rankingDone = key to it }
+        if (done.isNotEmpty()) note("Thống kê: tiếp tục, đã xong ${done.size} bảng")
         val screen = object : RankingReader.Screen {
             override fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = calibratedTouch(action, then)
 
@@ -5323,14 +5817,17 @@ class CollectorService : AccessibilityService() {
                     note("Không đủ dung lượng trống để chụp")
                     return then(null)
                 }
-                grab(anyApp = true) { b ->
+                // Looks without words follow one another while the table comes to rest: at Android's own pace.
+                grab(anyApp = true, fast = !words) { b ->
                     if (b == null) return@grab then(null)
                     val nodes = if (words) screenWords(visibleOnly = true) else emptyList()
                     try {
                         io.execute {
+                            var rowsOfTable = FloatArray(0)
                             val read = try {
                                 val rows = { y: Int, line: IntArray -> b.getPixels(line, 0, b.width, 0, y, b.width, 1) }
                                 val lobby = words && GameScreens.read(b.width, b.height, rows).kind == GameScreens.Kind.LOBBY
+                                rowsOfTable = RankScreens.profile(b.width, b.height, rows)
                                 Triple(
                                     if (words) GameText.rankingWords(b, nodes) else nodes,
                                     lobby,
@@ -5349,6 +5846,7 @@ class CollectorService : AccessibilityService() {
                                         override val words = read.first
                                         override val lobby = read.second
                                         override val signature = read.third
+                                        override val profile = rowsOfTable
                                         override val menuOverlay by lazy {
                                             RankScreens.menuOverlay(b.width, b.height) { y, row ->
                                                 b.getPixels(row, 0, b.width, 0, y, b.width, 1)
@@ -5402,7 +5900,11 @@ class CollectorService : AccessibilityService() {
             override fun drag(d: Double, fling: Boolean, then: (Boolean) -> Unit) {
                 val from = if (d > 0) .88 else .22
                 val to = (from - d).coerceIn(.05, .95)
-                touchGame(drag(.55, from, to, if (fling) 160 else 700, if (fling) 0 else 400), false, then)
+                touchGame(
+                    drag(.55, from, to, if (fling) 160 else RankingReader.DRAG_MS, if (fling) 0 else RankingReader.HOLD_MS),
+                    false,
+                    then
+                )
             }
 
             override fun later(ms: Long, then: () -> Unit) {
@@ -5422,6 +5924,9 @@ class CollectorService : AccessibilityService() {
 
             override fun finished(combo: String) {
                 done.add(combo)
+                if (saved != null && !saved.write("ranking-$stamp", JSONObject().put("tables", StepProgress.array(done)))) {
+                    note("Không ghi được tiến độ thống kê; nếu máy tắt, bảng này có thể được chụp lại")
+                }
             }
         }
         RankingReader(screen, done.toSet(), BuiltInMacros.rankCombos(s), finish).start()
@@ -5436,7 +5941,28 @@ class CollectorService : AccessibilityService() {
         val adapterRun = runId
         val stamp = "%04d".format(index + 1)
         val key = "$runId/$stamp"
-        val first = boardNext?.takeIf { it.first == key }?.second ?: 0
+        // In memory while the app runs; from the run's folder after the phone was turned off.
+        val saved = if (dryRun) null else StepProgress(File(filesDir, "captures/$adapterRun/${StepProgress.NAME}"))
+        val stored = if (boardNext?.first == key) null else saved?.read("board-$stamp")
+        val first = boardNext?.takeIf { it.first == key }?.second ?: stored?.optInt("next", 0) ?: 0
+        val playersKept = boardPlayers?.takeIf { it.first == key }?.second
+            ?: StepProgress.strings(stored, "players").also { boardPlayers = key to it }
+        stored?.optJSONObject("names")?.let { names -> for (k in names.keys()) boardNames.putIfAbsent(k, names.optString(k)) }
+        if (stored != null && first > 0) note("Chiến khu: tiếp tục từ tướng ${first + 1}")
+
+        fun keep() {
+            if (saved == null) return
+            val next = boardNext?.takeIf { it.first == key }?.second ?: first
+            val names = JSONObject()
+            for ((k, v) in boardNames) if (v != null) names.put(k, v)
+            if (!saved.write(
+                    "board-$stamp",
+                    JSONObject().put("next", next).put("players", StepProgress.array(playersKept)).put("names", names)
+                )
+            ) {
+                note("Không ghi được tiến độ Chiến khu; nếu máy tắt, tướng này có thể được chụp lại")
+            }
+        }
         val screen = object : BoardReader.Screen {
             override fun calibrated(action: CalibrationAction, then: (Boolean) -> Unit) = calibratedTouch(action, then)
 
@@ -5456,12 +5982,15 @@ class CollectorService : AccessibilityService() {
                             var owned: BoardScreens.OwnedFilter? = null
                             var selectedAll = false
                             var registeredPortraits = FloatArray(0)
+                            var players: BoardPlayerPixels.Facts? = null
                             val read: Pair<Triple<List<GameScreens.Word>, Boolean, IntArray>, List<Pair<Double, Double>>>? = try {
                                 val lobby = words && GameScreens.read(b.width, b.height, rows).kind == GameScreens.Kind.LOBBY
                                 val text = if (words) nodes + GameText.words(b) else nodes
                                 owned = if (words) BoardScreens.ownedFilter(b.width, b.height, text, rows) else null
                                 selectedAll = if (words && grid) ProHeroPicker.allSelected(b.width, b.height, text, rows) else false
                                 registeredPortraits = if (grid) BoardPickerMotion.profile(b.width, b.height, rows) else FloatArray(0)
+                                // The ranking's players, a card, a player's page or picture: never needed on Chọn tướng.
+                                players = if (grid) null else BoardPlayerPixels.read(b.width, b.height, rows)
                                 Triple(text, lobby, BoardScreens.signature(b.width, b.height, rows)) to
                                     (if (grid) BoardScreens.rows(b.width, b.height, rows) else emptyList())
                             } catch (e: Throwable) {
@@ -5482,6 +6011,7 @@ class CollectorService : AccessibilityService() {
                                         override val allSelected: Boolean = selectedAll
                                         override val pickerProfile: FloatArray = registeredPortraits
                                         override val pickerHeight = b.height
+                                        override val facts = players
 
                                         override fun card(col: Int, top: Double, bottom: Double) =
                                             BoardScreens.card(b.width, b.height, col, top, bottom, rows)
@@ -5528,14 +6058,78 @@ class CollectorService : AccessibilityService() {
             }
 
             override fun finished(index: Int) {
-                if (alive()) boardNext = key to index + 1
+                if (alive()) {
+                    boardNext = key to index + 1
+                    keep()
+                }
+            }
+
+            override fun player(key: String) {
+                if (alive()) {
+                    playersKept += key
+                    keep()
+                }
+            }
+
+            override fun clearClipboard() {
+                if (alive()) clipboardPeek.clear()
+            }
+
+            override fun copied(then: (String?) -> Unit) {
+                if (alive()) clipboardPeek.read { text -> if (alive()) then(text) }
+            }
+
+            // In the run's players.json, by key: the hero, the name and UID, and where the UID came from.
+            override fun playerIds(key: String, name: String?, uid: String?, uidCopied: Boolean) {
+                if (!alive() || dryRun) return
+                try {
+                    val file = File(filesDir, "captures/$adapterRun/players.json")
+                    val all = if (file.isFile) JSONObject(file.readText()) else JSONObject()
+                    val heroKey = Regex("^hero-\\d{3}").find(key)?.value
+                    all.put(
+                        key,
+                        JSONObject()
+                            .put("hero", heroKey?.let { boardNames[it] } ?: JSONObject.NULL)
+                            .put("name", name ?: JSONObject.NULL)
+                            .put("uid", uid ?: JSONObject.NULL)
+                            .put(
+                                "uidSource",
+                                if (uid == null) {
+                                    JSONObject.NULL
+                                } else if (uidCopied) {
+                                    "copy"
+                                } else {
+                                    "ocr"
+                                }
+                            )
+                    )
+                    file.parentFile?.mkdirs()
+                    file.writeText(all.toString(2))
+                } catch (e: Exception) {
+                    note("Không ghi được players.json: ${e.message}")
+                }
             }
         }
-        BoardReader(screen, s.getInt("heroes"), BuiltInMacros.boardWants(s), first, finish).start()
+        BoardReader(
+            screen = screen,
+            // Every hero: the hero count is no longer a choice, also for macros saved with one.
+            heroes = BuiltInMacros.ALL,
+            wanted = BuiltInMacros.boardWants(s),
+            first = first,
+            players = BuiltInMacros.boardPlayers(s),
+            donePlayers = playersKept.toSet(),
+            finish = finish
+        ).start()
     }
 
     /** The next hero of the board step last started, by run and step, for a try of it after a pause. */
     private var boardNext: Pair<String, Int>? = null
+
+    /** Players whose page and picture the board step last started has kept, by run and step, for a try after a pause. */
+    private var boardPlayers: Pair<String, MutableSet<String>>? = null
+
+    /** Reads what a copy icon of the game put on the clipboard (Chiến khu players' names and UIDs). */
+    private val clipboardPeek by lazy { ClipboardPeek(this, handler) }
 
     /** Names read on the "Chiến khu" card, by photo key (hero-001), for the heroes' folders. */
     private val boardNames = HashMap<String, String?>()
@@ -6065,8 +6659,14 @@ class CollectorService : AccessibilityService() {
             // The name read on the "Chiến khu" card.
             "board" -> boardNames[key]?.takeIf { it.isNotBlank() }
             // The name asked for, which was read on its card; as read on its page when the two agree.
-            "pick" -> BuiltInMacros.heroNames(m.json).getOrNull((key.removePrefix("hero-").toIntOrNull() ?: 1) - 1)
-                ?.let { asked -> ocr?.takeIf { HeroFinder.same(HeroNames.slug(it), HeroNames.slug(asked)) } ?: asked }
+            // A pass down the list ([HeroSweep]) decides each block's hero as it goes; else block n is the n-th name.
+            "pick" -> (
+                if (m.json.optBoolean("sweep")) {
+                    sweptName(folder, key)
+                } else {
+                    BuiltInMacros.heroNames(m.json).getOrNull((key.removePrefix("hero-").toIntOrNull() ?: 1) - 1)
+                }
+                )?.let { asked -> ocr?.takeIf { HeroFinder.same(HeroNames.slug(it), HeroNames.slug(asked)) } ?: asked }
             else -> null
         }
         val displayName = manual ?: ocr
@@ -6114,8 +6714,15 @@ class CollectorService : AccessibilityService() {
 
     private var lastShotAt = 0L
 
-    /** Takes a screenshot with the panel hidden; [done] gets a software bitmap to recycle, or null. */
-    internal fun grab(anyApp: Boolean = false, done: (Bitmap?) -> Unit) {
+    /** The pace of [grab]'s fast looks: Android's 333 ms from version 12 with a margin, else the second of version 11. */
+    private var fastShotIntervalMs = if (android.os.Build.VERSION.SDK_INT >= 31) FAST_SHOT_INTERVAL_MS else SHOT_INTERVAL_MS
+
+    /**
+     * Takes a screenshot with the panel hidden; [done] gets a software bitmap to recycle, or null. [fast]: for looks
+     * that follow one another closely, at the pace Android allows from version 12 (three a second) instead of one a
+     * second. A phone that refuses one is given the second from then on.
+     */
+    internal fun grab(anyApp: Boolean = false, fast: Boolean = false, done: (Bitmap?) -> Unit) {
         val debugSession = debugCaptureShield.acquire()
         val session = captureShield.acquire()
         val finish = { b: Bitmap? ->
@@ -6163,6 +6770,10 @@ class CollectorService : AccessibilityService() {
 
                 override fun onFailure(errorCode: Int) {
                     // Android allows one accessibility screenshot per second.
+                    if (errorCode == ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT && fast && fastShotIntervalMs < SHOT_INTERVAL_MS) {
+                        fastShotIntervalMs = SHOT_INTERVAL_MS
+                        note("Máy này chỉ cho chụp màn hình một lần mỗi giây; các lần nhìn liên tiếp dùng nhịp đó")
+                    }
                     if (errorCode == ERROR_TAKE_SCREENSHOT_INTERVAL_TIME_SHORT && retry) {
                         handler.postDelayed({ shoot(false) }, 1100)
                         return
@@ -6186,7 +6797,8 @@ class CollectorService : AccessibilityService() {
             if (!clear) {
                 finish(null)
             } else {
-                handler.postDelayed({ shoot(true) }, maxOf(250L, lastShotAt + SHOT_INTERVAL_MS - SystemClock.uptimeMillis()))
+                val interval = if (fast) fastShotIntervalMs else SHOT_INTERVAL_MS
+                handler.postDelayed({ shoot(true) }, maxOf(250L, lastShotAt + interval - SystemClock.uptimeMillis()))
             }
         }
     }
@@ -6231,12 +6843,12 @@ class CollectorService : AccessibilityService() {
             bitmap.recycle()
             done(dryRun && alive())
         } else {
-            store(bitmap, folder, name, done)
+            store(bitmap, folder, name, done = done)
         }
     }
 
     /** Writes [bitmap] as PNG off the main thread and recycles it. */
-    internal fun store(bitmap: Bitmap, folder: String, name: String, done: (Boolean) -> Unit) {
+    internal fun store(bitmap: Bitmap, folder: String, name: String, replace: Boolean = false, done: (Boolean) -> Unit) {
         if (folder.isBlank() && !teaching) {
             bitmap.recycle()
             done(false)
@@ -6256,7 +6868,7 @@ class CollectorService : AccessibilityService() {
                     val target = File(dir, "$basename.png")
                     // A stop after PNG commit but before the progress journal must not overwrite
                     // an earlier numbered detail. Reuse only a visually matching existing image.
-                    if (ProCaptureFiles.hero(name) == null && basename != name && target.isFile && target.length() > 0) {
+                    if (!replace && ProCaptureFiles.hero(name) == null && basename != name && target.isFile && target.length() > 0) {
                         val previous = BitmapFactory.decodeFile(target.absolutePath)
                             ?: error("Không đọc được ảnh chi tiết đã có: " + basename)
                         try {
@@ -6280,7 +6892,7 @@ class CollectorService : AccessibilityService() {
                         val part = File(dir, "$basename.png.part")
                         try {
                             require(part.outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) })
-                            require(part.length() > 0 && part.renameTo(target))
+                            require(part.length() > 0 && part.moveOnto(target))
                             true
                         } finally {
                             part.delete()
@@ -6302,5 +6914,24 @@ class CollectorService : AccessibilityService() {
             bitmap.recycle()
             done(false)
         }
+    }
+}
+
+/** [ChessPixels] readings of one Bách khoa screenshot for the fast capture, taken off the main thread. */
+private class ChessFacts(
+    val blankBelow: Boolean,
+    val drawerArt: Boolean,
+    val skillArt: Boolean,
+    val saveDialog: ChessPixels.Dialog?,
+    val heroGrid: Boolean
+) {
+    companion object {
+        fun read(width: Int, height: Int, modal: Boolean, rows: (Int, IntArray) -> Unit) = ChessFacts(
+            ChessPixels.blankBelow(width, height, modal, rows),
+            !modal || ChessPixels.drawerArt(width, height, rows),
+            !modal || ChessPixels.skillArt(width, height, rows),
+            ChessPixels.saveDialog(width, height, rows),
+            !modal && ChessPixels.heroGrid(width, height, rows)
+        )
     }
 }

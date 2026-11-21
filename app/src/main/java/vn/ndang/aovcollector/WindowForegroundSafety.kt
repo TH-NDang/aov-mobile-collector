@@ -142,6 +142,12 @@ internal object WindowForegroundSafety {
         return GameWindowCheck(target.takeIf { reason == "allowed" }, reason)
     }
 
+    /**
+     * A refusal that a wait may end: a window of the phone's own beside the stroke or in front (a volume bar, a battery
+     * or charging notice), which leaves by itself. Another app's window, or a game not in front, does not.
+     */
+    fun passing(reason: String): Boolean = reason == "gesture-path-near-foreign-window" || reason == "foreign-system-window-active"
+
     fun gameWindow(windows: List<ForegroundWindow>, ownPackage: String, gamePackage: String, usableDisplay: WindowArea): ForegroundWindow? =
         inspectGameWindow(windows, ownPackage, gamePackage, usableDisplay).target
 }
