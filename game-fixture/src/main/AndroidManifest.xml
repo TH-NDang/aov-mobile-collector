@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:label="Synthetic gesture fixture (CI only)" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:allowBackup="false">
+        <!-- No launcher, game assets, accounts, network permissions, or exported data providers. -->
+        <activity android:name=".GestureActivity" android:exported="true" android:screenOrientation="landscape">
+            <meta-data android:name="vn.ndang.aovcollector.SYNTHETIC_GESTURE_FIXTURE" android:value="true"/>
+        </activity>
+    </application>
+</manifest>
